@@ -1,29 +1,89 @@
-# FlowBusters
+```
+╔══════════════════════════════════════════════════════════════╗
+║  💣  F L O W B U S T E R S                                  ║
+║  Hunt business logic flaws before attackers do               ║
+║  ── powered by Playwright MCP ──────────────────────────    ║
+╚══════════════════════════════════════════════════════════════╝
+```
 
-A zero-config, multi-agent system that records business workflows, analyzes them for state transitions, generates adversarial mutation scripts, and probes live environments for business logic flaws.
+> **Your app passed every test. But did you test the rules of the game?**
 
-**Runtime:** VS Code Copilot with the Squad agent framework. No external LLM proxies or Python environments required beyond what's needed to execute the generated probe scripts.
+Can an approver jump straight to the approval endpoint?  
+Can a regular user replay an admin's captured request?  
+Can someone close a loan without completing the required steps?
+
+**FlowBusters finds out.**
+
+Demo your workflow once. FlowBusters records it, maps every state transition, generates adversarial probe scripts targeting skip-step, role-swap, replay, and forced-browsing attacks — then executes them and hands you a CWE-mapped remediation report.
+
+No config. No infrastructure. Just Playwright MCP and one command.
+
+```
+Captain, run FlowBusters against https://qa.example.com/your-workflow
+```
 
 ---
 
-## How It Works
-
-FlowBusters runs a strictly sequential 4-phase pipeline. Each phase must pass a verification gate before the next phase begins. The Captain agent orchestrates the full run and manages artifact handoff between phases.
+## ⚔️  How It Works
 
 ```
-RECORD → ANALYZE → MUTATE → PROBE
+▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓  SELECT YOUR MISSION  ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓
 ```
 
-| Phase | Agent | Input | Output |
-|-------|-------|-------|--------|
-| 1. RECORD | Recorder | Target URL, flow-name | `flows/{flow-name}/demo.json`, `flows/{flow-name}/recording.har` |
-| 2. ANALYZE | Analyst | `flows/{flow-name}/demo.json`, `flows/{flow-name}/recording.har` | `flows/{flow-name}/state_map.json` |
-| 3. MUTATE | Saboteur | `flows/{flow-name}/state_map.json` | `mutations/{flow-name}/*.py` (3–5 scripts) |
-| 4. PROBE | Prober | `mutations/{flow-name}/*.json` | `reports/{flow-name}/findings.json`, `reports/{flow-name}/remediation.md` |
+Four specialist agents. Four locked levels. One boss fight with your app's logic.  
+**No level starts until the previous gate clears. Captain holds the master key.**
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║  🎥  LEVEL 1  ░░  R E C O R D                                       ║
+║                                                                      ║
+║  Recorder opens a live browser via Playwright MCP.                   ║
+║  You play the workflow. Every click, every request — captured.       ║
+║                                                                      ║
+║  [ GATE UNLOCKED ] ──►  demo.json  +  recording.har                 ║
+╚══════════════════════════════╦═══════════════════════════════════════╝
+                               ║  ✔  GATE CLEAR
+╔══════════════════════════════╩═══════════════════════════════════════╗
+║  🔬  LEVEL 2  ░░  A N A L Y Z E                                     ║
+║                                                                      ║
+║  Analyst dissects the HAR. Filters noise. Maps every state           ║
+║  transition, auth token, role context, and critical endpoint.        ║
+║                                                                      ║
+║  [ GATE UNLOCKED ] ──►  state_map.json                              ║
+╚══════════════════════════════╦═══════════════════════════════════════╝
+                               ║  ✔  GATE CLEAR
+╔══════════════════════════════╩═══════════════════════════════════════╗
+║  💣  LEVEL 3  ░░  M U T A T E                                       ║
+║                                                                      ║
+║  Saboteur forges adversarial scripts from the state map:             ║
+║  SKIP_STEP · ROLE_SWAP · DATA_TAMPER · REPLAY · FORCED_BROWSING     ║
+║                                                                      ║
+║  [ GATE UNLOCKED ] ──►  mutations/*.py  (3–5 scripts)               ║
+╚══════════════════════════════╦═══════════════════════════════════════╝
+                               ║  ✔  GATE CLEAR
+╔══════════════════════════════╩═══════════════════════════════════════╗
+║  🔍  LEVEL 4  ░░  P R O B E              ★  B O S S  F I G H T  ★  ║
+║                                                                      ║
+║  Prober fires every script at the live target.                       ║
+║  Each hit classified:  BUG_FOUND  ·  REJECTED  ·  ERROR             ║
+║                                                                      ║
+║  [ GATE UNLOCKED ] ──►  findings.json  +  remediation.md            ║
+╚══════════════════════════════╦═══════════════════════════════════════╝
+                               ║
+                        🏗️  CAPTAIN
+                    assembles final report
+```
+
+|  | Level | Agent | Drops |
+|:---:|:---|:---|:---|
+| 🎥 | **RECORD** | Recorder | `demo.json` · `recording.har` |
+| 🔬 | **ANALYZE** | Analyst | `state_map.json` |
+| 💣 | **MUTATE** | Saboteur | `mutations/*.py` × 3–5 |
+| 🔍 | **PROBE** | Prober | `findings.json` · `remediation.md` |
 
 ---
 
-## Quickstart
+## 🚀  Quickstart
 
 Invoke the Captain with a target URL:
 
@@ -90,21 +150,21 @@ You can also invoke phases independently if artifacts from prior phases already 
 
 ---
 
-## Mutation Types
+## 🗡️  Attack Vectors
 
 Saboteur generates scripts targeting these attack vectors:
 
-| Type | Description |
-|------|-------------|
-| `SKIP_STEP` | Call a late-stage endpoint without completing prerequisites |
-| `ROLE_SWAP` | Use Role A's session to access Role B's endpoints |
-| `DATA_TAMPER` | Modify request body values (IDs, amounts, statuses) to unauthorized values |
-| `REPLAY_ATTACK` | Replay a captured request after state should have invalidated it |
-| `FORCED_BROWSING` | Access endpoints directly without going through the expected UI flow |
+| Attack | What it does |
+|:---|:---|
+| 💨 `SKIP_STEP` | Jump straight to a late-stage endpoint, bypassing required prerequisites |
+| 🎭 `ROLE_SWAP` | Use Role A's session cookies to hit Role B's endpoints |
+| 🔧 `DATA_TAMPER` | Mutate request body values — IDs, amounts, statuses — to unauthorized payloads |
+| ⏪ `REPLAY_ATTACK` | Re-fire a captured request after the server should have invalidated it |
+| 🚪 `FORCED_BROWSING` | Access endpoints directly, skipping the expected UI flow entirely |
 
 ---
 
-## Artifact Structure
+## 🗂️  Artifact Structure
 
 ```
 flows/
@@ -192,28 +252,28 @@ reports/
 
 ---
 
-## Probe Outcome Classification
+## 🎯  Probe Outcomes
 
-| Outcome | Condition |
-|---------|-----------|
-| `BUG_FOUND` | Server returned 2xx when it should have rejected the request |
-| `REJECTED` | Server correctly rejected the malicious request (4xx/5xx) |
-| `ERROR` | Script failed (timeout, import error, malformed output) |
+| Outcome | Meaning |
+|:---|:---|
+| 🔴 `BUG_FOUND` | Server returned 2xx — accepted something it should have rejected |
+| 🟢 `REJECTED` | Server correctly blocked the malicious request (4xx/5xx) |
+| ⚪ `ERROR` | Script failed — timeout, import error, or malformed output |
 
 When a `BUG_FOUND` outcome is recorded, Prober generates `reports/remediation.md` with CWE ID mapping, severity rating, and specific fix recommendations.
 
 ---
 
-## Tools Required
+## 🛠️  Requirements
 
 - **Playwright MCP** — headed browser automation for Phase 1 capture
 - **Terminal (bash)** — script execution and file validation
-- **VS Code Copilot** — LLM reasoning for analysis, mutation generation, and remediation authoring
+- **An MCP-capable AI agent runtime** — LLM reasoning for analysis, mutation generation, and remediation authoring (e.g. any assistant that supports MCP tool use)
 - **Python 3** — runtime for executing generated probe scripts (`playwright`, `httpx`)
 
 ---
 
-## Safety
+## 🛡️  Safety
 
 - **Scope enforcement:** If `scope.json` exists in the repo root, Captain validates the target URL against `allowed_domains` and `allowed_paths_prefix` before opening a browser. If `block_production` is `true`, URLs without a QA/staging indicator are rejected automatically.
 - **Never** run against production URLs without explicit user confirmation
