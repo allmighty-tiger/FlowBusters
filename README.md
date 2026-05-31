@@ -1,19 +1,32 @@
 <p align="center">
-  <img src="assets/flowbusters-banner.svg" alt="FlowBusters — Hunt business logic flaws before attackers do" width="800"/>
+  <img src="assets/flowbusters-banner.svg" alt="FlowBusters — Hunt business logic flaws before attackers do" width="100%"/>
 </p>
 
-> **Your app passed every unit test. Every pen test. Every scan.  
-> But nobody tested whether the *workflow itself* can be cheated.**
+<br/>
 
-Most security tools check *endpoints*. FlowBusters checks **business logic** — the multi-step rules your app assumes users will follow but never actually enforces.
+<p align="center">
+  <strong>Your app passed every unit test. Every pen test. Every scan.<br/>
+  But nobody tested whether the <em>workflow itself</em> can be cheated.</strong>
+</p>
 
-**One demo. Zero config. Full attack surface.**
+<p align="center">
+  Most security tools check <em>endpoints</em>. FlowBusters checks <strong>business logic</strong> —<br/>
+  the multi-step rules your app assumes users will follow but never actually enforces.
+</p>
 
-You walk through your workflow once in a real browser. FlowBusters watches, then unleashes skip-step, role-swap, replay, data-tamper, and forced-browsing attacks against the *live app* — and delivers a CWE-mapped remediation report in minutes.
+<h3 align="center">One demo. Zero config. Full attack surface.</h3>
+
+<p align="center">
+  You walk through your workflow once in a real browser. FlowBusters watches, then unleashes<br/>
+  skip-step, role-swap, replay, data-tamper, and forced-browsing attacks against the <em>live app</em><br/>
+  — and delivers a CWE-mapped remediation report in minutes.
+</p>
 
 ---
 
-> **No config. No infrastructure. Just Playwright MCP and one command.**
+<p align="center">
+  <strong>No config. No infrastructure. Just Playwright MCP and one command.</strong>
+</p>
 
 ```
 Captain, run FlowBusters against https://qa.example.com/your-workflow
