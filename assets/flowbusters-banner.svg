@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 320" width="800" height="320">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0d1117"/>
+      <stop offset="100%" style="stop-color:#161b22"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#ff4444"/>
+      <stop offset="50%" style="stop-color:#ff6b35"/>
+      <stop offset="100%" style="stop-color:#ffaa00"/>
+    </linearGradient>
+    <linearGradient id="greenGlow" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#00ff88"/>
+      <stop offset="100%" style="stop-color:#00cc66"/>
+    </linearGradient>
+    <filter id="neon">
+      <feGaussianBlur stdDeviation="2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Background -->
+  <rect width="800" height="320" fill="url(#bg)" rx="12"/>
+
+  <!-- Grid lines (retro game aesthetic) -->
+  <g opacity="0.08" stroke="#00ff88" stroke-width="0.5">
+    <line x1="0" y1="60" x2="800" y2="60"/>
+    <line x1="0" y1="120" x2="800" y2="120"/>
+    <line x1="0" y1="180" x2="800" y2="180"/>
+    <line x1="0" y1="240" x2="800" y2="240"/>
+    <line x1="100" y1="0" x2="100" y2="320"/>
+    <line x1="200" y1="0" x2="200" y2="320"/>
+    <line x1="300" y1="0" x2="300" y2="320"/>
+    <line x1="400" y1="0" x2="400" y2="320"/>
+    <line x1="500" y1="0" x2="500" y2="320"/>
+    <line x1="600" y1="0" x2="600" y2="320"/>
+    <line x1="700" y1="0" x2="700" y2="320"/>
+  </g>
+
+  <!-- Scanline effect -->
+  <g opacity="0.03">
+    <rect x="0" y="0" width="800" height="2" fill="white"/>
+    <rect x="0" y="4" width="800" height="2" fill="white"/>
+    <rect x="0" y="8" width="800" height="2" fill="white"/>
+    <rect x="0" y="12" width="800" height="2" fill="white"/>
+    <rect x="0" y="16" width="800" height="2" fill="white"/>
+    <rect x="0" y="20" width="800" height="2" fill="white"/>
+  </g>
+
+  <!-- Bomb icon -->
+  <g transform="translate(60, 85)" filter="url(#neon)">
+    <circle cx="30" cy="35" r="28" fill="#1a1a2e" stroke="#ff4444" stroke-width="2.5"/>
+    <rect x="25" y="5" width="10" height="12" rx="3" fill="#ff6b35"/>
+    <path d="M30 2 Q35 -5 40 0" stroke="#ffaa00" stroke-width="2" fill="none"/>
+    <circle cx="38" cy="-2" r="4" fill="#ffaa00" opacity="0.8"/>
+    <circle cx="38" cy="-2" r="2" fill="#ffffff" opacity="0.9"/>
+    <text x="30" y="42" font-family="monospace" font-size="18" fill="#ff4444" text-anchor="middle" font-weight="bold">💣</text>
+  </g>
+
+  <!-- Main Title -->
+  <text x="400" y="95" font-family="'Courier New', monospace" font-size="52" font-weight="bold" fill="url(#glow)" text-anchor="middle" filter="url(#softGlow)" letter-spacing="6">FLOWBUSTERS</text>
+
+  <!-- Subtitle -->
+  <text x="400" y="130" font-family="'Courier New', monospace" font-size="14" fill="#8b949e" text-anchor="middle" letter-spacing="2">HUNT BUSINESS LOGIC FLAWS BEFORE ATTACKERS DO</text>
+
+  <!-- Divider -->
+  <rect x="200" y="145" width="400" height="1" fill="url(#glow)" opacity="0.6"/>
+
+  <!-- Phase pipeline (arcade style) -->
+  <g transform="translate(115, 170)">
+    <!-- Phase boxes -->
+    <rect x="0" y="0" width="120" height="55" rx="4" fill="#1a1a2e" stroke="#00ff88" stroke-width="1.5" opacity="0.9"/>
+    <text x="60" y="20" font-family="monospace" font-size="9" fill="#00ff88" text-anchor="middle" font-weight="bold">LEVEL 1</text>
+    <text x="60" y="38" font-family="monospace" font-size="11" fill="#ffffff" text-anchor="middle">🎥 RECORD</text>
+
+    <rect x="150" y="0" width="120" height="55" rx="4" fill="#1a1a2e" stroke="#00aaff" stroke-width="1.5" opacity="0.9"/>
+    <text x="210" y="20" font-family="monospace" font-size="9" fill="#00aaff" text-anchor="middle" font-weight="bold">LEVEL 2</text>
+    <text x="210" y="38" font-family="monospace" font-size="11" fill="#ffffff" text-anchor="middle">🔬 ANALYZE</text>
+
+    <rect x="300" y="0" width="120" height="55" rx="4" fill="#1a1a2e" stroke="#ff6b35" stroke-width="1.5" opacity="0.9"/>
+    <text x="360" y="20" font-family="monospace" font-size="9" fill="#ff6b35" text-anchor="middle" font-weight="bold">LEVEL 3</text>
+    <text x="360" y="38" font-family="monospace" font-size="11" fill="#ffffff" text-anchor="middle">💣 MUTATE</text>
+
+    <rect x="450" y="0" width="120" height="55" rx="4" fill="#1a1a2e" stroke="#ff4444" stroke-width="2" opacity="0.9"/>
+    <text x="510" y="20" font-family="monospace" font-size="9" fill="#ff4444" text-anchor="middle" font-weight="bold">★ BOSS ★</text>
+    <text x="510" y="38" font-family="monospace" font-size="11" fill="#ffffff" text-anchor="middle">🔍 PROBE</text>
+
+    <!-- Arrows between phases -->
+    <polygon points="125,27 140,22 140,32" fill="#00ff88" opacity="0.8"/>
+    <polygon points="275,27 290,22 290,32" fill="#00aaff" opacity="0.8"/>
+    <polygon points="425,27 440,22 440,32" fill="#ff6b35" opacity="0.8"/>
+  </g>
+
+  <!-- Tagline -->
+  <text x="400" y="260" font-family="'Courier New', monospace" font-size="11" fill="#58a6ff" text-anchor="middle" letter-spacing="1">── powered by Playwright MCP ──</text>
+
+  <!-- Bottom bar -->
+  <rect x="0" y="280" width="800" height="40" fill="#0d1117" opacity="0.8"/>
+  <text x="400" y="305" font-family="monospace" font-size="12" fill="#8b949e" text-anchor="middle">
+    &gt; Captain, run FlowBusters against https://qa.example.com/your-workflow
+  </text>
+
+  <!-- Corner decorations (arcade cabinet style) -->
+  <rect x="10" y="10" width="20" height="3" fill="#ff4444" opacity="0.6"/>
+  <rect x="10" y="10" width="3" height="20" fill="#ff4444" opacity="0.6"/>
+  <rect x="770" y="10" width="20" height="3" fill="#ff4444" opacity="0.6"/>
+  <rect x="787" y="10" width="3" height="20" fill="#ff4444" opacity="0.6"/>
+  <rect x="10" y="307" width="20" height="3" fill="#00ff88" opacity="0.6"/>
+  <rect x="10" y="290" width="3" height="20" fill="#00ff88" opacity="0.6"/>
+  <rect x="770" y="307" width="20" height="3" fill="#00ff88" opacity="0.6"/>
+  <rect x="787" y="290" width="3" height="20" fill="#00ff88" opacity="0.6"/>
+</svg>
