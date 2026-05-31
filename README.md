@@ -1,22 +1,19 @@
-```
-╔══════════════════════════════════════════════════════════════╗
-║  💣  F L O W B U S T E R S                                  ║
-║  Hunt business logic flaws before attackers do               ║
-║  ── powered by Playwright MCP ──────────────────────────    ║
-╚══════════════════════════════════════════════════════════════╝
-```
+<p align="center">
+  <img src="assets/flowbusters-banner.svg" alt="FlowBusters — Hunt business logic flaws before attackers do" width="800"/>
+</p>
 
-> **Your app passed every test. But did you test the rules of the game?**
+> **Your app passed every unit test. Every pen test. Every scan.  
+> But nobody tested whether the *workflow itself* can be cheated.**
 
-Can an approver jump straight to the approval endpoint?  
-Can a regular user replay an admin's captured request?  
-Can someone close a loan without completing the required steps?
+Most security tools check *endpoints*. FlowBusters checks **business logic** — the multi-step rules your app assumes users will follow but never actually enforces.
 
-**FlowBusters finds out.**
+**One demo. Zero config. Full attack surface.**
 
-Demo your workflow once. FlowBusters records it, maps every state transition, generates adversarial probe scripts targeting skip-step, role-swap, replay, and forced-browsing attacks — then executes them and hands you a CWE-mapped remediation report.
+You walk through your workflow once in a real browser. FlowBusters watches, then unleashes skip-step, role-swap, replay, data-tamper, and forced-browsing attacks against the *live app* — and delivers a CWE-mapped remediation report in minutes.
 
-No config. No infrastructure. Just Playwright MCP and one command.
+---
+
+> **No config. No infrastructure. Just Playwright MCP and one command.**
 
 ```
 Captain, run FlowBusters against https://qa.example.com/your-workflow
@@ -35,7 +32,7 @@ Four specialist agents. Four locked levels. One boss fight with your app's logic
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║  🎥  LEVEL 1  ░░  R E C O R D                                       ║
+║  [*]  LEVEL 1  ░░  R E C O R D                                      ║
 ║                                                                      ║
 ║  Recorder opens a live browser via Playwright MCP.                   ║
 ║  You play the workflow. Every click, every request — captured.       ║
@@ -44,7 +41,7 @@ Four specialist agents. Four locked levels. One boss fight with your app's logic
 ╚══════════════════════════════╦═══════════════════════════════════════╝
                                ║  ✔  GATE CLEAR
 ╔══════════════════════════════╩═══════════════════════════════════════╗
-║  🔬  LEVEL 2  ░░  A N A L Y Z E                                     ║
+║  [*]  LEVEL 2  ░░  A N A L Y Z E                                    ║
 ║                                                                      ║
 ║  Analyst dissects the HAR. Filters noise. Maps every state           ║
 ║  transition, auth token, role context, and critical endpoint.        ║
@@ -53,7 +50,7 @@ Four specialist agents. Four locked levels. One boss fight with your app's logic
 ╚══════════════════════════════╦═══════════════════════════════════════╝
                                ║  ✔  GATE CLEAR
 ╔══════════════════════════════╩═══════════════════════════════════════╗
-║  💣  LEVEL 3  ░░  M U T A T E                                       ║
+║  [*]  LEVEL 3  ░░  M U T A T E                                      ║
 ║                                                                      ║
 ║  Saboteur forges adversarial scripts from the state map:             ║
 ║  SKIP_STEP · ROLE_SWAP · DATA_TAMPER · REPLAY · FORCED_BROWSING     ║
@@ -62,7 +59,7 @@ Four specialist agents. Four locked levels. One boss fight with your app's logic
 ╚══════════════════════════════╦═══════════════════════════════════════╝
                                ║  ✔  GATE CLEAR
 ╔══════════════════════════════╩═══════════════════════════════════════╗
-║  🔍  LEVEL 4  ░░  P R O B E              ★  B O S S  F I G H T  ★  ║
+║  [*]  LEVEL 4  ░░  P R O B E              ★  B O S S  F I G H T  ★   ║
 ║                                                                      ║
 ║  Prober fires every script at the live target.                       ║
 ║  Each hit classified:  BUG_FOUND  ·  REJECTED  ·  ERROR             ║
@@ -70,7 +67,7 @@ Four specialist agents. Four locked levels. One boss fight with your app's logic
 ║  [ GATE UNLOCKED ] ──►  findings.json  +  remediation.md            ║
 ╚══════════════════════════════╦═══════════════════════════════════════╝
                                ║
-                        🏗️  CAPTAIN
+                        [>>]  CAPTAIN
                     assembles final report
 ```
 
@@ -156,7 +153,7 @@ What a full FlowBusters session looks like in your terminal:
 
 ```
 ╔══════════════════════════════════════════════════════════════════════╗
-║  🎥  PHASE 1 — RECORD                                                ║
+║  [*]  PHASE 1 — RECORD                                               ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
   Browser is open. The page loaded — go ahead and:
@@ -174,7 +171,7 @@ What a full FlowBusters session looks like in your terminal:
    · flows/demo.json (4.4 KB) + flows/recording.har (168 KB) saved
 
 ╔══════════════════════════════════════════════════════════════════════╗
-║  🔬  PHASE 2 — ANALYZE                                               ║
+║  [*]  PHASE 2 — ANALYZE                                              ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 ✅ Phase 2 ANALYZE — Gate passed.
@@ -184,7 +181,7 @@ What a full FlowBusters session looks like in your terminal:
    · flows/state_map.json saved
 
 ╔══════════════════════════════════════════════════════════════════════╗
-║  💣  PHASE 3 — MUTATE                                                ║
+║  [*]  PHASE 3 — MUTATE                                               ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 ✅ Phase 3 MUTATE — Gate passed.
@@ -201,26 +198,26 @@ What a full FlowBusters session looks like in your terminal:
    └────┴─────────────────────┴───────────────────────┘
 
 ╔══════════════════════════════════════════════════════════════════════╗
-║  🔍  PHASE 4 — PROBE               ★  B O S S  F I G H T  ★        ║
+║  [*]  PHASE 4 — PROBE               ★  B O S S  F I G H T  ★         ║
 ╚══════════════════════════════════════════════════════════════════════╝
 
 ✅ Phase 4 PROBE — Complete. All gates passed.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-🏗️  FlowBusters Final Report  ·  https://qa.example.com/your-workflow
+[>>]  FlowBusters Final Report  ·  https://qa.example.com/your-workflow
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
    ┌──────────────────────────────┬─────────────────────┬──────────────────┐
    │ Probe                        │ Mutation            │ Outcome          │
    ├──────────────────────────────┼─────────────────────┼──────────────────┤
-   │ 01_skip_step_approve         │ SKIP_STEP           │ 🔴 BUG_FOUND     │
-   │ 02_role_swap_access_level    │ ROLE_SWAP           │ ✅ REJECTED       │
-   │ 03_data_tamper_orders        │ DATA_TAMPER         │ 🔴 BUG_FOUND     │
-   │ 04_replay_approve            │ REPLAY_ATTACK       │ ✅ REJECTED       │
-   │ 05_forced_browse_user_search │ FORCED_BROWSING     │ ✅ REJECTED       │
+   │ 01_skip_step_approve         │ SKIP_STEP           │ [!] BUG_FOUND    │
+   │ 02_role_swap_access_level    │ ROLE_SWAP           │ [v] REJECTED     │
+   │ 03_data_tamper_orders        │ DATA_TAMPER         │ [!] BUG_FOUND    │
+   │ 04_replay_approve            │ REPLAY_ATTACK       │ [v] REJECTED     │
+   │ 05_forced_browse_user_search │ FORCED_BROWSING     │ [v] REJECTED     │
    └──────────────────────────────┴─────────────────────┴──────────────────┘
 
-   🔴  2 bugs found  ·  3 properly rejected  ·  0 errors
+   (!!)  2 bugs found  ·  3 properly rejected  ·  0 errors
 
    Verdict: 2 business logic vulnerabilities confirmed.
             reports/remediation.md generated. ⚠️
