@@ -210,20 +210,36 @@ What a full FlowBusters session looks like in your terminal:
 🏗️  FlowBusters Final Report  ·  https://qa.example.com/your-workflow
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-   ┌──────────────────────────────┬─────────────────────┬─────────────┐
-   │ Probe                        │ Mutation            │ Outcome     │
-   ├──────────────────────────────┼─────────────────────┼─────────────┤
-   │ 01_skip_step_approve         │ SKIP_STEP           │ ✅ REJECTED  │
-   │ 02_role_swap_access_level    │ ROLE_SWAP           │ ✅ REJECTED  │
-   │ 03_data_tamper_orders        │ DATA_TAMPER         │ ✅ REJECTED  │
-   │ 04_replay_approve            │ REPLAY_ATTACK       │ ✅ REJECTED  │
-   │ 05_forced_browse_user_search │ FORCED_BROWSING     │ ✅ REJECTED  │
-   └──────────────────────────────┴─────────────────────┴─────────────┘
+   ┌──────────────────────────────┬─────────────────────┬──────────────────┐
+   │ Probe                        │ Mutation            │ Outcome          │
+   ├──────────────────────────────┼─────────────────────┼──────────────────┤
+   │ 01_skip_step_approve         │ SKIP_STEP           │ 🔴 BUG_FOUND     │
+   │ 02_role_swap_access_level    │ ROLE_SWAP           │ ✅ REJECTED       │
+   │ 03_data_tamper_orders        │ DATA_TAMPER         │ 🔴 BUG_FOUND     │
+   │ 04_replay_approve            │ REPLAY_ATTACK       │ ✅ REJECTED       │
+   │ 05_forced_browse_user_search │ FORCED_BROWSING     │ ✅ REJECTED       │
+   └──────────────────────────────┴─────────────────────┴──────────────────┘
 
-   🟢  0 bugs found  ·  5 properly rejected  ·  0 errors
+   🔴  2 bugs found  ·  3 properly rejected  ·  0 errors
 
-   Verdict: All 5 adversarial probes were rejected.
-            Business logic defenses held. No remediation needed. 🎉
+   Verdict: 2 business logic vulnerabilities confirmed.
+            reports/remediation.md generated. ⚠️
+
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │  REMEDIATION REPORT                                                 │
+   ├─────────────────────────────────────────────────────────────────────┤
+   │  BUG 1 · CRITICAL  ·  CWE-285: Improper Authorization              │
+   │  /api/approve accepted a request skipping the required              │
+   │  prerequisite step. Server returned HTTP 200.                       │
+   │  Fix: enforce workflow state server-side before processing          │
+   │       approval; do not rely on UI step completion alone.            │
+   ├─────────────────────────────────────────────────────────────────────┤
+   │  BUG 2 · HIGH  ·  CWE-20: Improper Input Validation                │
+   │  /api/orders accepted a tampered order ID belonging to a            │
+   │  different user. Server returned HTTP 200.                          │
+   │  Fix: validate resource ownership server-side on every              │
+   │       write operation; never trust client-supplied IDs.             │
+   └─────────────────────────────────────────────────────────────────────┘
 
    Artifacts:
      flows/demo.json          interaction trace
@@ -231,6 +247,7 @@ What a full FlowBusters session looks like in your terminal:
      flows/state_map.json     8 transitions · 7 critical endpoints
      mutations/*.py           5 probe scripts
      reports/findings.json    full results
+     reports/remediation.md   2 findings with CWE mapping  ← generated
 ```
 
 ---
