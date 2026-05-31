@@ -150,6 +150,91 @@ You can also invoke phases independently if artifacts from prior phases already 
 
 ---
 
+## �️  Sample Run
+
+What a full FlowBusters session looks like in your terminal:
+
+```
+╔══════════════════════════════════════════════════════════════════════╗
+║  🎥  PHASE 1 — RECORD                                                ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+  Browser is open. The page loaded — go ahead and:
+    1. Log in with your credentials
+    2. Complete the full business flow you want to test
+    3. Tell me when you're done — I'll capture everything
+
+  Take your time — I'm recording. 🔴
+
+❯ done
+
+✅ Phase 1 RECORD — Gate passed.
+   · 10 interactions captured
+   · 109 network requests recorded
+   · flows/demo.json (4.4 KB) + flows/recording.har (168 KB) saved
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  🔬  PHASE 2 — ANALYZE                                               ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+✅ Phase 2 ANALYZE — Gate passed.
+   · 8 state transitions identified
+   · 2 roles inferred
+   · 7 critical endpoints mapped
+   · flows/state_map.json saved
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  💣  PHASE 3 — MUTATE                                                ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+✅ Phase 3 MUTATE — Gate passed.
+   5 adversarial probe scripts generated:
+
+   ┌────┬─────────────────────┬───────────────────────┐
+   │ #  │ Type                │ Target                │
+   ├────┼─────────────────────┼───────────────────────┤
+   │ 01 │ SKIP_STEP           │ /api/approve          │
+   │ 02 │ ROLE_SWAP           │ /api/access-level     │
+   │ 03 │ DATA_TAMPER         │ /api/orders           │
+   │ 04 │ REPLAY_ATTACK       │ /api/approve          │
+   │ 05 │ FORCED_BROWSING     │ /api/users/search     │
+   └────┴─────────────────────┴───────────────────────┘
+
+╔══════════════════════════════════════════════════════════════════════╗
+║  🔍  PHASE 4 — PROBE               ★  B O S S  F I G H T  ★        ║
+╚══════════════════════════════════════════════════════════════════════╝
+
+✅ Phase 4 PROBE — Complete. All gates passed.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🏗️  FlowBusters Final Report  ·  https://qa.example.com/your-workflow
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+   ┌──────────────────────────────┬─────────────────────┬─────────────┐
+   │ Probe                        │ Mutation            │ Outcome     │
+   ├──────────────────────────────┼─────────────────────┼─────────────┤
+   │ 01_skip_step_approve         │ SKIP_STEP           │ ✅ REJECTED  │
+   │ 02_role_swap_access_level    │ ROLE_SWAP           │ ✅ REJECTED  │
+   │ 03_data_tamper_orders        │ DATA_TAMPER         │ ✅ REJECTED  │
+   │ 04_replay_approve            │ REPLAY_ATTACK       │ ✅ REJECTED  │
+   │ 05_forced_browse_user_search │ FORCED_BROWSING     │ ✅ REJECTED  │
+   └──────────────────────────────┴─────────────────────┴─────────────┘
+
+   🟢  0 bugs found  ·  5 properly rejected  ·  0 errors
+
+   Verdict: All 5 adversarial probes were rejected.
+            Business logic defenses held. No remediation needed. 🎉
+
+   Artifacts:
+     flows/demo.json          interaction trace
+     flows/recording.har      network capture
+     flows/state_map.json     8 transitions · 7 critical endpoints
+     mutations/*.py           5 probe scripts
+     reports/findings.json    full results
+```
+
+---
+
 ## 🗡️  Attack Vectors
 
 Saboteur generates scripts targeting these attack vectors:
