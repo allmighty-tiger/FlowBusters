@@ -1,0 +1,20 @@
+# secrets
+.env
+
+# deps / virtualenv / caches
+node_modules/
+.venv/
+__pycache__/
+*.pyc
+
+# per-run artifacts (the current layout)
+runs/
+
+# browser tooling logs
+.playwright-mcp/
+
+# recorded captures
+*.har
+
+# machine-specific MCP config (see mcp.json.example)
+mcp.json

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "<repo-root>/node_modules/.bin/playwright-mcp",
+      "args": ["--browser", "chrome", "--ignore-https-errors"]
+    }
+  }
+}

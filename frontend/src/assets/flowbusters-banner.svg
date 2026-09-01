@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 280" width="800" height="280" font-family="-apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#c99b2e"/>
+      <stop offset="50%" stop-color="#ffe9a8"/>
+      <stop offset="100%" stop-color="#c99b2e"/>
+    </linearGradient>
+  </defs>
+
+  <!-- top gold rule -->
+  <rect x="0" y="0" width="800" height="4" fill="url(#gold)"/>
+
+  <!-- phase badges -->
+  <g text-anchor="middle">
+    <text x="140" y="42" font-size="11" fill="#7d8296" font-weight="700" letter-spacing="3">PHASE 1</text>
+    <text x="140" y="64" font-size="15" fill="#e6c15a" font-weight="600">&#127909; RECORD</text>
+    <text x="310" y="42" font-size="11" fill="#7d8296" font-weight="700" letter-spacing="3">PHASE 2</text>
+    <text x="310" y="64" font-size="15" fill="#e6c15a" font-weight="600">&#128300; ANALYZE</text>
+    <text x="480" y="42" font-size="11" fill="#7d8296" font-weight="700" letter-spacing="3">PHASE 3</text>
+    <text x="480" y="64" font-size="15" fill="#e6c15a" font-weight="600">&#128133; MUTATE</text>
+    <text x="650" y="42" font-size="11" fill="#e6c15a" font-weight="700" letter-spacing="3">&#9733; BOSS &#9733;</text>
+    <text x="650" y="64" font-size="15" fill="#e6c15a" font-weight="600">&#128269; PROBE</text>
+  </g>
+
+  <line x1="60" y1="88" x2="740" y2="88" stroke="#2a2a4a" stroke-width="1"/>
+
+  <!-- hero tagline -->
+  <text x="400" y="172" font-size="36" font-weight="700" fill="url(#gold)" text-anchor="middle" letter-spacing="4">THE LOCK WAS ONLY PAINTED</text>
+
+  <!-- subtitle -->
+  <text x="400" y="212" font-size="15" fill="#9aa4b2" text-anchor="middle" letter-spacing="1.5">record a workflow &#183; break its rules &#183; get the fix</text>
+</svg>

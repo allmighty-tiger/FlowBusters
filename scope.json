@@ -1,0 +1,5 @@
+{
+  "allowed_domains": ["http://127.0.0.1:18923/", "http://localhost:18923/"],
+  "allowed_paths_prefix": ["*"],
+  "block_production": false
+}
