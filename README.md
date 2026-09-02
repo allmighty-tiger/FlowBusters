@@ -76,11 +76,16 @@ processes.
 
 ### Prerequisites
 
+Install or have access to:
+
 - Python 3
 - Node.js and npm
 - Google Chrome
 - Claude Code CLI
 - Anthropic API key
+
+Playwright MCP is installed automatically by the repository's root
+`npm install`. No separate global Playwright MCP installation is required.
 
 ### Configure
 
@@ -94,12 +99,34 @@ cp mcp.json.example mcp.json
 
 Set `ANTHROPIC_API_KEY` in `.env`.
 
-Update the `command` in `mcp.json` to point to the local `playwright-mcp`
-executable. On Windows this may be:
+The root `npm install` installs `@playwright/mcp`. FlowBusters uses this package
+to record browser interactions.
+
+The default MCP configuration uses the locally installed Google Chrome browser:
+
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "<repo-root>/node_modules/.bin/playwright-mcp",
+      "args": ["--browser", "chrome", "--ignore-https-errors"]
+    }
+  }
+}
+```
+
+On Windows, the executable may be:
 
 ```text
 <repo-root>\node_modules\.bin\playwright-mcp.cmd
 ```
+
+Replace `<repo-root>` with the absolute path to your local FlowBusters
+repository.
+
+Because the configuration uses `"--browser", "chrome"`, Google Chrome must be
+installed on the system. A separate global Playwright MCP installation is not
+required.
 
 ### Start the backend
 
