@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from backend.runtime.orchestrator import Phase, ProgressEvent
+from backend.runtime.state_lock_probe import ensure_business_logic_finding
 
 logger = logging.getLogger("flowbusters.crew_runner")
 
@@ -412,6 +414,30 @@ def crew_browser_alive(temp_home: str) -> bool:
     return bool(_crew_chrome_pids(temp_home))
 
 
+async def kill_crew_browser(temp_home: str) -> int:
+    """Deterministically terminate the crew's Chrome processes (SIGTERM, then
+    SIGKILL stragglers). Called by the watcher once the recording is fully
+    captured (recording.har exists) so the window closes at the phase boundary
+    even if the crew never issues its own browser_close. Returns the number of
+    processes signalled. Only targets processes launched under this run's temp
+    HOME, so the user's personal browser is never touched.
+    """
+    pids = _crew_chrome_pids(temp_home)
+    if not pids:
+        return 0
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in list(pids):
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+        await asyncio.sleep(1.5)
+        pids = _crew_chrome_pids(temp_home)
+        if not pids:
+            break
+    return len(pids)
+
+
 # ── Main Runner ───────────────────────────────────────────────────────────────
 
 async def run_crew(
@@ -519,6 +545,7 @@ async def run_crew(
     window_dead_since: Optional[float] = None
     marker_announced = False
     browser_closed_announced = False
+    browser_force_closed = False  # set once the backend has force-closed the browser
     # Set the moment remediation.md lands: the report is DONE then, even if the
     # crew is still printing a final summary. Emit COMPLETE immediately so the
     # "View report" button appears at the end of the Report step instead of
@@ -571,7 +598,7 @@ async def run_crew(
                 logger.debug("stderr: %s", text[:200])
 
     async def watch_artifacts():
-        nonlocal error_msg, auto_marker_written, browser_seen, window_dead_since, marker_announced, browser_closed_announced, completion_emitted
+        nonlocal error_msg, auto_marker_written, browser_seen, window_dead_since, marker_announced, browser_closed_announced, completion_emitted, browser_force_closed
         while proc.returncode is None:
             new_artifacts = watcher.check()
 
@@ -586,6 +613,25 @@ async def run_crew(
                     "📝 Recording finished — closing browser and analyzing captured flow",
                     done=False,
                 ))
+
+            # Deterministic browser close at the phase boundary. The crew's own
+            # browser_close is LLM-driven and sometimes doesn't happen, leaving a
+            # stuck Chrome window that lingers through the analyze phase. Once the
+            # recording is fully captured — the user's Finish marker has landed AND
+            # recording.har exists (it is synthesized from the completed network
+            # dump, so the browser is no longer needed for it) — we kill the crew's
+            # Chrome ourselves. The crew proceeds to analyze/probe on disk and its
+            # probe scripts launch their own fresh browser, so nothing downstream
+            # depends on this window.
+            if not browser_force_closed and (run_dir / "recording_done.marker").exists() \
+                    and (run_dir / "flows" / flow_name / "recording.har").exists():
+                if crew_browser_alive(temp_home):
+                    killed = await kill_crew_browser(temp_home)
+                    browser_force_closed = True
+                    # The "Browser closed — recording secured" event below fires
+                    # on the next check once the process is confirmed dead, so we
+                    # log here but do not emit our own event (avoids a double line).
+                    logger.info("Browser force-closed at record->analyze boundary (%d procs signalled)", killed)
 
             # Announce once when the crew's browser process actually exits after
             # the user finished. The "closing browser" event above fires the
@@ -781,6 +827,31 @@ async def run_crew(
             f"📄 Artifact written: {name}",
             done=False,
         ))
+
+    # Optional deterministic business-logic coverage guarantee, OFF by default.
+    # The default run stands entirely on the crew's own discovery — that's what
+    # the assessment is for, and it's what a demo of the tool should show. When
+    # you need the result guaranteed regardless of the LLM crew (e.g. you've hit
+    # the non-deterministic miss / mid-probe crash), set ALLOW_STATE_LOCK_PROBE
+    # to enable the backend's own probe: it runs after the crew has fully exited
+    # (so it won't race the Prober) and, on a confirmed violation, authors/merges
+    # the finding into reports/<flow>/findings.json. Running it BEFORE the "no
+    # report produced" check also rescues a run that died mid-probe. Best-effort
+    # and never raises.
+    if os.environ.get("ALLOW_STATE_LOCK_PROBE", "").strip().lower() in ("1", "true", "yes", "on"):
+        try:
+            fid = await ensure_business_logic_finding(run_dir, flow_name, config.target_url)
+            if fid:
+                progress_cb(ProgressEvent(
+                    Phase.PROBE,
+                    f"🔒 State-lock probe confirmed business-logic violation ({fid})",
+                    done=True,
+                ))
+        except Exception as e:  # defensive — the runner is already guarded, belt-and-braces
+            logger.warning("state_lock_probe hook failed (non-fatal): %s", e)
+    else:
+        logger.info("state_lock_probe disabled (ALLOW_STATE_LOCK_PROBE not set) — "
+                    "relying on the crew's own detection")
 
     # Artifacts are written in-place under runs/<flow>/ (single source of truth);
     # the portal reads them from there. No copy-out / reconciliation needed.

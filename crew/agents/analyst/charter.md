@@ -45,8 +45,9 @@ Read and write only within `flows/{flow-name}/`.
    - **Auth tokens/cookies** — session cookies, bearer tokens, CSRF tokens with their values
    - **Role contexts** — different permission levels observed (admin, user, approver, etc.)
    - **Criticality** — HIGH (financial, approval, auth), MED (data modification), LOW (read, navigation)
-8. Write `flows/{flow-name}/state_map.json`
-9. Verify output schema and content
+8. **Infer unexercised CRUD endpoints from resource shapes.** A demo usually captures only a happy path, so state-changing endpoints are frequently ABSENT from the HAR even though they exist. For every resource visible in a *response* — especially a collection of items (with ids) nested under a parent, e.g. `dashboard → parts: [{id:1}, …]` — infer the standard mutating operations and add them to `critical_endpoints` even if no matching request was recorded. A `parts` collection implies `POST …/parts` (create) and `DELETE …/parts/{id}` (delete), and usually `PUT`/`PATCH …/parts/{id}`. State-changing operations on nested/child resources (add, delete, edit, reorder, per-item approve) are high-value targets because UIs often gate them by lifecycle state while the backend may not — always include them when the resource appears in a response. Mark each such entry with `"inferred": true` and explain the inference in `why`.
+9. Write `flows/{flow-name}/state_map.json`
+10. Verify output schema and content
 
 ## Output
 
@@ -80,11 +81,13 @@ Read and write only within `flows/{flow-name}/`.
         "url": "https://...",
         "method": "POST",
         "why": "brief explanation of business criticality",
-        "attack_surface": ["SKIP_STEP", "ROLE_SWAP", "DATA_TAMPER"]
+        "attack_surface": ["SKIP_STEP", "ROLE_SWAP", "DATA_TAMPER"],
+        "inferred": false
       }
     ]
   }
   ```
+  - `"inferred"` is `true` for endpoints that were NOT observed as a request in the HAR but were inferred from a resource shape in a response (see Process step 8). Saboteur treats inferred endpoints as first-class targets — a delete on an untested child resource is often exactly the class of business-logic flaw a happy-path demo misses.
 
 ## Verification Gate
 
