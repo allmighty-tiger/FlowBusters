@@ -194,6 +194,23 @@ Schema rules:
 - Any BUG_FOUND script must also appear in `findings[]` (a script that found a bug is a confirmed vulnerability).
 - Severity assignment: auth bypass / full-system access = Critical; unauthorized state-changing action = High; data-integrity issues (e.g. accepting negative quantity) = Medium; information leaks = Low.
 
+**Suspected-but-not-demonstrated findings MUST still be findings — never bare result rows.**
+This is the single most-missed rule. If your probing *suspicion* indicates a business-logic or
+authorization defect (especially IDOR / broken object-level access control) but you could not
+fully demonstrate it in this environment, you MUST still emit a `findings[]` entry — do NOT leave
+it as a lone entry in `results[]` with no `finding_id`. A suspected bug the tool can't exercise
+is still a valid bug a human should verify; dropping it is a report failure.
+- **Demonstrable** (you can prove it on the resource that actually exists): emit the finding and
+  back it with state-change evidence so it is `CONFIRMED`. For IDOR/BAC, demonstrate it by
+  **acting as a second, different principal on the resource that exists** (e.g. a non-owner
+  deleting/reading a part on the owner's board) — do NOT rely on a second dashboard/board
+  existing, because single-resource apps (only one board) will 404 it.
+- **Not exercisable here** (the precondition isn't met, e.g. "no second resource owned by a
+  different principal exists"): still emit the finding, set its evidence to explain what is
+  missing, and note it is **not executed — verify manually**. Give the result's `finding_id` the
+  real finding's ID (never a phantom/placeholder ID, and never `null` when a finding exists).
+  The report will surface it as "not executed / needs manual reproduction."
+
 ### 9. Generate Remediation (If Any Findings)
 
 If `findings[]` is non-empty, generate `reports/{flow-name}/remediation.md` — one `## Finding N:` section per entry in `findings[]`, **Critical first**:

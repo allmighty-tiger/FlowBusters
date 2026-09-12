@@ -50,7 +50,7 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
      If the flow has no login/credential endpoint, write `"auth_check": {"performed": false, "reason": "no login endpoint"}`.
      Not running this check is not a valid outcome — the gate below will not pass without the `auth_check` record.
 6. Compile into `reports/{flow-name}/findings.json`:
-   - `findings[]` — one entry per CONFIRMED vulnerability (from the auth check AND from every BUG_FOUND script), sorted Critical-first. Each: `title`, `source` (AUTH_CHECK | MUTATION_SCRIPT | ANALYSIS), `severity`, `cwe`, `url_tested`, `evidence`
+   - `findings[]` — one entry per vulnerability: every CONFIRMED bug (from the auth check AND from every BUG_FOUND script) **plus every suspected-but-not-demonstrated bug** (e.g. an IDOR / broken-access-control you could not exercise here), sorted Critical-first. A suspected bug that can't be demonstrated in this environment is still a finding — emit it and mark it NOT_EXECUTED with the missing precondition, so it surfaces for manual verification. Never leave a suspected bug as only a bare `results[]` row. Each: `title`, `source` (AUTH_CHECK | MUTATION_SCRIPT | ANALYSIS), `severity`, `cwe`, `url_tested`, `evidence`
    - `results[]` — the raw per-script execution log (all outcomes), unchanged
    - `summary.bugs_found` = length of `findings[]` (NOT the BUG_FOUND count in results)
 7. If `findings[]` is non-empty:

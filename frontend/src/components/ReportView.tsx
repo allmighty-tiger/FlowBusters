@@ -9,6 +9,7 @@ export interface ScriptResult {
   response_snippet: string | null;
   error_message: string | null;
   verification_reason?: string;
+  finding_id?: string | null;
   execution?: { status: string; missing_precondition?: string; next_step?: string };
 }
 
@@ -118,10 +119,11 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
   const notExecuted = report.summary.not_executed ?? findings.filter(f => f.verification_status === 'NOT_EXECUTED').length;
   const errors = Math.max(report.summary.errors, report.results.filter(r => (r.outcome === 'ERROR' || r.outcome === 'CHECK_ERROR')).length);
   return <section className="fb-report">
-    <div className="report-metrics">
+    <div className="report-metrics" aria-label="Distinct findings">
       {[[findings.filter(f => f.verification_status === 'CONFIRMED').length, 'Confirmed vulnerabilities'], [findings.filter(f => !f.verification_status || f.verification_status === 'NEEDS_REVIEW').length, 'Needs review'], [findings.filter(f => f.verification_status === 'NOT_REPRODUCED').length, 'Not reproduced findings'], [errors, 'Execution errors']].map(([value, label]) =>
         <div className="report-metric" key={label}><strong>{value}</strong><span>{label}</span></div>)}
     </div>
+    <p className="report-muted">Figures above count <strong>distinct findings</strong> (one per vulnerability), not individual probe scripts. Per-script outcomes are in the probe execution log at the bottom.</p>
     <div className="report-metric"><strong>{notExecuted}</strong><span>Not executed</span></div>
     {notExecuted > 0 && <p className="report-notice">Incomplete coverage: some checks could not run because prerequisites were missing. Their results remain unknown.</p>}
     {errors > 0 && <p className="report-notice" role="status">Incomplete coverage: {errors} probe(s) failed. Review the execution log before drawing conclusions.</p>}
@@ -163,10 +165,17 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       </details>;
     })}
     {remediation && <details className="report-finding"><summary>Complete remediation document</summary><pre className="report-prose">{remediation}</pre></details>}
-    <details className="report-finding"><summary>Probe execution log ({report.results.length} scripts)</summary>
+    <details className="report-finding"><summary>Probe execution log ({report.results.length} scripts — raw attempts)</summary>
+      <p className="report-muted">
+        These are the individual probe <em>attempts</em> the crew ran — one per mutation script — not distinct
+        vulnerabilities. The metric tiles above count <em>findings</em> (distinct bugs). A script's outcome
+        (e.g. NEEDS REVIEW) reflects whether that <em>attempt</em> could be auto-verified, not a new bug; an attempt
+        maps to a finding via its <code>finding_id</code>, and a NOT EXECUTED attempt may still be covered by a
+        CONFIRMED finding of the same bug (e.g. the deterministic state-lock probe).
+      </p>
       {report.results.length === 0 && <p>No execution records available.</p>}
-      {report.results.filter(r => r.outcome === 'NOT_EXECUTED').map((r, i) => <section className="report-notice" key={`gap-${i}`}><strong>{r.script} — Not executed</strong><p>{r.execution?.missing_precondition || r.verification_reason}</p><p>Next step: {r.execution?.next_step || 'Review the missing prerequisite before retesting.'}</p></section>)}
-      {report.results.map((result, i) => <details className="report-probe" key={i}><summary>{result.script} · {result.outcome.replaceAll('_', ' ')} · HTTP {result.status_code ?? 'not recorded'}</summary><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</details>)}
+      {report.results.filter(r => r.outcome === 'NOT_EXECUTED').map((r, i) => <section className="report-notice" key={`gap-${i}`}><strong>{r.script} — Not executed{r.finding_id ? <> (feeds {r.finding_id})</> : ''}</strong><p>{r.execution?.missing_precondition || r.verification_reason || 'Prerequisite missing; the attempt was not run.'}</p><p>Next step: {r.execution?.next_step || 'Review the missing prerequisite before retesting. This scenario is still worth a manual check.'}</p></section>)}
+      {report.results.map((result, i) => <details className="report-probe" key={i} open={result.outcome === 'NOT_EXECUTED'}><summary>{result.script} · {result.outcome.replaceAll('_', ' ')} · HTTP {result.status_code ?? 'not recorded'}{result.finding_id ? <> · → {result.finding_id}</> : ''}</summary><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</details>)}
     </details>
   </section>;
 }

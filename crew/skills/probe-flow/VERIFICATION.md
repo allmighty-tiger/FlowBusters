@@ -15,6 +15,19 @@ Do not assume all authorization tests require two objects: a single object and
 two appropriately different principals can suffice for some scenarios.
 NOT_EXECUTED means the target test action did not run; setup reads may have run.
 Keep it visible as a coverage gap, never call it safe or count it as confirmed.
+
+**Authorization / IDOR findings specifically:** a suspected broken-access-control
+defect is ALWAYS a finding, even when you could not demonstrate it here. Prefer
+demonstrating it on the resource that actually exists — act as a second, different
+principal on the owner's single board (read + a state change) — because multi-object
+IDOR 404s on single-resource apps. Only if it genuinely cannot be demonstrated do you
+emit the finding as NOT_EXECUTED with the missing precondition stated and a manual
+reproduction step. Never reduce a suspected IDOR to a bare `results[]` row with no
+`finding_id` — that drops it from the report entirely.
+When a probe demonstrates a real effect, record that effect on the finding's own
+`evidence` (e.g. an `independent_state_read` field, or the before/after state, or an
+explicit flag like `object_gone: true`) — not only in the script's stdout — so the
+report shows the proof on the finding itself.
 Timeouts, failed reads and malformed responses are CHECK_ERROR. An executed
 check with insufficient evidence remains NEEDS_REVIEW. NOT_REPRODUCED means
 this attempt did not demonstrate the violation, not that the app is secure.
