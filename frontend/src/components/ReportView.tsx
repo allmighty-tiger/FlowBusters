@@ -1,4 +1,3 @@
-import React from 'react';
 
 // Raw per-script execution log entry
 export interface ScriptResult {
@@ -9,14 +8,20 @@ export interface ScriptResult {
   url_tested: string;
   response_snippet: string | null;
   error_message: string | null;
+  verification_reason?: string;
+  execution?: { status: string; missing_precondition?: string; next_step?: string };
 }
 
-// A confirmed vulnerability, regardless of where it came from
+// A reported finding; confirmation requires independent evidence.
 export interface Finding {
   id?: string;
+  verification_status?: string;
+  verification_reason?: string;
+  execution?: { status: string; missing_precondition?: string; next_step?: string };
+  related_findings?: string[];
   title: string;
   source: string; // AUTH_CHECK | MUTATION_SCRIPT | ANALYSIS
-  severity: string; // Critical | High | Medium | Low
+  severity?: string; // Missing values are not assessed
   cwe: string[];
   script: string | null;
   mutation_type: string | null;
@@ -24,6 +29,9 @@ export interface Finding {
   // Free text, or a structured object {summary, requests, responses}
   evidence: string | { summary?: string; requests?: Record<string, unknown>[]; responses?: Record<string, unknown>[]; [k: string]: unknown };
   status_code?: number | null;
+  expected_behavior?: string;
+  actual_behavior?: string;
+  remediation?: string;
 }
 
 // Legacy fields from reports generated before the vulnerability-centric schema
@@ -46,103 +54,17 @@ export interface FindingsReport {
     critical_findings?: number;
     rejected: number;
     errors: number;
+    not_executed?: number;
   };
   additional_observations?: LegacyObservation[];
 }
 
 const SEVERITY_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3 };
 
-const SEVERITY_STYLE: Record<string, { border: string; bg: string; color: string; badge: string }> = {
-  Critical: { border: '#7f1d1d', bg: '#2d1215', color: '#fca5a5', badge: '🚨 CRITICAL' },
-  High: { border: '#7c2d12', bg: '#2b1210', color: '#fdba74', badge: '⚠️ HIGH' },
-  Medium: { border: '#7a5c1e', bg: '#241c07', color: '#e6c15a', badge: 'MEDIUM' },
-  Low: { border: '#166534', bg: '#14231a', color: '#86efac', badge: 'LOW' },
-};
-
-const SOURCE_LABEL: Record<string, string> = {
-  AUTH_CHECK: 'Auth check',
-  MUTATION_SCRIPT: 'Mutation',
-  ANALYSIS: 'Analysis',
-};
-
-function outcomeBadge(outcome: string) {
-  const styles: Record<string, React.CSSProperties> = {
-    BUG_FOUND: { background: '#241c07', color: '#e6c15a' },
-    REJECTED: { background: '#14231a', color: '#86efac' },
-    ERROR: { background: '#2b2410', color: '#fcd34d' },
-  };
-  const icons: Record<string, string> = { BUG_FOUND: '⚡', REJECTED: '✅', ERROR: '⚠️' };
-  const style = styles[outcome] || { background: '#1a1a3e', color: '#ccc' };
-  return (
-    <span style={{ ...style, padding: '0.2rem 0.6rem', borderRadius: 4, fontSize: '0.8rem', fontWeight: 600 }}>
-      {(icons[outcome] ? icons[outcome] + ' ' : '') + outcome.replace('_', ' ')}
-    </span>
-  );
-}
-
-// Split remediation.md into a leading summary (text before the first "## Finding" / "## ")
-// and one block per finding heading, in document order.
-function parseRemediation(remediation: string): { summary: string; bugs: string[] } {
-  const lines = remediation.split('\n');
-  const heads: number[] = [];
-  lines.forEach((l, i) => {
-    if (l.startsWith('## ') && !l.startsWith('## Summary')) heads.push(i);
-  });
-  if (heads.length === 0) return { summary: remediation, bugs: [] };
-  const summary = lines.slice(0, heads[0]).join('\n').trim();
-  const bugs = heads.map((h, k) =>
-    lines.slice(h, k + 1 < heads.length ? heads[k + 1] : lines.length).join('\n').trim()
-  );
-  return { summary, bugs };
-}
-
-// Render a markdown-ish remediation block as styled lines.
-function renderRemediationBlock(text: string) {
-  return text.split('\n').map((line, i) => {
-    const t = line.trim();
-    if (t.startsWith('## ')) return <h4 key={i} style={{ margin: '0.25rem 0 0.5rem', color: '#e2e8f0', fontSize: '0.95rem' }}>{t.replace('## ', '')}</h4>;
-    if (t.startsWith('### ')) return <h5 key={i} style={{ margin: '0.5rem 0 0.4rem', color: '#cbd5e1', fontSize: '0.9rem' }}>{t.replace('### ', '')}</h5>;
-    if (t === '---' || t === '') return <div key={i} style={{ height: '0.4rem' }} />;
-    const bold = (s: string) => s.replace(/(\*\*.*?\*\*)/g, '<strong style="color:#e2e8f0">$1</strong>');
-    if (t.startsWith('- **')) return <p key={i} style={{ margin: '0.2rem 0', color: '#94a3b8', fontSize: '0.85rem', lineHeight: 1.6 }} dangerouslySetInnerHTML={{ __html: '-' + bold(t.slice(1)) }} />;
-    if (t.startsWith('- ')) return <p key={i} style={{ margin: '0.2rem 0', color: '#94a3b8', fontSize: '0.85rem', lineHeight: 1.6 }}>- {bold(t.slice(2))}</p>;
-    if (t.startsWith('**')) return <p key={i} style={{ margin: '0.3rem 0', color: '#e2e8f0', fontSize: '0.85rem', fontWeight: 600 }}>{t.replace(/\*\*/g, '')}</p>;
-    return <p key={i} style={{ margin: '0.2rem 0', color: '#94a3b8', fontSize: '0.85rem', lineHeight: 1.6 }}>{bold(t)}</p>;
-  });
-}
-
-// Structured evidence → plain-text transcript + compact "Request / Response" pairs.
-function evidenceText(ev: Finding['evidence']): string {
-  if (typeof ev === 'string') return ev;
-  const out: string[] = [];
-  if (ev.summary) out.push(ev.summary, '');
-  (ev.requests || []).forEach((req, i) => {
-    out.push(`── Request: ${String(req.label ?? i + 1)} ──`);
-    if (req.method) out.push(`  ${req.method} ${req.url ?? ''}`.trimEnd());
-    const rest = { ...req }; delete rest.label; delete rest.method; delete rest.url;
-    if (Object.keys(rest).length) out.push('  ' + JSON.stringify(rest, null, 2).split('\n').join('\n  '));
-    const resp = (ev.responses || [])[i];
-    if (resp) {
-      out.push(`── Response: ${String(resp.label ?? i + 1)} ──`);
-      if (resp.status_code != null) out.push(`  HTTP ${resp.status_code}`);
-      const body = resp.response_body;
-      if (body) out.push(typeof body === 'string' ? `  ${body}` : '  ' + JSON.stringify(body, null, 2).split('\n').join('\n  '));
-    }
-    out.push('');
-  });
-  return out.join('\n').trim() || JSON.stringify(ev, null, 2);
-}
-
-function isStructuredEvidence(ev: Finding['evidence']): ev is Record<string, unknown> {
-  return typeof ev !== 'string';
-}
-
-// Normalize to the vulnerability-centric view. New reports have findings[];
-// older ones only have results[] (+ optional additional_observations) — rebuild.
 function normalizeFindings(report: FindingsReport): Finding[] {
-  if (report.findings && report.findings.length >= 0) {
+  if (Array.isArray(report.findings)) {
     return [...report.findings].sort(
-      (a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9)
+      (a, b) => (SEVERITY_RANK[a.severity || ""] ?? 9) - (SEVERITY_RANK[b.severity || ""] ?? 9)
     );
   }
   const legacy: Finding[] = [];
@@ -150,7 +72,7 @@ function normalizeFindings(report: FindingsReport): Finding[] {
     legacy.push({
       title: o.finding,
       source: /login|auth|credential/i.test(o.finding) ? 'AUTH_CHECK' : 'ANALYSIS',
-      severity: o.severity || 'High',
+      severity: o.severity || 'Not assessed',
       cwe: o.cwe || [],
       script: null,
       mutation_type: null,
@@ -162,7 +84,7 @@ function normalizeFindings(report: FindingsReport): Finding[] {
     legacy.push({
       title: r.script,
       source: 'MUTATION_SCRIPT',
-      severity: 'High',
+      severity: 'Not assessed',
       cwe: [],
       script: r.script,
       mutation_type: r.mutation_type,
@@ -171,223 +93,80 @@ function normalizeFindings(report: FindingsReport): Finding[] {
       status_code: r.status_code,
     });
   });
-  return legacy.sort((a, b) => (SEVERITY_RANK[a.severity] ?? 9) - (SEVERITY_RANK[b.severity] ?? 9));
+  return legacy.sort((a, b) => (SEVERITY_RANK[a.severity || ""] ?? 9) - (SEVERITY_RANK[b.severity || ""] ?? 9));
+}
+
+
+const pretty = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+const titleKey = (value: string) => value.toLowerCase().replace(/^finding\s+\d+[:.\s-]*|^\d+[.)]\s*/g, '').replace(/[^a-z0-9]+/g, '');
+
+// Never attach guidance by array position: severity sorting changes that order.
+export function guidanceFor(finding: Finding, markdown: string | null): string | undefined {
+  if (finding.remediation) return finding.remediation;
+  if (!markdown) return;
+  const sections = [...markdown.matchAll(/^#{2,3} (.+)\r?\n([\s\S]*?)(?=^#{2,3} |$(?![\s\S]))/gm)];
+  const matches = sections.filter(([, heading]) => {
+    const text = heading || '';
+    const ids = text.match(/\bF-\d+\b/gi) || [];
+    return (finding.id && ids.some(id => id.toLowerCase() === finding.id!.toLowerCase())) || titleKey(text) === titleKey(finding.title);
+  });
+  return matches.length === 1 ? matches[0]?.[2]?.trim() : undefined;
 }
 
 export default function ReportView({ report, remediation }: { report: FindingsReport; remediation: string | null }) {
-  const rem = remediation ? parseRemediation(remediation) : { summary: '', bugs: [] as string[] };
   const findings = normalizeFindings(report);
-  const criticalCount = findings.filter(f => f.severity === 'Critical').length;
-
-  return (
-    <div>
-      {/* Summary Cards */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap' }}>
-        <div style={{
-          flex: 1, minWidth: 130, background: report.summary.bugs_found > 0 ? '#241c07' : '#14231a',
-          border: `1px solid ${report.summary.bugs_found > 0 ? '#7a5c1e' : '#166534'}`,
-          borderRadius: 8, padding: '1rem', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: '2rem', fontWeight: 700, color: report.summary.bugs_found > 0 ? '#e6c15a' : '#86efac' }}>
-            {findings.length}
-          </div>
-          <div style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase' }}>Vulnerabilities</div>
-        </div>
-        <div style={{
-          flex: 1, minWidth: 130, background: criticalCount > 0 ? '#2d1215' : '#14231a',
-          border: `1px solid ${criticalCount > 0 ? '#7f1d1d' : '#166534'}`,
-          borderRadius: 8, padding: '1rem', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: '2rem', fontWeight: 700, color: criticalCount > 0 ? '#fca5a5' : '#86efac' }}>{criticalCount}</div>
-          <div style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase' }}>Critical</div>
-        </div>
-        <div style={{
-          flex: 1, minWidth: 130, background: '#14231a', border: '1px solid #166534', borderRadius: 8, padding: '1rem', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: '2rem', fontWeight: 700, color: '#86efac' }}>{report.summary.rejected}</div>
-          <div style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase' }}>Properly Rejected</div>
-        </div>
-        <div style={{
-          flex: 1, minWidth: 130, background: '#2b2410', border: '1px solid #713f12', borderRadius: 8, padding: '1rem', textAlign: 'center',
-        }}>
-          <div style={{ fontSize: '2rem', fontWeight: 700, color: '#fcd34d' }}>{report.summary.errors}</div>
-          <div style={{ fontSize: '0.8rem', color: '#888', textTransform: 'uppercase' }}>Errors</div>
-        </div>
-      </div>
-
-      {/* Findings — the vulnerability list, Critical first */}
-      <h2 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>
-        Findings <span style={{ color: '#475569', fontSize: '0.9rem' }}>({findings.length})</span>
-      </h2>
-      {findings.length === 0 && (
-        <div style={{ color: '#86efac', padding: '1rem', background: '#14231a', border: '1px solid #166534', borderRadius: 6, marginBottom: '2rem' }}>
-          ✅ No vulnerabilities confirmed — all mutations were properly rejected or errored.
-        </div>
-      )}
-      {findings.map((f, i) => {
-        const s = SEVERITY_STYLE[f.severity] || { border: '#333', bg: '#111', color: '#ccc', badge: f.severity || 'NOTE' };
-        const isCritical = f.severity === 'Critical';
-        const ev = isStructuredEvidence(f.evidence) ? f.evidence : null;
-        return (
-          <details key={i} style={{
-            background: isCritical ? '#1a0f14' : '#151228',
-            border: `1px solid ${isCritical ? '#7f1d1d' : '#222'}`,
-            borderRadius: 8, marginBottom: '0.75rem', overflow: 'hidden',
-          }}>
-            <summary style={{
-              cursor: 'pointer', padding: '0.85rem 1.1rem', listStyle: 'none',
-              display: 'flex', alignItems: 'center', gap: '0.6rem', flexWrap: 'wrap',
-            }}>
-              <span style={{ background: s.bg, border: `1px solid ${s.border}`, color: s.color, padding: '0.15rem 0.5rem', borderRadius: 4, fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.03em' }}>
-                {s.badge}
-              </span>
-              <span style={{ color: '#e2e8f0', fontSize: '0.95rem', fontWeight: 600 }}>{f.title}</span>
-              <span style={{ color: '#64748b', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                {SOURCE_LABEL[f.source] || f.source}
-              </span>
-              {f.cwe && f.cwe.length > 0 && (
-                <span style={{ color: '#475569', fontSize: '0.8rem' }}>{f.cwe.join(', ')}</span>
-              )}
-              <span style={{ marginLeft: 'auto', color: '#475569', fontSize: '0.8rem' }}>details</span>
-            </summary>
-            <div style={{ padding: '0 1.1rem 1.1rem', borderTop: '1px solid #222' }}>
-              <div style={{ paddingTop: '0.9rem' }}>
-                {f.url_tested && (
-                  <p style={{ margin: '0 0 0.4rem', color: '#94a3b8', fontSize: '0.85rem' }}>
-                    Endpoint: <code style={{ color: '#e2e8f0' }}>{f.url_tested}</code>
-                  </p>
-                )}
-                {f.script && (
-                  <p style={{ margin: '0 0 0.4rem', color: '#94a3b8', fontSize: '0.85rem' }}>
-                    Script: <code style={{ color: '#e2e8f0' }}>{f.script}</code>
-                    {f.mutation_type && <span style={{ color: '#64748b' }}> ({f.mutation_type})</span>}
-                    {f.status_code != null && <span style={{ color: '#64748b' }}> — status {f.status_code}</span>}
-                  </p>
-                )}
-                {typeof f.evidence === 'string' && f.evidence && (
-                  <pre style={{
-                    margin: '0.5rem 0', background: '#0b0b14', border: '1px solid #1e293b',
-                    padding: '0.5rem', borderRadius: 4, fontSize: '0.75rem', color: '#94a3b8',
-                    overflow: 'auto', maxHeight: 160, whiteSpace: 'pre-wrap',
-                  }}>
-                    {f.evidence}
-                  </pre>
-                )}
-                {ev && (
-                  <div style={{ marginTop: '0.5rem' }}>
-                    {ev.summary && (
-                      <p style={{ margin: '0 0 0.6rem', color: '#cbd5e1', fontSize: '0.85rem', lineHeight: 1.6 }}>
-                        {ev.summary}
-                      </p>
-                    )}
-                    {(ev.requests?.length ?? 0) > 0 && (
-                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem', marginBottom: '0.6rem' }}>
-                        <thead>
-                          <tr style={{ color: '#475569', textAlign: 'left', borderBottom: '1px solid #1e293b' }}>
-                            <th style={{ padding: '0.35rem 0.5rem' }}>Probe</th>
-                            <th style={{ padding: '0.35rem 0.5rem' }}>Request</th>
-                            <th style={{ padding: '0.35rem 0.5rem' }}>Status</th>
-                            <th style={{ padding: '0.35rem 0.5rem' }}>Response</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {(ev.requests || []).map((req, i) => {
-                            const resp = ev.responses?.[i];
-                            const status = typeof resp?.status_code === 'number' ? resp.status_code : null;
-                            const body = resp?.response_body;
-                            const bodyStr = typeof body === 'string' ? body : body ? JSON.stringify(body) : '';
-                            return (
-                              <tr key={i} style={{ borderBottom: '1px solid #16162a', verticalAlign: 'top' }}>
-                                <td style={{ padding: '0.35rem 0.5rem', color: '#94a3b8' }}>{String(req.label ?? i + 1)}</td>
-                                <td style={{ padding: '0.35rem 0.5rem', color: '#e2e8f0', fontFamily: 'monospace', fontSize: '0.75rem' }}>
-                                  {req.method ? `${req.method} ${req.url ?? ''}` : ''}
-                                  <div style={{ color: '#475569', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-                                    {JSON.stringify({ ...req, label: undefined, method: undefined, url: undefined })}
-                                  </div>
-                                </td>
-                                <td style={{ padding: '0.35rem 0.5rem', color: status == null ? '#888' : (status >= 400 ? '#86efac' : '#fca5a5') }}>
-                                  {status ?? '—'}
-                                </td>
-                                <td style={{ padding: '0.35rem 0.5rem', color: '#94a3b8', fontFamily: 'monospace', fontSize: '0.72rem', whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxWidth: 260 }}>
-                                  {bodyStr}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    )}
-                    <details>
-                      <summary style={{ cursor: 'pointer', color: '#475569', fontSize: '0.78rem', marginBottom: '0.5rem' }}>
-                        full request/response transcript
-                      </summary>
-                      <pre style={{
-                        margin: '0.4rem 0 0', background: '#0b0b14', border: '1px solid #1e293b',
-                        padding: '0.5rem', borderRadius: 4, fontSize: '0.72rem', color: '#94a3b8',
-                        overflow: 'auto', maxHeight: 220, whiteSpace: 'pre-wrap',
-                      }}>
-                        {evidenceText(f.evidence)}
-                      </pre>
-                    </details>
-                  </div>
-                )}
-              </div>
-              {rem.bugs[i] && (
-                <div style={{ marginTop: '0.75rem', borderTop: '1px solid #222', paddingTop: '0.75rem' }}>
-                  <div style={{ color: '#64748b', fontSize: '0.75rem', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.4rem' }}>
-                    Remediation
-                  </div>
-                  {renderRemediationBlock(rem.bugs[i])}
-                </div>
-              )}
-            </div>
-          </details>
-        );
-      })}
-
-      {remediation && (
-        <details style={{ marginBottom: '1.5rem' }}>
-          <summary style={{ cursor: 'pointer', color: '#94a3b8', fontSize: '0.9rem' }}>
-            Remediation summary
-          </summary>
-          <div style={{
-            marginTop: '0.75rem', background: '#111128', border: '1px solid #222',
-            borderRadius: 8, padding: '1rem 1.25rem',
-          }}>
-            {renderRemediationBlock(rem.summary)}
-          </div>
-        </details>
-      )}
-
-      {/* Per-script execution log */}
-      <h2 style={{ fontSize: '1.1rem', marginBottom: '1rem' }}>
-        Probe Execution Log <span style={{ color: '#475569', fontSize: '0.9rem' }}>({report.results.length} scripts)</span>
-      </h2>
-      <div style={{ overflowX: 'auto', marginBottom: '2rem' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-          <thead>
-            <tr style={{ borderBottom: '1px solid #333' }}>
-              <th style={{ textAlign: 'left', padding: '0.5rem', color: '#888' }}>Script</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem', color: '#888' }}>Type</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem', color: '#888' }}>Outcome</th>
-              <th style={{ textAlign: 'left', padding: '0.5rem', color: '#888' }}>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {report.results.map((r, i) => (
-              <tr key={i} style={{
-                borderBottom: '1px solid #1a1a3e',
-                background: r.outcome === 'BUG_FOUND' ? 'rgba(230,193,90,0.08)' : 'transparent',
-              }}>
-                <td style={{ padding: '0.6rem 0.5rem', color: '#e2e8f0' }}>{r.script}</td>
-                <td style={{ padding: '0.6rem 0.5rem', color: '#888' }}>{r.mutation_type}</td>
-                <td style={{ padding: '0.6rem 0.5rem' }}>{outcomeBadge(r.outcome)}</td>
-                <td style={{ padding: '0.6rem 0.5rem', color: '#888' }}>{r.status_code || '-'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+  const notExecuted = report.summary.not_executed ?? findings.filter(f => f.verification_status === 'NOT_EXECUTED').length;
+  const errors = Math.max(report.summary.errors, report.results.filter(r => (r.outcome === 'ERROR' || r.outcome === 'CHECK_ERROR')).length);
+  return <section className="fb-report">
+    <div className="report-metrics">
+      {[[findings.filter(f => f.verification_status === 'CONFIRMED').length, 'Confirmed vulnerabilities'], [findings.filter(f => !f.verification_status || f.verification_status === 'NEEDS_REVIEW').length, 'Needs review'], [findings.filter(f => f.verification_status === 'NOT_REPRODUCED').length, 'Not reproduced findings'], [errors, 'Execution errors']].map(([value, label]) =>
+        <div className="report-metric" key={label}><strong>{value}</strong><span>{label}</span></div>)}
     </div>
-  );
+    <div className="report-metric"><strong>{notExecuted}</strong><span>Not executed</span></div>
+    {notExecuted > 0 && <p className="report-notice">Incomplete coverage: some checks could not run because prerequisites were missing. Their results remain unknown.</p>}
+    {errors > 0 && <p className="report-notice" role="status">Incomplete coverage: {errors} probe(s) failed. Review the execution log before drawing conclusions.</p>}
+    <h2>Findings and checks <span className="report-count">{findings.length}</span></h2>
+    <p className="report-muted">Severity describes potential impact. An HTTP status alone does not confirm a vulnerability.</p>
+    {findings.length === 0 && <div className="report-finding"><h3>No findings reported</h3><p>{errors ? 'Some probes could not be evaluated. This is not a clean assessment.' : 'No issues were reported by these probes. This does not establish that the target is secure.'}</p></div>}
+    {findings.map((finding, index) => {
+      const evidence = typeof finding.evidence === 'string' ? null : finding.evidence;
+      const guidance = guidanceFor(finding, remediation);
+      const severity = Object.keys(SEVERITY_RANK).find(level => level.toLowerCase() === finding.severity?.trim().toLowerCase());
+      return <details className="report-finding" key={finding.id || index} open={index === 0}>
+        <summary className="finding-heading">
+          <strong>{(finding.verification_status || 'NEEDS_REVIEW').replaceAll('_', ' ')}</strong>
+          <span className={`report-severity severity-${severity?.toLowerCase() || "unassessed"}`}>Severity: {severity || "Not assessed"}</span>
+          <span className="report-meta">{severity ? "AI-assessed · " : ""}{finding.cwe?.join(', ') || 'CWE not recorded'}</span>
+          <h3>{finding.title}</h3>
+        </summary>
+        <p className="report-notice"><strong>{({CONFIRMED: 'Confirmed', NEEDS_REVIEW: 'Needs review', NOT_REPRODUCED: 'Not reproduced', NOT_EXECUTED: 'Not executed — result unknown', CHECK_ERROR: 'Check error'} as Record<string, string>)[finding.verification_status || 'NEEDS_REVIEW'] || 'Needs review'}</strong><br />{finding.verification_reason || 'No supported state verification recorded.'}</p>
+        {finding.verification_status === 'NOT_EXECUTED' && <section className="report-guidance"><h4>Missing prerequisite</h4><p>{finding.execution?.missing_precondition || finding.verification_reason}</p><h4>Next step / manual test</h4><p>{finding.execution?.next_step || 'No specific next step recorded. Review the missing prerequisite before retesting.'}</p></section>}
+        {!!finding.related_findings?.length && <section><h4>Related evidence</h4><p>{finding.related_findings.filter(id => id !== finding.id && findings.some(f => f.id === id)).join(', ') || 'No matching finding in this report.'}</p><p className="report-muted">Related findings do not independently confirm this scenario.</p></section>}
+        {finding.url_tested && <p className="report-endpoint"><strong>Tested endpoint</strong><code>{finding.url_tested}</code></p>}
+        <div className="report-comparison">
+          <section><h4>Expected behavior</h4><p>{finding.expected_behavior || 'Not recorded separately. Review the evidence summary below.'}</p></section>
+          <section><h4>Observed behavior</h4><p>{finding.actual_behavior || 'Not recorded separately. Review the captured responses below.'}</p></section>
+        </div>
+        <h4>Evidence summary</h4>
+        <p className="report-summary">{evidence ? (evidence.summary || 'No summary recorded. Inspect the evidence below.') : (finding.evidence as string || 'No evidence recorded.')}</p>
+        <details className="report-evidence"><summary>Inspect requests and responses ({Math.max(evidence?.requests?.length || 0, evidence?.responses?.length || 0)})</summary>
+          {Array.from({length: Math.max(evidence?.requests?.length || 0, evidence?.responses?.length || 0)}, (_, i) => {
+            const request = evidence?.requests?.[i];
+            const response = evidence?.responses?.[i];
+            return <section className="report-probe" key={i}><h4>{String(request?.label ?? `Probe ${i + 1}`)}</h4><h5>Request</h5><pre>{request ? pretty(request) : 'Request not recorded'}</pre><h5>Response</h5><pre>{response ? pretty(response) : 'Response not recorded'}</pre></section>;
+          })}
+          <h5>Complete evidence</h5><pre>{pretty(finding.evidence)}</pre>
+          <p className="report-muted">Source: {finding.source.replaceAll('_', ' ')}{finding.script ? ` · Script: ${finding.script}` : ''}</p>
+          {finding.status_code != null && <p>HTTP status: {finding.status_code}</p>}
+        </details>
+        <section className="report-guidance"><h4>Recommended fix</h4>{guidance ? <pre className="report-prose">{guidance}</pre> : <p className="report-muted">{remediation ? 'No unambiguous match to this finding. See the complete remediation document below.' : 'No remediation guidance recorded.'}</p>}</section>
+      </details>;
+    })}
+    {remediation && <details className="report-finding"><summary>Complete remediation document</summary><pre className="report-prose">{remediation}</pre></details>}
+    <details className="report-finding"><summary>Probe execution log ({report.results.length} scripts)</summary>
+      {report.results.length === 0 && <p>No execution records available.</p>}
+      {report.results.filter(r => r.outcome === 'NOT_EXECUTED').map((r, i) => <section className="report-notice" key={`gap-${i}`}><strong>{r.script} — Not executed</strong><p>{r.execution?.missing_precondition || r.verification_reason}</p><p>Next step: {r.execution?.next_step || 'Review the missing prerequisite before retesting.'}</p></section>)}
+      {report.results.map((result, i) => <details className="report-probe" key={i}><summary>{result.script} · {result.outcome.replaceAll('_', ' ')} · HTTP {result.status_code ?? 'not recorded'}</summary><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</details>)}
+    </details>
+  </section>;
 }

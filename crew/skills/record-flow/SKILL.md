@@ -71,14 +71,14 @@ Structure each interaction as:
 
 ### 5. Capture Network Traffic (HAR)
 
-Playwright MCP writes network data **directly to disk** — the model never
-regenerates JSON. Use the `filename=` parameter on every network tool call
-so data flows: MCP → file (milliseconds, not token-by-token).
+Playwright MCP writes network data **directly to disk**. The full-detail call
+contains status and headers, but bodies are separate request parts. Capture
+those parts explicitly; never infer a body from `content-length`.
 
 #### 5a. Get Request List (to file)
 
 ```
-browser_network_requests(static=false, filter="/api/.*|\\.(json)$", filename="flows/{flow-name}/har_data/network_requests.json")
+browser_network_requests(static=false, filter="/api/.*|\\.(json)$", filename="flows/{flow-name}/har_data/network_requests.log")
 ```
 
 The `filter` parameter tells Playwright MCP to only return API/JSON requests.
@@ -87,22 +87,26 @@ The `filename=` parameter writes the result directly to disk.
 **Fallback:** If filtering returns fewer than 2 entries, call again without
 the `filter` parameter (all requests, static=false):
 ```
-browser_network_requests(static=false, filename="flows/{flow-name}/har_data/network_requests.json")
+browser_network_requests(static=false, filename="flows/{flow-name}/har_data/network_requests.log")
 ```
 
 Create the directory first: `mkdir -p flows/{flow-name}/har_data`
 
 #### 5b. Collect Request Details (to files)
 
-Read `network_requests.json` to get the list of indices. For each index N,
-call `browser_network_request` with `filename=`:
+Read `network_requests.log` to get the original 1-based indices. Filtering can
+leave gaps, so preserve the printed number. For each index N, save the full
+details and both body parts. Use a zero-padded filename (`001`, `002`, ...):
 
 ```
-browser_network_request(index=N, filename="flows/{flow-name}/har_data/request_N.json")
+browser_network_request(index=N, filename="flows/{flow-name}/har_data/request_NNN.log")
+browser_network_request(index=N, part="request-body", filename="flows/{flow-name}/har_data/request_NNN_request_body.txt")
+browser_network_request(index=N, part="response-body", filename="flows/{flow-name}/har_data/request_NNN_response_body.txt")
 ```
 
-**CRITICAL:** Use `filename=` on every call. Playwright MCP writes the file
-directly. **Do NOT regenerate the data as text output.**
+Empty request bodies are normal for GET. A successful JSON response normally
+has a body; if its response-body file is absent or empty, the capture gate must
+fail. Use `filename=` on every call. Do not rewrite tool output through the model.
 
 #### 5c. Synthesize HAR 1.2
 

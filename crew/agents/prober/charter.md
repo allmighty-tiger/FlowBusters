@@ -36,8 +36,6 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
    - Capture stdout and stderr
    - Parse the JSON line from stdout
    - Classify outcome:
-     - **BUG_FOUND** — `expected_rejection` is `true` AND response `status_code` is 2xx (server accepted what it should have rejected)
-     - **REJECTED** — Server properly rejected the malicious request (4xx/5xx when expected_rejection is true)
      - **ERROR** — Script failed to execute (timeout, import error, connection error, malformed output)
 4. Handle common errors:
    - `ImportError` / `ModuleNotFoundError` → Report which module is missing and how to install it
@@ -47,6 +45,10 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
    - POST the login endpoint with a KNOWN user + WRONG password
    - POST the login endpoint with an UNKNOWN user + any password
    - If EITHER returns 200 with a usable token/cookie/session, authentication is not enforced — record it in `findings[]` with `source: "AUTH_CHECK"`, severity `Critical`, CWE-287, and the exact test credentials/responses as evidence. It goes FIRST in the report (it dwarfs per-endpoint bugs: it grants full system access)
+   - **Record the outcome in `findings.json` either way**, in a top-level `auth_check` field, so the check cannot be silently skipped:
+     `"auth_check": {"performed": true, "login_endpoint": "<url>", "vulnerable": true|false, "evidence": "the two test requests + responses"}`.
+     If the flow has no login/credential endpoint, write `"auth_check": {"performed": false, "reason": "no login endpoint"}`.
+     Not running this check is not a valid outcome — the gate below will not pass without the `auth_check` record.
 6. Compile into `reports/{flow-name}/findings.json`:
    - `findings[]` — one entry per CONFIRMED vulnerability (from the auth check AND from every BUG_FOUND script), sorted Critical-first. Each: `title`, `source` (AUTH_CHECK | MUTATION_SCRIPT | ANALYSIS), `severity`, `cwe`, `url_tested`, `evidence`
    - `results[]` — the raw per-script execution log (all outcomes), unchanged
@@ -115,7 +117,10 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
 
 - `reports/{flow-name}/findings.json` exists, is valid JSON, and has both `findings` and `results` fields
 - Every BUG_FOUND script appears as a `findings[]` entry
-- Auth sanity check (step 5) was run if the flow contained a login endpoint
+- Auth sanity check (step 5) produced an `auth_check` record in findings.json: if the flow
+  contained a login endpoint, `auth_check.performed` is `true` and `auth_check.vulnerable`
+  matches whether an AUTH_CHECK finding was emitted (vulnerable ⇒ finding present FIRST);
+  if there was no login endpoint, `auth_check.performed` is `false` with a reason
 - All scripts in `mutations/{flow-name}/` have been executed (or timed out)
 - Summary tables printed to chat showing:
   ```
@@ -143,3 +148,12 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
 - **NEVER** run scripts against URLs not already present in the mutation scripts
 - **ALWAYS** capture and report errors gracefully (don't crash on script failures)
 - **ALWAYS** print the summary table before declaring the gate passed
+
+## Required verification contract (supersedes legacy outcome examples above)
+Read `crew/skills/probe-flow/VERIFICATION.md` before probing.
+Never classify a vulnerability or a successful defense from HTTP status alone.
+Legacy BUG_FOUND labels and automatic auth Critical instructions do not bypass
+backend verification. A token response alone is not proof of usable access.
+Use CONFIRMED, NEEDS_REVIEW, NOT_REPRODUCED or CHECK_ERROR. The backend
+recomputes the verdict from supported evidence. Include every suspected finding,
+including inconclusive results, and associate probe evidence using finding_id.

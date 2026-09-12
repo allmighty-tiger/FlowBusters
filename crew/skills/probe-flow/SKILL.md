@@ -68,9 +68,6 @@ Each script should print exactly one JSON line to stdout:
 
 | Condition | Classification | Meaning |
 |-----------|---------------|---------|
-| `expected_rejection == true` AND `status_code` is 2xx (200-299) | **BUG_FOUND** 🐛 | Server accepted a request it should have rejected |
-| `expected_rejection == true` AND `status_code` is 4xx/5xx | **REJECTED** ✅ | Server properly blocked the attack |
-| `expected_rejection == false` AND `status_code` is 2xx | **REJECTED** ✅ | Expected behavior confirmed |
 | Script times out (>30s) | **ERROR** ⚠️ | Timeout — possible network issue or infinite loop |
 | Script throws exception | **ERROR** ⚠️ | Execution failure |
 | No JSON in stdout | **ERROR** ⚠️ | Malformed script output |
@@ -292,3 +289,12 @@ Summary: {N} findings ({K} critical) | {R} rejected | {E} errors
 - **Report ALL outcomes** — don't skip ERRORs, they indicate setup issues the user needs to fix
 - **Be actionable** — for every ERROR, tell the user exactly how to fix it (install command, config change, etc.)
 - **Flow isolation:** Read only from `mutations/{flow-name}/` and write only to `reports/{flow-name}/`.
+
+## Required verification contract (supersedes legacy outcome examples above)
+Read `crew/skills/probe-flow/VERIFICATION.md` before probing.
+Never classify a vulnerability or a successful defense from HTTP status alone.
+Legacy BUG_FOUND labels and automatic auth Critical instructions do not bypass
+backend verification. A token response alone is not proof of usable access.
+Use CONFIRMED, NEEDS_REVIEW, NOT_REPRODUCED or CHECK_ERROR. The backend
+recomputes the verdict from supported evidence. Include every suspected finding,
+including inconclusive results, and associate probe evidence using finding_id.

@@ -23,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
+from backend.runtime.verification import normalize_report, load_report
 from backend.runtime.orchestrator import ProgressEvent, Phase, run_flowbusters
 
 # Load .env so ANTHROPIC_API_KEY, etc. are available immediately
@@ -115,6 +116,7 @@ def _make_progress_cb():
 
 @app.post("/api/assessments")
 async def start_assessment(body: AssessmentRequest):
+    logging.getLogger("flowbusters.runtime").info("Assessment start request received")
     global _active_run, _progress_queue, _last_findings, _last_remediation, _last_flow_name
 
     if _active_run and not _active_run.done():
@@ -223,7 +225,7 @@ async def get_report(flow_name: str = Query(default="")):
     if not findings_path.exists():
         return JSONResponse(status_code=404, content={"detail": "No report found"})
 
-    findings = json.loads(findings_path.read_text())
+    findings = load_report(findings_path)
     remediation = remediation_path.read_text() if remediation_path.exists() else None
 
     state_map = (run_dir / "flows" / flow_name / "state_map.json")
@@ -263,7 +265,7 @@ async def list_reports():
             continue
 
         try:
-            data = json.loads(findings_path.read_text())
+            data = load_report(findings_path)
         except (json.JSONDecodeError, OSError):
             continue
 
@@ -296,6 +298,9 @@ async def list_reports():
             "run_timestamp": data.get("run_timestamp", ""),
             "modified": modified,
             "bugs_found": bugs_found,
+            "confirmed": summary.get("confirmed", 0),
+            "needs_review": summary.get("needs_review", 0),
+            "not_executed": summary.get("not_executed", 0),
             "critical_findings": critical,
             "rejected": summary.get("rejected", 0),
             "errors": summary.get("errors", 0),

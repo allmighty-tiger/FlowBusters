@@ -20,6 +20,17 @@ This module:
      the recorded lifecycle POSTs (idempotent), then attempt the child DELETE
      and confirm whether the child was actually removed. Returns a finding dict
      when the server accepted the delete on a locked parent; None otherwise.
+
+  Known limitations (read before trusting results):
+  - DESTRUCTIVE, NO ROLLBACK. run_probe deletes a real child resource and the
+    removal is not reverted. Point this only at a disposable fixture; against a
+    real system the "confirmation" step has an irreversible side effect.
+  - COOKIE-AUTH ONLY. Requests send a single Cookie header and re-login
+    parses Set-Cookie / a JSON token. Apps that authenticate with
+    "Authorization: Bearer" or multiple cookies are not authenticated here, so
+    the probe returns None and is logged as "no violation" — a SILENT FALSE
+    NEGATIVE, not a clean bill of health. If the target uses token auth, treat
+    a probe no-op as "not testable by this probe", not "secure".
   3. merge_finding(run_dir, flow_name, finding, target_url) — create or merge a
      findings.json (+ remediation.md) under reports/<flow>/ so the standard
      orchestrator/report pipeline picks it up. Idempotent: it replaces any prior
@@ -34,6 +45,7 @@ Stdlib only — this runs in the backend process, not in a browser.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -49,6 +61,13 @@ logger = logging.getLogger("flowbusters.state_lock_probe")
 # Words that hint a lifecycle value is a LOCKED/terminal state vs. a mutable one.
 _LOCK_HINT = re.compile(r"approv|final|lock|compl|finish|accept|publish|confirm|paid|sett|active|closed|shipp", re.I)
 _UNLOCK_HINT = re.compile(r"draft|creat|new|init|temp|open|start|in[_-]?prog|unsent", re.I)
+# A state is treated as locked only if it reads as terminal AND is not an
+# in-flight/intermediate lifecycle value. The previous rule ("matches a lock
+# hint OR is not a draft") wrongly flagged PENDING_APPROVAL / IN_REVIEW /
+# SUBMITTED as locked, which would report a lifecycle violation on a parent
+# that is merely awaiting review.
+_TERMINAL_HINT = re.compile(r"approv|lock|finish|complet|final|paid|sett|shipp|accept", re.I)
+_INTERMEDIATE_HINT = re.compile(r"pend|in[_-]?review|submit|request|sent|await|process|transit|held|stuck|hold", re.I)
 
 _TIMEOUT = 10.0  # per HTTP call, seconds
 
@@ -195,7 +214,11 @@ def find_child_mutation_target(har_path: Path) -> Optional[dict]:
     parent, state_field, _n, parent_post_paths = best
 
     cookie = _header_value(parent["req"]["headers"], "cookie")
-    if not cookie:
+    login = _find_login(entries)
+    # The browser does not expose the outgoing Cookie request header, so a
+    # cookie-auth HAR usually has no captured cookie. Fall back to the recorded
+    # login (re-auth on 401) instead of bailing; give up only if neither is usable.
+    if not cookie and not login:
         return None
 
     parts = urlsplit(parent["url"])
@@ -222,11 +245,8 @@ def find_child_mutation_target(har_path: Path) -> Optional[dict]:
                     seen.add(v)
         locked_states = sorted(
             v for v in seen
-            if _LOCK_HINT.search(v) or not _UNLOCK_HINT.search(v)
+            if _TERMINAL_HINT.search(v) and not _INTERMEDIATE_HINT.search(v)
         )
-
-    # 5) Login credentials (best-effort) so a stale session can be re-established.
-    login = _find_login(entries)
 
     return {
         "base": base,
@@ -291,9 +311,11 @@ def _do_request(method: str, url: str, cookie_holder: dict, login: Optional[dict
     """Perform one request. On a 401, attempt a single re-login and retry once.
     Returns (status, body_text); (None, None) on network error."""
     for attempt in range(2):
+        probe_headers = {"User-Agent": "flowbusters-state-lock-probe"}
+        if cookie_holder.get("cookie"):
+            probe_headers["Cookie"] = cookie_holder["cookie"]
         req = urllib.request.Request(
-            url, data=data, method=method,
-            headers={"Cookie": cookie_holder["cookie"], "User-Agent": "flowbusters-state-lock-probe"},
+            url, data=data, method=method, headers=probe_headers,
         )
         try:
             with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
@@ -396,19 +418,24 @@ def run_probe(target: dict, base_url: str = "") -> Optional[dict]:
 
     # Confirm the effect: is the child gone now?
     status, body = _do_request("GET", target["base"] + target["parent_path"], auth, login)
+    if status is None or not (200 <= status < 300):
+        return None
     final = _parse_json_body(body) or {}
     remaining = [c.get("id") for c in _children_of(final, key)]
     gone = child_id not in remaining
     n_after = len(remaining)
 
-    if not (200 <= (del_status or 0) < 300) or not gone:
-        return None  # server rejected, or the delete had no effect → not the flaw
+    if not gone:
+        return None
 
     # Re-read the locked state for the report.
     state_after = _state_value(_parse_json_body(body), target["lifecycle_field"] or "state") \
         or (target["locked_states"][0] if target["locked_states"] else "LOCKED")
 
-    return _build_finding(target, del_url, child_id, n_before, n_after, del_status, del_body, state_after)
+    return _build_finding(
+        target, del_url, child_id, n_before, n_after, del_status, del_body,
+        state_now, state_after, live, final, auth["cookie"],
+    )
 
 
 def _child_noun(key: str) -> str:
@@ -417,7 +444,9 @@ def _child_noun(key: str) -> str:
 
 
 def _build_finding(target: dict, delete_url: str, child_id: Any, n_before: int, n_after: int,
-                   del_status: int, del_body: Optional[str], state_after: str) -> dict:
+                   del_status: int, del_body: Optional[str], state_before: str,
+                   state_after: str, before_body: dict, after_body: dict,
+                   principal_secret: str) -> dict:
     lifecycle = target["lifecycle_posts"] or []
     title = (
         f"{_child_noun(target['children_key'])} removal is accepted on a locked "
@@ -447,6 +476,49 @@ def _build_finding(target: dict, delete_url: str, child_id: Any, n_before: int, 
              "response_body": f"children: {n_before} -> {n_after} (child {child_id} removed)"},
         ],
     }
+    resource_id = target["parent_path"]
+    principal_id = "session:" + hashlib.sha256(principal_secret.encode("utf-8")).hexdigest()[:12]
+    verification = {
+        "predicate": "approved_item_must_remain",
+        "rule": {
+            "source": "agent",
+            "reference": (
+                f"Inferred state-lock policy: child resources should remain immutable "
+                f"while the parent is {state_before}."
+            ),
+        },
+        "before": {
+            "resource_id": resource_id,
+            "principal_id": principal_id,
+            "sequence": 1,
+            "status_code": 200,
+            "complete": True,
+            "state": state_before,
+            "item_ids": [c.get("id") for c in _children_of(before_body, target["children_key"])],
+            "request": {"method": "GET", "url": target["base"] + target["parent_path"]},
+            "response": before_body,
+        },
+        "action": {
+            "resource_id": resource_id,
+            "principal_id": principal_id,
+            "sequence": 2,
+            "method": "DELETE",
+            "item_id": child_id,
+            "request": {"method": "DELETE", "url": delete_url},
+            "response": {"status_code": del_status, "body": (del_body or "")[:200]},
+        },
+        "after": {
+            "resource_id": resource_id,
+            "principal_id": principal_id,
+            "sequence": 3,
+            "status_code": 200,
+            "complete": True,
+            "state": state_after,
+            "item_ids": [c.get("id") for c in _children_of(after_body, target["children_key"])],
+            "request": {"method": "GET", "url": target["base"] + target["parent_path"]},
+            "response": after_body,
+        },
+    }
     return {
         "id": "F-BL",  # final id assigned in merge_finding
         "title": title,
@@ -457,6 +529,7 @@ def _build_finding(target: dict, delete_url: str, child_id: Any, n_before: int, 
         "mutation_type": "REPLAY_ATTACK",
         "url_tested": delete_url,
         "evidence": evidence,
+        "verification": verification,
     }
 
 
@@ -468,8 +541,8 @@ def _recompute_summary(data: dict) -> None:
     data["summary"] = {
         "bugs_found": len(findings),
         "critical_findings": sum(1 for f in findings if isinstance(f, dict) and f.get("severity") == "Critical"),
-        "rejected": sum(1 for r in results if isinstance(r, dict) and r.get("outcome") == "REJECTED"),
-        "errors": sum(1 for r in results if isinstance(r, dict) and r.get("outcome") == "ERROR"),
+        "rejected": sum(1 for r in results if isinstance(r, dict) and r.get("outcome") == "NOT_REPRODUCED"),
+        "errors": sum(1 for r in results if isinstance(r, dict) and r.get("outcome") == "CHECK_ERROR"),
     }
 
 
@@ -525,7 +598,10 @@ def merge_finding(run_dir: Path, flow_name: str, finding: dict, target_url: str 
     findings = [f for f in data.get("findings", [])
                 if not (isinstance(f, dict) and f.get("source") == "STATE_LOCK_PROBE")]
     finding = dict(finding)
-    finding["id"] = "F-%03d" % (len(findings) + 1)
+    # A distinctive, non-numeric ID so the probe finding can never collide with
+    # an LLM-crew evidence artifact (evidence/<id>.json) or a crew F-NNN finding,
+    # which would let load_report's ID-join clobber the confirmed evidence.
+    finding["id"] = "F-PROBE"
     findings.append(finding)
     data["findings"] = findings
     if not data.get("target_url") and target_url:
