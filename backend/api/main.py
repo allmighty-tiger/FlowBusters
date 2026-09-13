@@ -226,7 +226,7 @@ async def get_report(flow_name: str = Query(default="")):
         return JSONResponse(status_code=404, content={"detail": "No report found"})
 
     findings = load_report(findings_path)
-    remediation = remediation_path.read_text() if remediation_path.exists() else None
+    remediation = remediation_path.read_text(encoding="utf-8") if remediation_path.exists() else None
 
     state_map = (run_dir / "flows" / flow_name / "state_map.json")
     if not state_map.exists():
@@ -324,7 +324,7 @@ async def finish_recording(flow_name: str = Query(default="default")):
     run_dir = os.environ.get("ARTIFACTS_DIR", ".")
     marker_path = Path(run_dir) / "runs" / flow_name / "recording_done.marker"
     marker_path.parent.mkdir(parents=True, exist_ok=True)
-    marker_path.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    marker_path.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ"), encoding="utf-8")
     logger.info("Recording marker written: %s", marker_path)
     return {"status": "recording_finishing", "flow_name": flow_name}
 

@@ -85,7 +85,7 @@ def _parse_json_body(text: str) -> Any:
 
 def _har_entries(har_path: Path) -> list[dict]:
     try:
-        data = json.loads(Path(har_path).read_text())
+        data = json.loads(Path(har_path).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     entries = (data.get("log") or {}).get("entries") or []
@@ -581,7 +581,7 @@ def merge_finding(run_dir: Path, flow_name: str, finding: dict, target_url: str 
     data = None
     if fp.exists():
         try:
-            data = json.loads(fp.read_text())
+            data = json.loads(fp.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             data = None
     if not isinstance(data, dict) or "findings" not in data:
@@ -607,7 +607,7 @@ def merge_finding(run_dir: Path, flow_name: str, finding: dict, target_url: str 
     if not data.get("target_url") and target_url:
         data["target_url"] = target_url
     _recompute_summary(data)
-    fp.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+    fp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     _merge_remediation(mp, finding, target_url)
     return finding["id"]
@@ -617,13 +617,13 @@ def _merge_remediation(mp: Path, finding: dict, target_url: str = "") -> None:
     section = _render_remediation_section(finding, target_url)
     if mp.exists():
         try:
-            text = mp.read_text()
+            text = mp.read_text(encoding="utf-8")
         except OSError:
             text = ""
         if "state_lock_probe" in text.lower() or "STATE_LOCK_PROBE" in text:
             return  # already documented (idempotent)
         text = (text.rstrip() + "\n\n---\n\n" + section + "\n") if text.strip() else section + "\n"
-        mp.write_text(text)
+        mp.write_text(text, encoding="utf-8")
     else:
         header = (
             "# FlowBusters Remediation Report\n\n"
@@ -635,7 +635,7 @@ def _merge_remediation(mp: Path, finding: dict, target_url: str = "") -> None:
             "locked parent).\n\n"
             "## Findings\n\n"
         )
-        mp.write_text(header + section + "\n")
+        mp.write_text(header + section + "\n", encoding="utf-8")
 
 
 # ── Public entry point ────────────────────────────────────────────────────────

@@ -112,9 +112,9 @@ def prepare_run_dir(config: CrewConfig, flow_name: str) -> Path:
     # Patch config.json teamRoot
     config_json = crew_dst / "config.json"
     if config_json.exists():
-        cfg = json.loads(config_json.read_text())
+        cfg = json.loads(config_json.read_text(encoding="utf-8"))
         cfg["teamRoot"] = str(base)
-        config_json.write_text(json.dumps(cfg, indent=2))
+        config_json.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
     # Copy scope.json from run_dir root
     scope_src = Path(config.run_dir) / "scope.json"
@@ -157,7 +157,7 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
         "Start with Recorder now. Do not read later-phase files before recording.\n"
     )
     for relative in ("agents/recorder/charter.md", "skills/record-flow/SKILL.md"):
-        parts.append((crew / relative).read_text())
+        parts.append((crew / relative).read_text(encoding="utf-8"))
 
     deferred = ["agents/captain/charter.md", "routing.md",
                 "agents/analyst/charter.md", "skills/analyze-har/SKILL.md",
@@ -166,7 +166,7 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
                 "skills/probe-flow/VERIFICATION.md"]
     continuation = "# Post-recording instructions\n\n"
     for relative in deferred:
-        continuation += "\n---\n# " + relative + "\n" + (crew / relative).read_text() + "\n"
+        continuation += "\n---\n# " + relative + "\n" + (crew / relative).read_text(encoding="utf-8") + "\n"
     continuation += (
         "\nExecute mutation scripts with python3 <script_path>.py <target_url>, "
         "30-second timeout each. HTTP codes alone never establish a verdict. "
@@ -174,7 +174,7 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
         "Recording is already complete. Resume at ANALYZE, then MUTATE, PROBE "
         "and REPORT, sequentially in this same session. Do not restart Recorder.\n"
     )
-    (run_dir / "_post_recording_instructions.md").write_text(continuation)
+    (run_dir / "_post_recording_instructions.md").write_text(continuation, encoding="utf-8")
 
     # Gate relaxation — inline with Captain charter, not a separate section.
 
@@ -358,7 +358,7 @@ class ArtifactWatcher:
 def validate_har(path: Path) -> tuple[bool, str]:
     """Validate a HAR file is well-formed HAR 1.2."""
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError) as e:
         return False, f"Invalid JSON in HAR file: {e}"
 
@@ -456,7 +456,7 @@ async def run_crew(
             (run_dir / "startup_timing.json").write_text(json.dumps({
                 "clock": "seconds since run_crew entry (not button click)",
                 "milestones": milestones,
-            }, indent=2))
+            }, indent=2), encoding="utf-8")
         except OSError:
             logger.warning("Could not write startup timing file")
 
@@ -464,7 +464,7 @@ async def run_crew(
     # Build system prompt
     system_prompt = build_system_prompt(run_dir, flow_name)
     prompt_path = run_dir / "_system_prompt.txt"
-    prompt_path.write_text(system_prompt)
+    prompt_path.write_text(system_prompt, encoding="utf-8")
     startup_mark("prompt_ready")
     logger.info("Startup prompt size: %d characters", len(system_prompt))
 
@@ -508,18 +508,18 @@ async def run_crew(
         return {'error': message, 'run_dir': str(run_dir), 'exit_code': -1,
                 'total_time': time.monotonic() - started_at, 'artifacts': {}}
     startup_mark('recording_validated')
-    system_prompt = (run_dir / '_post_recording_instructions.md').read_text()
+    system_prompt = (run_dir / '_post_recording_instructions.md').read_text(encoding="utf-8")
     system_prompt += (
         '\nThe backend completed RECORD and closed its MCP session. '
         'Read the existing flows/' + flow_name + '/recording.har and demo.json. '
         'Do not reopen a browser or repeat recording. Use HTTP probes for testing. '
         'Read scope.json and enforce allowed_domains, allowed_paths_prefix and '
         'block_production before probing. Start at ANALYZE.\n')
-    prompt_path.write_text(system_prompt)
+    prompt_path.write_text(system_prompt, encoding="utf-8")
     initial_message = f'Analyze the validated recording for {config.target_url}, flow {flow_name}; continue through REPORT.'
     # No browser tools are needed downstream; prevent accidental re-opening.
     analysis_mcp = run_dir.resolve() / '_analysis_mcp.json'
-    analysis_mcp.write_text('{"mcpServers": {}}')
+    analysis_mcp.write_text('{"mcpServers": {}}', encoding="utf-8")
     mcp_config_arg = str(analysis_mcp)
 
     # The crew runs with an isolated temp HOME, so the interactive session's
@@ -770,7 +770,7 @@ async def run_crew(
                 elapsed = time.time() - overall_start
                 if elapsed >= auto_delay and not (run_dir / "recording_done.marker").exists():
                     marker_path = run_dir / "recording_done.marker"
-                    marker_path.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ"))
+                    marker_path.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ"), encoding="utf-8")
                     auto_marker_written = True
                     logger.info("Auto-complete marker written after %.0fs: %s", elapsed, marker_path)
                     progress_cb(ProgressEvent(
@@ -907,7 +907,7 @@ async def run_crew(
         try:
             normalized = load_report(findings_path)
             staged = findings_path.with_suffix('.normalized.tmp')
-            staged.write_text(json.dumps(normalized, indent=2))
+            staged.write_text(json.dumps(normalized, indent=2), encoding="utf-8")
             staged.replace(findings_path)
         except (OSError, ValueError, TypeError) as exc:
             logger.warning('Report evidence reconciliation failed: %s', type(exc).__name__)

@@ -96,12 +96,12 @@ async def run_flowbusters(
     if findings_path.exists():
         import json
         from backend.runtime.verification import normalize_report
-        result["findings"] = normalize_report(json.loads(findings_path.read_text()))
+        result["findings"] = normalize_report(json.loads(findings_path.read_text(encoding="utf-8")))
     else:
         result["findings"] = {"summary": {"bugs_found": 0, "rejected": 0, "errors": 0}}
 
     if remediation_path.exists():
-        result["remediation"] = remediation_path.read_text()
+        result["remediation"] = remediation_path.read_text(encoding="utf-8")
     else:
         result["remediation"] = None
 

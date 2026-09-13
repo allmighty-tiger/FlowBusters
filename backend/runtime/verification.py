@@ -47,12 +47,12 @@ def _is_auth_finding(record):
 
 def load_report(path):
     """Join executor artifacts by stable ID, never by order or title."""
-    data = json.loads(path.read_text())
+    data = json.loads(path.read_text(encoding="utf-8"))
     findings = data.setdefault('findings', [])
     artifacts = {}
     for artifact in sorted((path.parent / 'evidence').glob('*.json')):
         try:
-            capture = json.loads(artifact.read_text())
+            capture = json.loads(artifact.read_text(encoding="utf-8"))
             if capture.get('source') != 'VERIFIED_DELETE' or not capture.get('id'):
                 continue
             artifacts.setdefault(capture['id'], []).append(capture)

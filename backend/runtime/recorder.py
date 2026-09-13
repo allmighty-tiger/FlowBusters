@@ -314,7 +314,7 @@ def check_scope(run_dir, target):
     scope_file = run_dir / 'scope.json'
     if not scope_file.exists():
         raise RecordingError('scope.json is required for backend recording')
-    scope = json.loads(scope_file.read_text())
+    scope = json.loads(scope_file.read_text(encoding='utf-8'))
     url = urlsplit(target)
     if url.scheme not in ('http', 'https') or not url.hostname:
         raise RecordingError('Invalid target URL')
@@ -352,7 +352,7 @@ async def dump_capture(client, run_dir, flow, notify=lambda message: None):
     await client.call('browser_network_requests', {'static': False, 'filename': str(manifest)})
     if not manifest.exists():
         raise RecordingError('MCP did not save the network manifest')
-    manifest_text = manifest.read_text()
+    manifest_text = manifest.read_text(encoding='utf-8')
     ids = manifest_ids(manifest_text)
     methods = _request_methods(manifest_text)
     failed = {}
@@ -400,7 +400,7 @@ async def dump_capture(client, run_dir, flow, notify=lambda message: None):
     fatal = [f for f in failed.values() if f['part'] != 'response-body']
     unrecoverable = sorted(i for (i, p) in failed if p == 'response-body')
     failures = [{'index': f['index'], 'part': f['part']} for f in sorted(failed.values(), key=lambda f: (f['index'], f['part']))]
-    (folder / 'capture_manifest.json').write_text(json.dumps({'request_ids': ids, 'missing': failures, 'unrecoverable_response_bodies': unrecoverable}, indent=2))
+    (folder / 'capture_manifest.json').write_text(json.dumps({'request_ids': ids, 'missing': failures, 'unrecoverable_response_bodies': unrecoverable}, indent=2), encoding='utf-8')
     # A request body or the request details cannot be re-derived: missing either
     # breaks replay of the mutation, so it is always fatal.
     if fatal:
@@ -411,7 +411,7 @@ async def dump_capture(client, run_dir, flow, notify=lambda message: None):
                              'are unrecoverable; the recording is not usable. See '
                              'har_data/capture_manifest.json')
     if unrecoverable:
-        (folder / 'unrecoverable_response_bodies.marker').write_text(json.dumps({'indexes': unrecoverable}))
+        (folder / 'unrecoverable_response_bodies.marker').write_text(json.dumps({'indexes': unrecoverable}), encoding='utf-8')
         # internal detail -> backend.log, not the user's UI
         print('Some response bodies could not be captured (detached by a page navigation, '
               'e.g. after login); the recording still includes the full request sequence '
@@ -434,7 +434,7 @@ async def dump_capture(client, run_dir, flow, notify=lambda message: None):
             if path.stat().st_size == 0:
                 await client.call('browser_network_request', {'index': index,
                     'part': 'response-body', 'filename': str(path)})
-    entries = json.loads(har.read_text())['log']['entries']
+    entries = json.loads(har.read_text(encoding='utf-8'))['log']['entries']
     if len(entries) != len(ids):
         raise RecordingError('HAR entry count differs from manifest')
     return len(entries)
@@ -445,7 +445,7 @@ async def record(config, run_dir, mcp_path, env, notify):
     check_scope(run_dir, config.target_url)
     if (run_dir / 'recording_done.marker').exists() or (run_dir / 'flows' / config.flow_name / 'recording.har').exists():
         raise RecordingError('Run directory already contains a finish marker; use a new flow name')
-    settings = json.loads(Path(mcp_path).read_text()).get('mcpServers', {}).get('playwright', {})
+    settings = json.loads(Path(mcp_path).read_text(encoding='utf-8')).get('mcpServers', {}).get('playwright', {})
     if not settings.get('command') or settings.get('url'):
         raise RecordingError('Backend recorder requires the configured playwright stdio MCP server')
     child_env = dict(env)
@@ -489,7 +489,7 @@ async def record(config, run_dir, mcp_path, env, notify):
                 await asyncio.sleep(0.25)
                 elapsed += 0.25
                 if config.auto_complete and elapsed >= 15:
-                    (run_dir / 'recording_done.marker').write_text('auto-complete')
+                    (run_dir / 'recording_done.marker').write_text('auto-complete', encoding='utf-8')
                 if loop.time() >= next_snapshot and not (run_dir / 'recording_done.marker').exists():
                     try:
                         observed = await asyncio.wait_for(
@@ -511,7 +511,7 @@ async def record(config, run_dir, mcp_path, env, notify):
             add_ui_state(timeline, final, 'final')
             for state in timeline:
                 state.pop('_signature', None)
-            entries = json.loads((run_dir / 'flows' / config.flow_name / 'recording.har').read_text())['log']['entries']
+            entries = json.loads((run_dir / 'flows' / config.flow_name / 'recording.har').read_text(encoding='utf-8'))['log']['entries']
             finished_at = _utc_now()
             (run_dir / 'flows' / config.flow_name / 'demo.json').write_text(json.dumps({
                 'schema_version': 2,
@@ -532,9 +532,9 @@ async def record(config, run_dir, mcp_path, env, notify):
                 },
                 'warnings': warnings,
                 'note': 'UI state changes are observed snapshots, not fabricated click events.',
-                'request_count': count}, indent=2))
+                'request_count': count}, indent=2), encoding='utf-8')
             await client.call('browser_close', {})
-            (run_dir / 'recording_validated.marker').write_text(str(count))
+            (run_dir / 'recording_validated.marker').write_text(str(count), encoding='utf-8')
             notify(f'Recording validated: {count} requests; browser closed')
     finally:
         if proc.returncode is None:
