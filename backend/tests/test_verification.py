@@ -15,6 +15,25 @@ def example(status=200, removed=True):
 
 
 class VerificationTests(unittest.TestCase):
+    def business_rule(self, observed=True):
+        return {'verification': {
+            'predicate': 'business_rule_must_hold',
+            'rule': {'source': 'observed_ui', 'reference': 'UI step 5: cancel and complete visible together'},
+            'before': {'sequence': 1, 'status_code': 200, 'complete': True,
+                       'request': {'method': 'GET'}, 'response': {'refund': 'pending'}},
+            'actions': [
+                {'sequence': 2, 'request': {'method': 'POST', 'url': '/cancel'},
+                 'response': {'status_code': 200}},
+                {'sequence': 3, 'request': {'method': 'POST', 'url': '/refund/complete'},
+                 'response': {'status_code': 200}},
+            ],
+            'after': {'sequence': 4, 'status_code': 200, 'complete': True,
+                      'request': {'method': 'GET'}, 'response': {'totalReturned': 120}},
+            'violation': {'observed': observed,
+                          'description': 'Cancellation reimbursement and refund were both applied.' if observed
+                                         else 'The conflicting second action was rejected and total returned stayed bounded.'},
+        }}
+
     def test_capture_reads_after_500(self):
         v=example(500)['verification']; snapshots=iter([v['before'],v['after']])
         r=capture_deletion_check(lambda: next(snapshots), lambda: v['action'],
@@ -51,6 +70,34 @@ class VerificationTests(unittest.TestCase):
         old=normalize_report({'results':[{'outcome':'BUG_FOUND','script':'old'}]})
         self.assertEqual(old['summary']['confirmed'],0)
         self.assertEqual(old['findings'][0]['verification_status'],'NEEDS_REVIEW')
+
+    def test_business_rule_with_complete_state_evidence(self):
+        self.assertEqual(classify(self.business_rule())[0], 'CONFIRMED')
+        self.assertEqual(classify(self.business_rule(False))[0], 'NOT_REPRODUCED')
+
+    def test_business_rule_requires_complete_evidence(self):
+        record = self.business_rule()
+        del record['verification']['after']['response']
+        self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
+
+    def test_rejected_raw_attempt_is_not_reproduced(self):
+        self.assertEqual(classify({'outcome': 'REJECTED'})[0], 'NOT_REPRODUCED')
+        self.assertEqual(classify({'outcome': 'NEEDS_REVIEW',
+                                   'original_outcome': 'REJECTED'})[0], 'NOT_REPRODUCED')
+
+    def test_secondary_auth_cwe_does_not_override_business_verification(self):
+        record = self.business_rule()
+        record['cwe'] = ['CWE-841', 'CWE-306']
+        self.assertEqual(classify(record)[0], 'CONFIRMED')
+
+    def test_summary_recomputes_critical_counts(self):
+        confirmed = self.business_rule()
+        confirmed.update({'id': 'F-1', 'severity': 'Critical'})
+        review = {'id': 'F-2', 'severity': 'Critical'}
+        report = normalize_report({'findings': [confirmed, review], 'results': [],
+                                   'summary': {'critical_findings': 99}})
+        self.assertEqual(report['summary']['critical_findings'], 1)
+        self.assertEqual(report['summary']['potential_critical_findings'], 1)
 
     def test_non_dict_verification_does_not_crash_render(self):
         # Regression: the crew can emit verification as a bare string (e.g.
@@ -121,5 +168,28 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(probe[0]['verification_status'], 'CONFIRMED')
         self.assertNotIn('execution', probe[0], 'crew NOT_EXECUTED stub must not overwrite probe')
         self.assertEqual(probe[0]['verification']['after']['item_ids'], [2])
+
+    def test_load_report_excludes_configured_setup_path_findings(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        from backend.runtime.verification import load_report
+        report = {'findings': [
+            {'id': 'F-SETUP', 'title': 'Reset loop', 'url_tested':
+             '/api/demo/reset -> /api/refund', 'evidence': 'x'},
+            {'id': 'F-REAL', 'title': 'Cancel then refund', 'url_tested':
+             '/api/order/cancel -> /api/refund', 'evidence': 'x'},
+        ], 'results': []}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            report_dir = root / 'reports' / 'flow'
+            report_dir.mkdir(parents=True)
+            (root / 'scope.json').write_text(json.dumps({'setup_paths': ['/api/demo/reset']}), encoding='utf-8')
+            path = report_dir / 'findings.json'
+            path.write_text(json.dumps(report), encoding='utf-8')
+            with patch.dict('os.environ', {'SETUP_PATHS': ''}):
+                out = load_report(path)
+        self.assertEqual([finding['id'] for finding in out['findings']], ['F-REAL'])
 
 if __name__ == '__main__': unittest.main()

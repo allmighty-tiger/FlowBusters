@@ -42,7 +42,7 @@ Each run writes artifacts into flow-specific subdirectories so multiple flows ca
 | **Trigger** | Phase 1 gate passed |
 | **Invocation** | Captain passes the resolved flow name and Phase 1 artifact paths for that flow. |
 | **Input** | `flows/{flow-name}/demo.json`, `flows/{flow-name}/recording.har` |
-| **Action** | Parse HAR, filter static assets, identify state-changing endpoints, extract auth tokens and role contexts |
+| **Action** | Parse HAR and UI timeline, exclude configured setup paths, identify state transitions, UI rules, and co-visible conflicting actions |
 | **Output** | `flows/{flow-name}/state_map.json` |
 | **Gate** | Analyst MUST confirm `flows/{flow-name}/state_map.json` contains at least 1 transition and roles extracted. Captain validates schema. |
 | **Blocks** | Phase 3 cannot start until gate passes |
@@ -57,8 +57,8 @@ Each run writes artifacts into flow-specific subdirectories so multiple flows ca
 | **Trigger** | Phase 2 gate passed |
 | **Invocation** | Captain passes the resolved flow name and `flows/{flow-name}/state_map.json`. |
 | **Input** | `flows/{flow-name}/state_map.json` |
-| **Action** | Generate 3-5 adversarial Python scripts targeting business logic flaws |
-| **Output** | `mutations/{flow-name}/*.py` (3-5 scripts) |
+| **Action** | Generate 5-8 adversarial Python scripts, including mandatory state-interleaving checks for co-visible actions |
+| **Output** | `mutations/{flow-name}/*.py` (5-8 scripts) |
 | **Gate** | Saboteur MUST confirm all scripts are written under `mutations/{flow-name}/`, syntax-checked via py_compile, and describe each mutation type. Captain verifies file count. |
 | **Blocks** | Phase 4 cannot start until gate passes |
 

@@ -53,18 +53,14 @@ export default function ReportPage() {
 
   return (
     <div className="fb-report-page">
-      <div style={{ marginBottom: '1.5rem' }}>
-        <button onClick={() => navigate('/reports')} style={{
-          background: 'transparent', color: '#e6c15a', border: '1px solid #333',
-          padding: '0.3rem 1rem', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', marginBottom: '1rem',
-        }}>
+      <header className="report-page-header">
+        <button className="report-back" onClick={() => navigate('/reports')}>
           ← All reports
         </button>
-        <h1 style={{ fontSize: '1.5rem', margin: 0, color: '#e6c15a' }}>⚔️ Assessment Report</h1>
-        <p style={{ color: '#888', marginTop: '0.25rem' }}>
-          {report.target_url} &middot; Flow: <code style={{ color: '#e6c15a' }}>{report.flow_name}</code> &middot; {report.run_timestamp}
-        </p>
-      </div>
+        <p className="report-eyebrow">FlowBusters / Security assessment</p>
+        <h1>Assessment report</h1>
+        <div className="report-run-meta"><span>{report.target_url}</span><span>Flow: {report.flow_name}</span><span>{new Date(report.run_timestamp).toLocaleString()}</span></div>
+      </header>
 
       <ReportView report={report} remediation={remediation} />
     </div>

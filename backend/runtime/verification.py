@@ -5,6 +5,7 @@ captured by a probe; this module evaluates evidence, it does not fetch state.
 """
 from copy import deepcopy
 import json
+import os
 import re
 from urllib.parse import urlsplit
 
@@ -30,9 +31,7 @@ def _is_auth_finding(record):
     cwes = record.get('cwe') or []
     if not isinstance(cwes, (list, tuple, set)):
         cwes = [cwes]  # tolerate a single CWE given as a scalar
-    for cwe in cwes:
-        if str(cwe).upper() in _AUTH_CWES:
-            return True
+    normalized_cwes = {str(cwe).upper() for cwe in cwes}
     for key in ('mutation_type', 'source'):
         val = str(record.get(key) or '').lower()
         if ('auth' in val or 'credential' in val or 'login' in val
@@ -42,12 +41,31 @@ def _is_auth_finding(record):
     url = str(record.get('url_tested') or '').lower()
     if any(tag in url for tag in _AUTH_URLS):
         return True
-    return False
+    # A business-logic finding may cite missing authentication as a secondary
+    # contributing weakness (for example CWE-841 + CWE-306). Do not route that
+    # whole finding through the auth verifier and discard its state evidence.
+    return bool(normalized_cwes) and normalized_cwes.issubset(_AUTH_CWES)
 
 
 def load_report(path):
     """Join executor artifacts by stable ID, never by order or title."""
     data = json.loads(path.read_text(encoding="utf-8"))
+    setup_paths = [value.strip() for value in
+                   os.environ.get('SETUP_PATHS', '/api/demo/reset').split(',')
+                   if value.strip()]
+    for parent in path.parents:
+        scope_path = parent / 'scope.json'
+        if not scope_path.exists():
+            continue
+        try:
+            scope = json.loads(scope_path.read_text(encoding='utf-8'))
+            setup_paths = list(dict.fromkeys([*setup_paths, *(scope.get('setup_paths') or [])]))
+        except (OSError, ValueError, TypeError):
+            pass
+        break
+    if setup_paths and isinstance(data.get('findings'), list):
+        data['findings'] = [finding for finding in data['findings']
+                            if not _mentions_setup_path(finding, setup_paths)]
     findings = data.setdefault('findings', [])
     artifacts = {}
     for artifact in sorted((path.parent / 'evidence').glob('*.json')):
@@ -82,6 +100,17 @@ def load_report(path):
             if result.get('finding_id') == fid:
                 result['verification'] = deepcopy(capture['verification'])
     return normalize_report(data)
+
+
+def _mentions_setup_path(finding, setup_paths):
+    """True when a finding's claim depends on an explicitly excluded fixture path."""
+    if not isinstance(finding, dict):
+        return False
+    evidence = finding.get('evidence')
+    evidence_summary = evidence.get('summary', '') if isinstance(evidence, dict) else evidence
+    claim = ' '.join(str(finding.get(key) or '') for key in ('title', 'url_tested'))
+    claim += ' ' + str(evidence_summary or '')
+    return any(path in claim for path in setup_paths)
 
 
 _TOKEN_KEYS = ('token', 'access_token', 'session_token', 'session', 'jwt', 'auth_token')
@@ -254,8 +283,15 @@ def classify(record, linked_results=()):
         if isinstance(reason, str) and reason.strip():
             return 'NOT_EXECUTED', reason
         return 'NEEDS_REVIEW', 'Not-executed status lacks a missing precondition.'
+    if isinstance(v, dict) and v.get('predicate') == 'business_rule_must_hold':
+        return _classify_business_rule(v)
     if not isinstance(v, dict):
-        return ('CHECK_ERROR', 'Probe execution failed.') if record.get('error_message') or record.get('outcome') in ('ERROR', 'CHECK_ERROR') else ('NEEDS_REVIEW', 'No supported state verification recorded.')
+        outcome = str(record.get('original_outcome') or record.get('outcome') or '').upper()
+        if outcome in ('ERROR', 'CHECK_ERROR'):
+            return 'CHECK_ERROR', 'Probe execution failed.'
+        if outcome in ('REJECTED', 'NOT_REPRODUCED'):
+            return 'NOT_REPRODUCED', 'The executed probe did not reproduce the suspected violation.'
+        return 'NEEDS_REVIEW', 'No supported state verification recorded.'
     if v.get('error'):
         return 'CHECK_ERROR', 'State verification failed: ' + str(v['error'])
     if v.get('predicate') != 'approved_item_must_remain':
@@ -291,6 +327,46 @@ def classify(record, linked_results=()):
     if item not in after['item_ids']:
         return 'CONFIRMED', 'Captured state reads show removal of an item while the resource remained approved.'
     return 'NOT_REPRODUCED', 'The item remained present in the captured post-action state.'
+
+
+def _classify_business_rule(verification):
+    """Validate a generic state-transition probe without relying on HTTP status.
+
+    The probe must cite a rule observed in the UI/specification, capture complete
+    before and after state reads, record every action, and explicitly describe
+    whether the invariant was violated. This supports workflows such as
+    refund-pending -> cancel -> complete without hard-coding one application.
+    """
+    rule = verification.get('rule')
+    if (not isinstance(rule, dict)
+            or rule.get('source') not in ('user', 'specification', 'observed_ui')
+            or not str(rule.get('reference') or '').strip()):
+        return 'NEEDS_REVIEW', 'The business rule needs a user, specification, or observed-UI reference.'
+    before, after = verification.get('before'), verification.get('after')
+    actions = verification.get('actions')
+    if not isinstance(before, dict) or not isinstance(after, dict) or not isinstance(actions, list) or not actions:
+        return 'NEEDS_REVIEW', 'Complete before, actions and after evidence are required.'
+    captures = [before, *actions, after]
+    sequences = [capture.get('sequence') for capture in captures]
+    if not all(type(value) is int for value in sequences) or sequences != sorted(sequences) or len(set(sequences)) != len(sequences):
+        return 'NEEDS_REVIEW', 'Evidence sequence is missing or inconsistent.'
+    for snapshot in (before, after):
+        if snapshot.get('status_code') != 200 or snapshot.get('complete') is not True:
+            return 'CHECK_ERROR', 'Complete successful before and after state reads are required.'
+        if not snapshot.get('request') or not snapshot.get('response'):
+            return 'NEEDS_REVIEW', 'State snapshots must include captured requests and responses.'
+    for action in actions:
+        if not isinstance(action, dict) or not action.get('request') or not action.get('response'):
+            return 'NEEDS_REVIEW', 'Every tested action must include its captured request and response.'
+    violation = verification.get('violation')
+    if not isinstance(violation, dict) or type(violation.get('observed')) is not bool:
+        return 'NEEDS_REVIEW', 'A structured invariant-violation result is required.'
+    description = str(violation.get('description') or '').strip()
+    if not description:
+        return 'NEEDS_REVIEW', 'The observed invariant result needs a concrete description.'
+    if violation['observed']:
+        return 'CONFIRMED', description
+    return 'NOT_REPRODUCED', description
 
 
 def _resource_path(value):
@@ -397,6 +473,12 @@ def normalize_report(report):
     data['findings'], data['results'] = findings, results
     data['summary'] = {**(data.get('summary') or {}), 'reported_findings': len(findings),
         'bugs_found': counts['CONFIRMED'], 'confirmed': counts['CONFIRMED'],
+        'critical_findings': sum(f['verification_status'] == 'CONFIRMED'
+                                 and str(f.get('severity') or '').lower() == 'critical'
+                                 for f in findings),
+        'potential_critical_findings': sum(f['verification_status'] == 'NEEDS_REVIEW'
+                                           and str(f.get('severity') or '').lower() == 'critical'
+                                           for f in findings),
         'needs_review': counts['NEEDS_REVIEW'], 'not_reproduced': counts['NOT_REPRODUCED'],
         'not_executed': counts['NOT_EXECUTED'] + sum(r['outcome'] == 'NOT_EXECUTED' and r.get('finding_id') not in {f['id'] for f in findings} for r in results),
         'rejected': sum(r['outcome'] == 'NOT_REPRODUCED' for r in results),

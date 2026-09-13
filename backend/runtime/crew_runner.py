@@ -119,7 +119,15 @@ def prepare_run_dir(config: CrewConfig, flow_name: str) -> Path:
     # Copy scope.json from run_dir root
     scope_src = Path(config.run_dir) / "scope.json"
     if scope_src.exists():
-        shutil.copy2(scope_src, base / "scope.json")
+        scope_dst = base / "scope.json"
+        shutil.copy2(scope_src, scope_dst)
+        scope = json.loads(scope_dst.read_text(encoding="utf-8"))
+        configured_setup_paths = [value.strip() for value in
+                                  os.environ.get("SETUP_PATHS", "/api/demo/reset").split(",")
+                                  if value.strip()]
+        scope["setup_paths"] = list(dict.fromkeys([
+            *(scope.get("setup_paths") or []), *configured_setup_paths]))
+        scope_dst.write_text(json.dumps(scope, indent=2), encoding="utf-8")
 
     # Create artifact directories
     (base / "flows" / flow_name).mkdir(parents=True, exist_ok=True)

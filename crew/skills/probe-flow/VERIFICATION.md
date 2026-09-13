@@ -38,7 +38,22 @@ HTTP codes describe responses, not business-rule enforcement. Capture an
 independent post-action read even when the action returns 500. Never infer
 removal from 404. Unsupported checks remain NEEDS_REVIEW; do not invent evidence.
 
-First supported predicate: approved_item_must_remain.
+Supported predicates include `approved_item_must_remain` and the generic
+`business_rule_must_hold` state-transition contract.
+
+For `business_rule_must_hold`, provide:
+- `rule`: `{source: user | specification | observed_ui, reference: exact rule or UI step}`
+- complete `before` and `after` state reads with `sequence`, `status_code: 200`,
+  `complete: true`, and captured `request`/`response`
+- non-empty `actions`, each with increasing `sequence` and captured
+  `request`/`response`
+- `violation`: `{observed: boolean, description: concrete final-state evidence}`
+
+Use this for state interleavings such as A→B, B→A, and A/B races. `observed:true`
+means CONFIRMED only when all required captures are present; `observed:false`
+means NOT_REPRODUCED. Never use a setup endpoint as the violated action.
+
+First app-specific predicate: approved_item_must_remain.
 Record `verification` on the finding or on exactly one result with a matching
 `finding_id`. Stable finding IDs also identify remediation sections.
 

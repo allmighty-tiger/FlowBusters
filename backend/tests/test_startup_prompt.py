@@ -1,7 +1,10 @@
 import tempfile
 import unittest
+import json
+import os
 from pathlib import Path
-from backend.runtime.crew_runner import build_system_prompt
+from unittest.mock import patch
+from backend.runtime.crew_runner import build_system_prompt, prepare_run_dir, CrewConfig
 
 class StartupPromptTests(unittest.TestCase):
     def test_deferred_content_and_recording_handoff(self):
@@ -29,3 +32,24 @@ class StartupPromptTests(unittest.TestCase):
     def test_missing_required_instruction_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileNotFoundError):build_system_prompt(Path(tmp),'test')
+
+    def test_setup_paths_are_injected_into_run_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            crew = root / 'crew-source'
+            crew.mkdir()
+            (crew / 'config.json').write_text('{}', encoding='utf-8')
+            (root / 'scope.json').write_text(json.dumps({
+                'allowed_domains': ['http://fixture.test'],
+                'allowed_paths_prefix': ['*'],
+                'setup_paths': ['/seed'],
+            }), encoding='utf-8')
+            cfg = CrewConfig(target_url='http://fixture.test', flow_name='run',
+                run_dir=str(root), crew_dir=str(crew), mcp_config='mcp.json',
+                claude_bin='claude', model='model', api_key='', display='',
+                phase_timeout=1, overall_timeout=1)
+            with patch.dict(os.environ, {'SETUP_PATHS': '/api/demo/reset,/fixtures/reset'}):
+                run = prepare_run_dir(cfg, 'run')
+            scope = json.loads((run / 'scope.json').read_text(encoding='utf-8'))
+            self.assertEqual(scope['setup_paths'],
+                             ['/seed', '/api/demo/reset', '/fixtures/reset'])

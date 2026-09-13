@@ -56,6 +56,7 @@ export interface FindingsReport {
     rejected: number;
     errors: number;
     not_executed?: number;
+    potential_critical_findings?: number;
   };
   additional_observations?: LegacyObservation[];
 }
@@ -116,32 +117,31 @@ export function guidanceFor(finding: Finding, markdown: string | null): string |
 
 export default function ReportView({ report, remediation }: { report: FindingsReport; remediation: string | null }) {
   const findings = normalizeFindings(report);
+  const confirmed = findings.filter(f => f.verification_status === 'CONFIRMED');
+  const review = findings.filter(f => !f.verification_status || f.verification_status === 'NEEDS_REVIEW');
+  const coverage = findings.filter(f => ['NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR'].includes(f.verification_status || ''));
   const notExecuted = report.summary.not_executed ?? findings.filter(f => f.verification_status === 'NOT_EXECUTED').length;
   const errors = Math.max(report.summary.errors, report.results.filter(r => (r.outcome === 'ERROR' || r.outcome === 'CHECK_ERROR')).length);
-  return <section className="fb-report">
-    <div className="report-metrics" aria-label="Distinct findings">
-      {[[findings.filter(f => f.verification_status === 'CONFIRMED').length, 'Confirmed vulnerabilities'], [findings.filter(f => !f.verification_status || f.verification_status === 'NEEDS_REVIEW').length, 'Needs review'], [findings.filter(f => f.verification_status === 'NOT_REPRODUCED').length, 'Not reproduced findings'], [errors, 'Execution errors']].map(([value, label]) =>
-        <div className="report-metric" key={label}><strong>{value}</strong><span>{label}</span></div>)}
-    </div>
-    <p className="report-muted">Figures above count <strong>distinct findings</strong> (one per vulnerability), not individual probe scripts. Per-script outcomes are in the probe execution log at the bottom.</p>
-    <div className="report-metric"><strong>{notExecuted}</strong><span>Not executed</span></div>
-    {notExecuted > 0 && <p className="report-notice">Incomplete coverage: some checks could not run because prerequisites were missing. Their results remain unknown.</p>}
-    {errors > 0 && <p className="report-notice" role="status">Incomplete coverage: {errors} probe(s) failed. Review the execution log before drawing conclusions.</p>}
-    <h2>Findings and checks <span className="report-count">{findings.length}</span></h2>
-    <p className="report-muted">Severity describes potential impact. An HTTP status alone does not confirm a vulnerability.</p>
-    {findings.length === 0 && <div className="report-finding"><h3>No findings reported</h3><p>{errors ? 'Some probes could not be evaluated. This is not a clean assessment.' : 'No issues were reported by these probes. This does not establish that the target is secure.'}</p></div>}
-    {findings.map((finding, index) => {
+  const heldChecks = report.results.filter(r => r.outcome === 'NOT_REPRODUCED' || r.outcome === 'REJECTED').length;
+  const statusLabel: Record<string, string> = {
+    CONFIRMED: 'Confirmed vulnerability', NEEDS_REVIEW: 'Needs review',
+    NOT_REPRODUCED: 'Not reproduced', NOT_EXECUTED: 'Not executed', CHECK_ERROR: 'Check error',
+  };
+  const renderFinding = (finding: Finding, index: number) => {
       const evidence = typeof finding.evidence === 'string' ? null : finding.evidence;
       const guidance = guidanceFor(finding, remediation);
       const severity = Object.keys(SEVERITY_RANK).find(level => level.toLowerCase() === finding.severity?.trim().toLowerCase());
-      return <details className="report-finding" key={finding.id || index} open={index === 0}>
+      const status = finding.verification_status || 'NEEDS_REVIEW';
+      return <details className={`report-finding status-${status.toLowerCase()}`} key={finding.id || index} open={index === 0}>
         <summary className="finding-heading">
-          <strong>{(finding.verification_status || 'NEEDS_REVIEW').replaceAll('_', ' ')}</strong>
-          <span className={`report-severity severity-${severity?.toLowerCase() || "unassessed"}`}>Severity: {severity || "Not assessed"}</span>
-          <span className="report-meta">{severity ? "AI-assessed · " : ""}{finding.cwe?.join(', ') || 'CWE not recorded'}</span>
+          <span className="finding-chevron" aria-hidden="true">›</span>
+          <span className={`report-status status-${status.toLowerCase()}`}>{statusLabel[status] || status.replaceAll('_', ' ')}</span>
+          <span className={`report-severity severity-${severity?.toLowerCase() || "unassessed"}`}>{severity || "Not assessed"}</span>
+          <span className="report-meta">{finding.id ? `${finding.id} · ` : ''}{finding.cwe?.join(', ') || 'CWE not recorded'}</span>
           <h3>{finding.title}</h3>
         </summary>
-        <p className="report-notice"><strong>{({CONFIRMED: 'Confirmed', NEEDS_REVIEW: 'Needs review', NOT_REPRODUCED: 'Not reproduced', NOT_EXECUTED: 'Not executed — result unknown', CHECK_ERROR: 'Check error'} as Record<string, string>)[finding.verification_status || 'NEEDS_REVIEW'] || 'Needs review'}</strong><br />{finding.verification_reason || 'No supported state verification recorded.'}</p>
+        <div className="finding-body">
+        <p className="report-verdict"><strong>Verification</strong><span>{finding.verification_reason || 'No supported state verification recorded.'}</span></p>
         {finding.verification_status === 'NOT_EXECUTED' && <section className="report-guidance"><h4>Missing prerequisite</h4><p>{finding.execution?.missing_precondition || finding.verification_reason}</p><h4>Next step / manual test</h4><p>{finding.execution?.next_step || 'No specific next step recorded. Review the missing prerequisite before retesting.'}</p></section>}
         {!!finding.related_findings?.length && <section><h4>Related evidence</h4><p>{finding.related_findings.filter(id => id !== finding.id && findings.some(f => f.id === id)).join(', ') || 'No matching finding in this report.'}</p><p className="report-muted">Related findings do not independently confirm this scenario.</p></section>}
         {finding.url_tested && <p className="report-endpoint"><strong>Tested endpoint</strong><code>{finding.url_tested}</code></p>}
@@ -162,20 +162,47 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
           {finding.status_code != null && <p>HTTP status: {finding.status_code}</p>}
         </details>
         <section className="report-guidance"><h4>Recommended fix</h4>{guidance ? <pre className="report-prose">{guidance}</pre> : <p className="report-muted">{remediation ? 'No unambiguous match to this finding. See the complete remediation document below.' : 'No remediation guidance recorded.'}</p>}</section>
+        </div>
       </details>;
-    })}
-    {remediation && <details className="report-finding"><summary>Complete remediation document</summary><pre className="report-prose">{remediation}</pre></details>}
-    <details className="report-finding"><summary>Probe execution log ({report.results.length} scripts — raw attempts)</summary>
-      <p className="report-muted">
-        These are the individual probe <em>attempts</em> the crew ran — one per mutation script — not distinct
-        vulnerabilities. The metric tiles above count <em>findings</em> (distinct bugs). A script's outcome
-        (e.g. NEEDS REVIEW) reflects whether that <em>attempt</em> could be auto-verified, not a new bug; an attempt
-        maps to a finding via its <code>finding_id</code>, and a NOT EXECUTED attempt may still be covered by a
-        CONFIRMED finding of the same bug (e.g. the deterministic state-lock probe).
-      </p>
+    };
+  const primaryMessage = confirmed.length
+    ? `${confirmed.length} confirmed ${confirmed.length === 1 ? 'vulnerability' : 'vulnerabilities'} require action.`
+    : review.length
+      ? `No vulnerability is confirmed yet. ${review.length} ${review.length === 1 ? 'item requires' : 'items require'} review.`
+      : 'No vulnerability was confirmed by the executed checks.';
+  return <section className="fb-report">
+    <section className={`report-overview ${confirmed.length ? 'has-confirmed' : review.length ? 'has-review' : 'has-clear'}`}>
+      <div><p className="report-eyebrow">Assessment outcome</p><h2>{primaryMessage}</h2>
+        <p>Verdicts require captured state evidence. Severity alone is not confirmation.</p></div>
+      <span className="report-risk-label">{confirmed.some(f => f.severity?.toLowerCase() === 'critical') ? 'Critical action' : confirmed.length ? 'Action required' : review.length ? 'Review required' : 'No confirmed issues'}</span>
+    </section>
+    <div className="report-metrics" aria-label="Assessment summary">
+      {[[confirmed.length, 'Confirmed', 'confirmed'], [review.length, 'Needs review', 'review'], [heldChecks, 'Controls held', 'held'], [notExecuted + errors, 'Coverage gaps', 'gap']].map(([value, label, tone]) =>
+        <div className={`report-metric metric-${tone}`} key={label}><strong>{value}</strong><span>{label}</span></div>)}
+    </div>
+    {(notExecuted > 0 || errors > 0) && <p className="report-notice" role="status">Coverage is incomplete: {notExecuted} not executed, {errors} execution errors. These are unknown results, not a clean bill of health.</p>}
+
+    <section className="report-section">
+      <div className="report-section-heading"><div><p className="report-eyebrow">Evidence-backed</p><h2>Confirmed vulnerabilities</h2></div><span>{confirmed.length}</span></div>
+      {confirmed.length ? confirmed.map(renderFinding) : <div className="report-empty"><strong>No confirmed vulnerabilities</strong><p>That means the current evidence did not cross the confirmation threshold—not that the target is secure.</p></div>}
+    </section>
+
+    {review.length > 0 && <section className="report-section">
+      <div className="report-section-heading"><div><p className="report-eyebrow">Decision queue</p><h2>Needs review</h2></div><span>{review.length}</span></div>
+      <p className="report-section-copy">Plausible risks with incomplete evidence. Reproduce them manually or rerun with the missing state.</p>
+      {review.map(renderFinding)}
+    </section>}
+
+    {coverage.length > 0 && <section className="report-section">
+      <div className="report-section-heading"><div><p className="report-eyebrow">Coverage</p><h2>Unconfirmed scenarios</h2></div><span>{coverage.length}</span></div>
+      {coverage.map(renderFinding)}
+    </section>}
+
+    {remediation && <details className="report-appendix"><summary>Analyst remediation draft</summary><pre className="report-prose">{remediation}</pre></details>}
+    <details className="report-appendix"><summary>Probe execution log <span>{report.results.length} attempts</span></summary>
+      <p className="report-muted">Individual checks are supporting evidence, not additional vulnerabilities.</p>
       {report.results.length === 0 && <p>No execution records available.</p>}
-      {report.results.filter(r => r.outcome === 'NOT_EXECUTED').map((r, i) => <section className="report-notice" key={`gap-${i}`}><strong>{r.script} — Not executed{r.finding_id ? <> (feeds {r.finding_id})</> : ''}</strong><p>{r.execution?.missing_precondition || r.verification_reason || 'Prerequisite missing; the attempt was not run.'}</p><p>Next step: {r.execution?.next_step || 'Review the missing prerequisite before retesting. This scenario is still worth a manual check.'}</p></section>)}
-      {report.results.map((result, i) => <details className="report-probe" key={i} open={result.outcome === 'NOT_EXECUTED'}><summary>{result.script} · {result.outcome.replaceAll('_', ' ')} · HTTP {result.status_code ?? 'not recorded'}{result.finding_id ? <> · → {result.finding_id}</> : ''}</summary><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</details>)}
+      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={i} open={result.outcome === 'NOT_EXECUTED'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</div></details>)}</div>
     </details>
   </section>;
 }

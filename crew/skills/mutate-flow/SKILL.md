@@ -42,10 +42,17 @@ Read `flows/{flow-name}/state_map.json` and extract:
 - All critical endpoints with their attack surfaces
 - All observed UI rules and transition `ui_context` (visible limits, disabled
   actions, role/ownership text, and terminal states)
+- `setup_paths`, which may establish test state but must never be attacked or
+  reported as a vulnerability
+- `conflicting_action_pairs`, where multiple state-changing controls were
+  visible in the same UI state
 
 For each observed UI rule, ask whether the server rejects the same action when
 the UI is bypassed. If `observed_ui_rules` is non-empty, generate at least one
 mutation that explicitly violates one of those rules.
+For every conflicting action pair, generate one STATE_INTERLEAVING script that
+tests A→B, B→A, and a safe concurrent A/B race from equivalent clean states,
+then re-reads the complete resource to verify the invariant.
 
 ### 3. Attack Brainstorm (before writing any scripts)
 
@@ -60,6 +67,7 @@ For each critical endpoint, enumerate every state-changing field in its request 
 | Which field accepts values the UI would never produce? (negative/zero/huge quantities, floats, unicode) | DATA_TAMPER |
 | Which role or ownership boundary exists? (other users' resource IDs, sequential ID enumeration, wrong-role cookies) | ROLE_SWAP / FORCED_BROWSING |
 | Which visible UI rule can be violated by calling the API directly? (disabled action, one-use rule, amount limit, locked state) | SKIP_STEP / REPLAY_ATTACK / DATA_TAMPER |
+| Which actions were visible at the same time, and can both effects be applied? | STATE_INTERLEAVING |
 
 ### 4. Select Mutation Targets
 
@@ -85,7 +93,7 @@ import json
 import httpx
 
 TARGET_URL = "{endpoint_url}"
-MUTATION_TYPE = "{SKIP_STEP|ROLE_SWAP|DATA_TAMPER|REPLAY_ATTACK|FORCED_BROWSING|MASS_ASSIGNMENT|PRICING_TAMPER|DOUBLE_SPEND}"
+MUTATION_TYPE = "{SKIP_STEP|ROLE_SWAP|DATA_TAMPER|REPLAY_ATTACK|FORCED_BROWSING|MASS_ASSIGNMENT|PRICING_TAMPER|DOUBLE_SPEND|STATE_INTERLEAVING}"
 
 # Captured credentials from recording
 COOKIES = {cookies_from_state_map}

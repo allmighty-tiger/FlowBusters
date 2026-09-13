@@ -50,9 +50,13 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
      If the flow has no login/credential endpoint, write `"auth_check": {"performed": false, "reason": "no login endpoint"}`.
      Not running this check is not a valid outcome — the gate below will not pass without the `auth_check` record.
 6. Compile into `reports/{flow-name}/findings.json`:
-   - `findings[]` — one entry per vulnerability: every CONFIRMED bug (from the auth check AND from every BUG_FOUND script) **plus every suspected-but-not-demonstrated bug** (e.g. an IDOR / broken-access-control you could not exercise here), sorted Critical-first. A suspected bug that can't be demonstrated in this environment is still a finding — emit it and mark it NOT_EXECUTED with the missing precondition, so it surfaces for manual verification. Never leave a suspected bug as only a bare `results[]` row. Each: `title`, `source` (AUTH_CHECK | MUTATION_SCRIPT | ANALYSIS), `severity`, `cwe`, `url_tested`, `evidence`
+   - `findings[]` — one entry per distinct security hypothesis: confirmed bugs plus
+     suspected-but-not-demonstrated issues that require review or were not
+     executable. Each finding MUST carry structured `verification`; never call
+     every finding a vulnerability. Sort confirmed items first, then review/gaps.
    - `results[]` — the raw per-script execution log (all outcomes), unchanged
-   - `summary.bugs_found` = length of `findings[]` (NOT the BUG_FOUND count in results)
+   - `summary.bugs_found` = count of findings whose verification is CONFIRMED.
+     `summary.critical_findings` counts only CONFIRMED Critical findings.
 7. If `findings[]` is non-empty:
    - Generate `reports/{flow-name}/remediation.md` with one section per finding, Critical first, containing:
      - CWE ID mapping (e.g., CWE-287: Improper Authentication)
@@ -81,14 +85,22 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
         "script": null,
         "mutation_type": null,
         "url_tested": "https://...",
-        "evidence": "exact request(s) + response(s) that prove the finding"
+        "evidence": "exact request(s) + response(s) that prove the finding",
+        "verification": {
+          "predicate": "business_rule_must_hold",
+          "rule": {"source": "observed_ui", "reference": "UI step and exact visible rule"},
+          "before": {"sequence": 1, "status_code": 200, "complete": true, "request": {}, "response": {}},
+          "actions": [{"sequence": 2, "request": {}, "response": {}}],
+          "after": {"sequence": 3, "status_code": 200, "complete": true, "request": {}, "response": {}},
+          "violation": {"observed": true, "description": "Concrete invariant violation shown by the final state"}
+        }
       }
     ],
     "results": [
       {
         "script": "01_skip_step_approval.py",
         "mutation_type": "SKIP_STEP",
-        "outcome": "BUG_FOUND|REJECTED|ERROR",
+        "outcome": "CONFIRMED|NEEDS_REVIEW|NOT_REPRODUCED|NOT_EXECUTED|CHECK_ERROR",
         "status_code": 200,
         "url_tested": "https://...",
         "response_snippet": "...",
@@ -103,20 +115,30 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
     }
   }
   ```
-  `findings[]` is the vulnerability list (Critical-first) — every confirmed vulnerability, whether from the auth check or from a mutation script. `results[]` is the raw per-script log. `summary.bugs_found` = length of `findings[]`; `rejected`/`errors` count from `results[]`.
+  `findings[]` contains distinct confirmed issues and unresolved security
+  hypotheses. `results[]` is the per-script execution log. `summary.bugs_found`
+  and `critical_findings` count CONFIRMED findings only; review items and coverage
+  gaps have their own counts.
 
-- `reports/{flow-name}/remediation.md` (only if findings exist):
+- `reports/{flow-name}/remediation.md` (only if confirmed or review findings exist):
   ```markdown
   # FlowBusters Remediation Report
   ## Summary
-  {N} vulnerabilities found in {target_url} ({K} critical)
+  {N} confirmed vulnerabilities; {R} items need review in {target_url}
   ```
   One `## Finding N:` section per `findings[]` entry, Critical first.
 
 ## Verification Gate
 
 - `reports/{flow-name}/findings.json` exists, is valid JSON, and has both `findings` and `results` fields
-- Every BUG_FOUND script appears as a `findings[]` entry
+- Every confirmed script appears as a `findings[]` entry with supported
+  verification evidence
+- Never create a finding whose attacked endpoint is listed in `setup_paths`.
+  Setup endpoints may reset a local fixture before a probe, but cannot be part
+  of the vulnerability claim, impact, title, evidence chain, or remediation.
+- Do not report missing authentication when the recording contains no login or
+  authenticated principal unless scope.json explicitly says
+  `authentication_required: true`.
 - Auth sanity check (step 5) produced an `auth_check` record in findings.json: if the flow
   contained a login endpoint, `auth_check.performed` is `true` and `auth_check.vulnerable`
   matches whether an AUTH_CHECK finding was emitted (vulnerable ⇒ finding present FIRST);
@@ -127,8 +149,8 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
   ┌─────────────────────────────┬──────────────┬─────────────┐
   │ Script                      │ Mutation     │ Outcome     │
   ├─────────────────────────────┼──────────────┼─────────────┤
-  │ 01_skip_step_approval.py    │ SKIP_STEP    │ 🐛 BUG_FOUND│
-  │ 02_role_swap_admin.py       │ ROLE_SWAP    │ ✅ REJECTED  │
+  │ 01_skip_step_approval.py    │ SKIP_STEP    │ CONFIRMED    │
+  │ 02_role_swap_admin.py       │ ROLE_SWAP    │ NOT REPRODUCED│
   │ ...                         │ ...          │ ...         │
   └─────────────────────────────┴──────────────┴─────────────┘
   ```

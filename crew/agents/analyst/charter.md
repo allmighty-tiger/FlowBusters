@@ -31,7 +31,11 @@ Read and write only within `flows/{flow-name}/`.
 ## Process
 
 1. Resolve `flow-name`; if omitted, use `default`, and validate it is kebab-case.
-2. Read `flows/{flow-name}/recording.har` and parse all HTTP entries
+2. Read `scope.json`, then read `flows/{flow-name}/recording.har` and parse all HTTP entries.
+   Preserve `setup_paths` in the state map. Requests whose URL path matches a
+   setup path may explain how the initial test state was established, but MUST
+   NOT become transitions, critical endpoints, attack targets, auth findings,
+   or evidence of a vulnerability.
 3. **Filter out static assets:** Ignore requests for CSS, JS, images, fonts, SVGs (by content-type or file extension)
 4. **Focus on state-changing requests:** POST, PUT, DELETE, PATCH with JSON request bodies
 5. For each relevant request, extract:
@@ -53,6 +57,15 @@ Read and write only within `flows/{flow-name}/`.
      such as "one coupon per order", a disabled Delete button, maximum amounts,
      ownership text, or a completed/locked status. These are primary business-logic
      hypotheses to test server-side, not decorative UI text.
+   - **Conflicting action pairs** — whenever one captured UI state exposes two
+     or more state-changing controls at the same time (for example `Cancel order`
+     and `Complete refund`), record every meaningful pair. Map each action to an
+     observed or inferred endpoint and preserve the UI step that proves the
+     actions were co-visible. These pairs are mandatory interleaving/race targets.
+   - Do not report missing authentication merely because no credentials appeared.
+     If no login/authenticated identity was recorded and the scope does not set
+     `authentication_required: true`, authentication is unknown/out of scope,
+     not a vulnerability.
 8. **Infer unexercised CRUD endpoints from resource shapes.** A demo usually captures only a happy path, so state-changing endpoints are frequently ABSENT from the HAR even though they exist. For every resource visible in a *response* — especially a collection of items (with ids) nested under a parent, e.g. `dashboard → parts: [{id:1}, …]` — infer the standard mutating operations and add them to `critical_endpoints` even if no matching request was recorded. A `parts` collection implies `POST …/parts` (create) and `DELETE …/parts/{id}` (delete), and usually `PUT`/`PATCH …/parts/{id}`. State-changing operations on nested/child resources (add, delete, edit, reorder, per-item approve) are high-value targets because UIs often gate them by lifecycle state while the backend may not — always include them when the resource appears in a response. Mark each such entry with `"inferred": true` and explain the inference in `why`.
 9. Write `flows/{flow-name}/state_map.json`
 10. Verify output schema and content
@@ -64,6 +77,7 @@ Read and write only within `flows/{flow-name}/`.
   {
     "target_url": "https://...",
     "flow_name": "...",
+    "setup_paths": ["/api/demo/reset"],
     "recorded_at": "ISO-8601 timestamp",
     "transitions": [
       {
@@ -99,6 +113,17 @@ Read and write only within `flows/{flow-name}/`.
         "security_relevance": "Server must reject coupon replay even if the disabled UI is bypassed"
       }
     ],
+    "conflicting_action_pairs": [
+      {
+        "ui_step": 5,
+        "state": "refund pending",
+        "rule": "Cancellation and refund completion must not both reimburse the same order",
+        "actions": [
+          {"name": "cancel_order", "method": "POST", "url": "https://.../order/cancel", "inferred": true},
+          {"name": "complete_refund", "method": "POST", "url": "https://.../refund/complete", "inferred": false}
+        ]
+      }
+    ],
     "critical_endpoints": [
       {
         "url": "https://...",
@@ -120,6 +145,8 @@ Read and write only within `flows/{flow-name}/`.
 - Contains at least 1 critical endpoint
 - Preserves every security-relevant visible rule in `observed_ui_rules`; use an
   empty array only when the timeline truly contains none
+- Preserves every co-visible state-changing action pair in
+  `conflicting_action_pairs`; use an empty array only when no such state exists
 - Report: "✅ Phase 2 ANALYZE complete. Flow {flow-name}. {N} transitions, {M} roles, {K} critical endpoints identified."
 
 ## File Permissions

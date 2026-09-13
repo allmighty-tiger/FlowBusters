@@ -35,12 +35,21 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
    limitation is not proof of server enforcement. Convert each rule into a
    server-side negative test: bypass a disabled control, exceed a visible limit,
    replay a one-time action, modify a locked resource, or act as the wrong role.
+   Read `setup_paths` and never target, fuzz, race, or report those endpoints.
+   They may be called only to establish a clean test precondition, and must not
+   count as an action in the alleged vulnerability.
 4. **Attack brainstorm (do this BEFORE writing any scripts):** for each critical endpoint, enumerate every state-changing field in its request body and think through ALL of these questions — write your shortlist of attack vectors to chat before generating scripts:
    - Which rules appear only in UI context? Prefer a direct API probe that violates
      each high-impact rule. At least one generated mutation MUST target an observed
      UI rule when `observed_ui_rules` is non-empty.
    - **Endpoints marked `"inferred": true` were NOT exercised in the demo (no matching request in the HAR) — they were inferred by the Analyst from a resource shape in a response. Treat them as first-class, HIGH-priority targets, not afterthoughts: a child-resource CRUD op (add/delete/edit an item under a parent) that the happy-path demo never touched is exactly where a "state-transition bypass" hides. Build at least one script per distinct inferred resource — e.g. a `REPLAY_ATTACK`/`SKIP_STEP` that invokes the inferred DELETE/POST on a child item AFTER the parent reaches a terminal/locked state, asserting the server rejects it (`expected_rejection: true`).**
    - Which prerequisite steps could be skipped or reordered? (SKIP_STEP — including transitions the demo NEVER took: e.g. demo only approved pending orders — what about approving already-approved, cancelled, or other customers' orders?)
+   - For every entry in `conflicting_action_pairs`, generate one dedicated
+     `STATE_INTERLEAVING` script. From the same clean starting state, test A→B,
+     B→A, and a concurrent A/B race when safe. Re-read the complete resource
+     after each attempt and assert the business invariant, not the HTTP codes.
+     A pair such as Cancel order + Complete refund must test whether both forms
+     of reimbursement can be applied to the same order.
    - Which field accepts values the UI would never produce? (DATA_TAMPER — negative/zero/huge quantities, floats, unicode)
    - Which value is MONEY or quantity? If the server trusts a client-supplied price, amount, discount, or quantity, tamper with it (PRICING_TAMPER — this is a direct financial loss vector, always probe it if such fields exist)
    - Which body fields does the UI not send? (MASS_ASSIGNMENT — try setting role, is_admin, status, ownership fields, verified flags, balance, total in the request body)
@@ -48,6 +57,8 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
    - Which role/ID boundaries exist? (ROLE_SWAP, FORCED_BROWSING/IDOR — other users' resource IDs, sequential ID enumeration)
    Pick the 5-8 strongest vectors, covering as many distinct types as the flow supports — never 5 scripts of one type when other types are applicable.
 5. Generate exactly 5-8 adversarial Python scripts, selecting from these mutation types:
+   - **STATE_INTERLEAVING** — Execute co-visible state-changing actions in both
+     orders and concurrently; verify the final state cannot contain both effects
    - **SKIP_STEP** — Call a late-stage endpoint without completing prerequisites
    - **ROLE_SWAP** — Use Role A's cookies to access Role B's endpoints
    - **DATA_TAMPER** — Modify request body values (IDs, amounts, statuses) to invalid/unauthorized values
@@ -82,6 +93,9 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
 - Scripts cover as many distinct mutation types as the flow supports
 - When `observed_ui_rules` is non-empty, at least one script explicitly names and
   violates an observed UI rule
+- Every `conflicting_action_pairs` entry has a STATE_INTERLEAVING script covering
+  A→B, B→A and a safe concurrent race, with final-state re-reads
+- No script treats a `setup_paths` endpoint as the attacked action or finding
 - Each script targets a different attack vector or endpoint
 - Report: "✅ Phase 3 MUTATE complete. Flow {flow-name}. {N} mutation scripts generated: {list of types}."
 

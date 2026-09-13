@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Execute adversarial mutation scripts, parse their JSON output, classify outcomes as BUG_FOUND / REJECTED / ERROR, and produce findings reports with remediation guidance.
+Execute adversarial mutation scripts, verify state evidence, classify outcomes
+as CONFIRMED / NEEDS_REVIEW / NOT_REPRODUCED / NOT_EXECUTED / CHECK_ERROR, and
+produce findings reports with remediation guidance.
 
 ## Confidence: medium
 
@@ -150,7 +152,7 @@ Write `reports/{flow-name}/findings.json`:
     {
       "script": "01_skip_step_approval.py",
       "mutation_type": "SKIP_STEP",
-      "outcome": "BUG_FOUND",
+      "outcome": "CONFIRMED",
       "status_code": 200,
       "url_tested": "https://api.example.com/orders/approve",
       "response_snippet": "{\"status\": \"approved\", \"order_id\": \"12345\"}",
@@ -159,7 +161,7 @@ Write `reports/{flow-name}/findings.json`:
     {
       "script": "02_role_swap_user_to_admin.py",
       "mutation_type": "ROLE_SWAP",
-      "outcome": "REJECTED",
+      "outcome": "NOT_REPRODUCED",
       "status_code": 403,
       "url_tested": "https://api.example.com/admin/users",
       "response_snippet": "{\"error\": \"Forbidden\"}",
@@ -185,13 +187,17 @@ Write `reports/{flow-name}/findings.json`:
 ```
 
 Schema rules:
-- **`findings[]` is the vulnerability list** — one entry per CONFIRMED vulnerability, regardless of where it came from. `source` is `MUTATION_SCRIPT`, `AUTH_CHECK`, or `ANALYSIS`. Sort by severity (Critical first). This is what drives the report — `summary.bugs_found` counts `findings[]`, NOT `results[]`.
+- **`findings[]` is the distinct security-hypothesis list** — it contains
+  CONFIRMED vulnerabilities and unresolved review/not-executed items. Every item
+  carries structured verification. Sort confirmed findings first, then review
+  and coverage gaps; within each group sort by severity.
 - Every finding needs `title`, `severity` (Critical/High/Medium/Low), `cwe`, `url_tested`, and `evidence`. `script`/`mutation_type` are set only for `MUTATION_SCRIPT` findings, else `null`.
 - **`evidence`** — two accepted forms (the report UI renders both):
   - **Object (preferred when a finding is proven by ≥2 probes)**: `{"summary": "what was sent → what came back → why it proves the flaw", "requests": [{"label","method","url","body"}], "responses": [{"label","status_code","response_body"}]}`. Keep `requests`/`responses` **parallel by index** (request[i] pairs with response[i]).
   - **String** (fine for a single-probe finding): one compact line like `POST /api/login knownuser/WRONGPWD -> 200 {ok:true, token:...}`.
-- **`results[]` is the raw per-script execution log** — every script, all outcomes (BUG_FOUND/REJECTED/ERROR), unchanged from before. `summary.rejected` and `summary.errors` count from `results[]`.
-- Any BUG_FOUND script must also appear in `findings[]` (a script that found a bug is a confirmed vulnerability).
+- **`results[]` is the per-script execution log** — every script, with one of
+  CONFIRMED/NEEDS_REVIEW/NOT_REPRODUCED/NOT_EXECUTED/CHECK_ERROR.
+- Any CONFIRMED script must also appear in `findings[]` with supported evidence.
 - Severity assignment: auth bypass / full-system access = Critical; unauthorized state-changing action = High; data-integrity issues (e.g. accepting negative quantity) = Medium; information leaks = Low.
 
 **Suspected-but-not-demonstrated findings MUST still be findings — never bare result rows.**
@@ -280,8 +286,8 @@ SCRIPT EXECUTION:
 ┌─────────────────────────────────┬───────────────┬──────────────┐
 │ Script                          │ Mutation      │ Outcome      │
 ├─────────────────────────────────┼───────────────┼──────────────┤
-│ 01_skip_step_approval.py        │ SKIP_STEP     │ 🐛 BUG_FOUND │
-│ 02_role_swap_user_to_admin.py   │ ROLE_SWAP     │ ✅ REJECTED   │
+│ 01_skip_step_approval.py        │ SKIP_STEP     │ CONFIRMED     │
+│ 02_role_swap_user_to_admin.py   │ ROLE_SWAP     │ NOT REPRODUCED│
 └─────────────────────────────────┴───────────────┴──────────────┘
 
 Flow: {flow-name}
@@ -291,8 +297,10 @@ Summary: {N} findings ({K} critical) | {R} rejected | {E} errors
 ### 11. Verify Completion
 
 - `reports/{flow-name}/findings.json` exists, is valid JSON, and contains BOTH `findings` and `results` fields
-- Every BUG_FOUND script appears as a `findings[]` entry
-- `summary.bugs_found` equals the length of `findings[]`
+- Every CONFIRMED script appears as a `findings[]` entry
+- `summary.bugs_found` equals the number of CONFIRMED findings, not the total
+  length of `findings[]`
+- `summary.critical_findings` counts only CONFIRMED Critical findings
 - Auth sanity check (step 7) was run if the flow contained a login endpoint
 - If `findings[]` is non-empty: `reports/{flow-name}/remediation.md` exists and lists every finding, Critical first
 - Summary tables printed to chat
