@@ -39,12 +39,12 @@ for line in sys.stdin:
                 result = {'isError': True, 'content': [{'type': 'text', 'text':
                     'Tool does not handle the modal state. Modal state: confirm. Can be handled by browser_handle_dialog'}]}
             else:
-                m3 = 'POST' if mode == 'bodyless' else 'GET'
+                m3 = 'POST' if mode in ('bodyless', 'postbody') else 'GET'
                 Path(args['filename']).write_text(f'3. [{m3}] http://fixture.test/api/data => [200] OK\n5. [GET] http://fixture.test/api/other => [200] OK\n')
         if name == 'browser_network_request':
             index = args['index']
             part = args.get('part')
-            method = 'POST' if (index == 3 and mode == 'bodyless') else 'GET'
+            method = 'POST' if (index == 3 and mode in ('bodyless', 'postbody')) else 'GET'
             key = (index, part)
             attempts[key] = attempts.get(key, 0) + 1
             if index in detached and part == 'response-body':
@@ -61,7 +61,9 @@ for line in sys.stdin:
             elif part == 'response-body':
                 Path(args['filename']).write_text('{"ok": true}')
             else:
-                Path(args['filename']).write_text(f'#'+str(index)+' ['+method+'] http://fixture.test/api/data\n  General\n    status: [200] OK\n    mimeType: application/json\n  Response headers\n    content-type: application/json\n')
+                request_hint = ('Call browser_network_request with part="request-body" to read the request body.\n'
+                                if mode == 'postbody' and index == 3 else '')
+                Path(args['filename']).write_text(f'#'+str(index)+' ['+method+'] http://fixture.test/api/data\n  General\n    status: [200] OK\n    mimeType: application/json\n  Response headers\n    content-type: application/json\n\n'+request_hint+'Call browser_network_request with part="response-body" to read the response body.\n')
         if name == 'browser_close':
             if not (root / 'flows/test/recording.har').exists():
                 result = {'isError': True}

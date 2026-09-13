@@ -98,7 +98,12 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(sum(c['name'] == 'browser_network_request' and c['args'].get('index') == 3 and c['args'].get('part') == 'response-body' for c in calls), 2)
             if mode == 'bodyless':
                 self.assertEqual(json.loads((root / 'flows/test/har_data/capture_manifest.json').read_text())['missing'], [])
+                self.assertEqual([c['args']['index'] for c in calls if c['name'] == 'browser_network_request' and c['args'].get('part') == 'request-body'], [])
+                self.assertNotIn('postData', har['log']['entries'][0]['request'])
+            if mode == 'postbody':
                 self.assertEqual([c['args']['index'] for c in calls if c['name'] == 'browser_network_request' and c['args'].get('part') == 'request-body'], [3])
+                self.assertEqual(har['log']['entries'][0]['request']['postData']['text'],
+                                 'username=x&password=y')
 
     async def test_modal_wait_then_saves_har(self):
         await self.run_recording('modal')
@@ -114,6 +119,9 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_bodyless_request_skips_request_body(self):
         await self.run_recording('bodyless')
+
+    async def test_advertised_request_body_is_captured(self):
+        await self.run_recording('postbody')
 
     async def test_nav_detached_response_body_is_non_fatal(self):
         await self.run_recording('navdetached')

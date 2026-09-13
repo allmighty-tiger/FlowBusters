@@ -345,6 +345,21 @@ def _request_methods(manifest_text):
     return methods
 
 
+def _request_body_available(detail_text, method):
+    """Return whether Playwright exposes a request body for this entry.
+
+    Current Playwright MCP detail output explicitly lists the readable body
+    parts.  A bodyless POST lists only ``response-body``; treating every POST
+    as body-bearing makes a valid capture fail.  Retain the method fallback for
+    older MCP versions whose detail output does not advertise parts at all.
+    """
+    if 'part="request-body"' in detail_text:
+        return True
+    if 'Call browser_network_request with part=' in detail_text:
+        return False
+    return method not in _NO_REQUEST_BODY
+
+
 async def dump_capture(client, run_dir, flow, notify=lambda message: None):
     folder = run_dir / 'flows' / flow / 'har_data'
     folder.mkdir(parents=True, exist_ok=True)
@@ -357,10 +372,9 @@ async def dump_capture(client, run_dir, flow, notify=lambda message: None):
     methods = _request_methods(manifest_text)
     failed = {}
     for index in ids:
+        # Details must be captured first: Playwright uses that output to state
+        # whether request-body is actually available (POST may be bodyless).
         parts = [(None, '.log')]
-        if methods.get(index, 'GET') not in _NO_REQUEST_BODY:
-            parts.append(('request-body', '_request_body.txt'))
-        parts.append(('response-body', '_response_body.txt'))
         for part, suffix in parts:
             destination = folder / f'request_{index:03d}{suffix}'
             args = {'index': index, 'filename': str(destination)}
@@ -377,6 +391,26 @@ async def dump_capture(client, run_dir, flow, notify=lambda message: None):
                 except RecordingError:
                     if attempt == 1:
                         failed[(index, part or 'details')] = {'index': index, 'part': part or 'details'}
+        detail_path = folder / f'request_{index:03d}.log'
+        detail_text = detail_path.read_text(encoding='utf-8') if detail_path.exists() else ''
+        body_parts = []
+        if _request_body_available(detail_text, methods.get(index, 'GET')):
+            body_parts.append(('request-body', '_request_body.txt'))
+        body_parts.append(('response-body', '_response_body.txt'))
+        for part, suffix in body_parts:
+            destination = folder / f'request_{index:03d}{suffix}'
+            args = {'index': index, 'filename': str(destination), 'part': part}
+            for attempt in range(2):
+                try:
+                    await client.call('browser_network_request', args)
+                    if not destination.exists():
+                        raise RecordingError('Requested capture file was not saved')
+                    break
+                except DialogWaitTimeout:
+                    raise
+                except RecordingError:
+                    if attempt == 1:
+                        failed[(index, part)] = {'index': index, 'part': part}
     # A response body can detach from the network entry when the page navigates
     # away during capture (an SPA redirect right after login is the common case).
     # Give the entry a moment and re-read any still-missing response body before
