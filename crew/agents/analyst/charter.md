@@ -39,12 +39,20 @@ Read and write only within `flows/{flow-name}/`.
    - Request headers (especially Authorization, Cookie, X-CSRF-Token)
    - Request body structure (keys only, not values — minimize data sent to LLM)
    - Response status code
-6. Cross-reference with `flows/{flow-name}/demo.json` to map interactions to network calls
+6. Read `workflow_timeline.ui_states` and `workflow_timeline.network_sequence` from
+   `flows/{flow-name}/demo.json`. Use the chronological UI before/after deltas,
+   visible control states, prices, limits, role labels and terminal-state messages
+   to interpret the HAR. Correlate by order, URL and semantics; never claim an
+   exact click-to-request link when the artifacts do not prove it.
 7. Identify:
    - **State transitions** — requests that change application state (create, update, delete, approve, reject)
    - **Auth tokens/cookies** — session cookies, bearer tokens, CSRF tokens with their values
    - **Role contexts** — different permission levels observed (admin, user, approver, etc.)
    - **Criticality** — HIGH (financial, approval, auth), MED (data modification), LOW (read, navigation)
+   - **Observed UI rules** — constraints or lifecycle rules visible to the user,
+     such as "one coupon per order", a disabled Delete button, maximum amounts,
+     ownership text, or a completed/locked status. These are primary business-logic
+     hypotheses to test server-side, not decorative UI text.
 8. **Infer unexercised CRUD endpoints from resource shapes.** A demo usually captures only a happy path, so state-changing endpoints are frequently ABSENT from the HAR even though they exist. For every resource visible in a *response* — especially a collection of items (with ids) nested under a parent, e.g. `dashboard → parts: [{id:1}, …]` — infer the standard mutating operations and add them to `critical_endpoints` even if no matching request was recorded. A `parts` collection implies `POST …/parts` (create) and `DELETE …/parts/{id}` (delete), and usually `PUT`/`PATCH …/parts/{id}`. State-changing operations on nested/child resources (add, delete, edit, reorder, per-item approve) are high-value targets because UIs often gate them by lifecycle state while the backend may not — always include them when the resource appears in a response. Mark each such entry with `"inferred": true` and explain the inference in `why`.
 9. Write `flows/{flow-name}/state_map.json`
 10. Verify output schema and content
@@ -66,7 +74,13 @@ Read and write only within `flows/{flow-name}/`.
         "body_keys": ["field1", "field2"],
         "response_status": 200,
         "criticality": "HIGH|MED|LOW",
-        "depends_on": ["previous_transition_name"]
+        "depends_on": ["previous_transition_name"],
+        "ui_context": {
+          "before_step": 2,
+          "after_step": 3,
+          "visible_constraints": ["One coupon per order"],
+          "observed_changes": ["Apply Coupon became disabled", "Total changed from $100 to $80"]
+        }
       }
     ],
     "roles": [
@@ -74,6 +88,15 @@ Read and write only within `flows/{flow-name}/`.
         "name": "role_name",
         "cookies": [{ "name": "...", "value": "...", "domain": "...", "path": "/" }],
         "headers": { "Authorization": "Bearer ..." }
+      }
+    ],
+    "observed_ui_rules": [
+      {
+        "text": "One coupon per order",
+        "ui_step": 2,
+        "url": "https://.../checkout",
+        "related_transition": "apply_coupon",
+        "security_relevance": "Server must reject coupon replay even if the disabled UI is bypassed"
       }
     ],
     "critical_endpoints": [
@@ -95,6 +118,8 @@ Read and write only within `flows/{flow-name}/`.
 - Contains at least 1 transition
 - Contains at least 1 role with auth credentials
 - Contains at least 1 critical endpoint
+- Preserves every security-relevant visible rule in `observed_ui_rules`; use an
+  empty array only when the timeline truly contains none
 - Report: "✅ Phase 2 ANALYZE complete. Flow {flow-name}. {N} transitions, {M} roles, {K} critical endpoints identified."
 
 ## File Permissions

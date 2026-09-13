@@ -40,6 +40,12 @@ Read `flows/{flow-name}/state_map.json` and extract:
 - All transitions (ordered by dependency)
 - All roles with their full cookie/header credentials
 - All critical endpoints with their attack surfaces
+- All observed UI rules and transition `ui_context` (visible limits, disabled
+  actions, role/ownership text, and terminal states)
+
+For each observed UI rule, ask whether the server rejects the same action when
+the UI is bypassed. If `observed_ui_rules` is non-empty, generate at least one
+mutation that explicitly violates one of those rules.
 
 ### 3. Attack Brainstorm (before writing any scripts)
 
@@ -53,6 +59,7 @@ For each critical endpoint, enumerate every state-changing field in its request 
 | Which requests are idempotency-sensitive — create/pay/transfer? Resend the same request twice (same idempotency key/body), and also race N concurrent copies with `asyncio.gather` — no double charge/delivery/duplicate row allowed | DOUBLE_SPEND / REPLAY_ATTACK |
 | Which field accepts values the UI would never produce? (negative/zero/huge quantities, floats, unicode) | DATA_TAMPER |
 | Which role or ownership boundary exists? (other users' resource IDs, sequential ID enumeration, wrong-role cookies) | ROLE_SWAP / FORCED_BROWSING |
+| Which visible UI rule can be violated by calling the API directly? (disabled action, one-use rule, amount limit, locked state) | SKIP_STEP / REPLAY_ATTACK / DATA_TAMPER |
 
 ### 4. Select Mutation Targets
 
@@ -61,6 +68,7 @@ Choose 5-8 mutations (one script per mutation). Prioritize:
 2. Endpoints with multiple attack surface types
 3. Diverse mutation types (don't generate 5 scripts of one type when other types are applicable)
 4. Transitions the recorded demo did NOT take (the happy path is already proven safe — attack the rest of the state machine)
+5. High-impact rules observed in the UI but not proven by a negative server response
 
 ### 5. Generate Scripts
 

@@ -26,6 +26,11 @@ for line in sys.stdin:
             snapshots += 1
             if mode == 'snapshot_error' or (mode == 'final_snapshot_error' and snapshots == 2):
                 result = {'isError': True, 'content': [{'type': 'text', 'text': 'Target page has been closed'}]}
+            elif mode == 'timeline':
+                total = '$100' if snapshots == 1 else '$80'
+                applied = '' if snapshots == 1 else '\n- status: Coupon applied\n- button "Apply Coupon" [disabled] [ref=e9]'
+                result = {'content': [{'type': 'text', 'text':
+                    f'- Page URL: http://fixture.test/cart\n- text: Total {total}{applied}'}]}
         if name == 'browser_handle_dialog':
             if mode == 'modal':
                 (root / 'dialog_resolved.marker').write_text('auto-dismiss')

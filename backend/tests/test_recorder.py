@@ -8,13 +8,23 @@ import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch, AsyncMock
-from backend.runtime.recorder import record, RecordingError, manifest_ids, McpClient, optional_snapshot, DialogWaitTimeout
+from backend.runtime.recorder import (
+    DialogWaitTimeout,
+    McpClient,
+    RecordingError,
+    add_ui_state,
+    compact_snapshot,
+    manifest_ids,
+    network_sequence,
+    optional_snapshot,
+    record,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
 class RecorderTests(unittest.IsolatedAsyncioTestCase):
-    async def run_recording(self, mode):
+    async def run_recording(self, mode, recording_delay=0.05, recorder_env=None):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         root = Path(tmp.name)
@@ -31,10 +41,10 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
             notices.append(text)
             if text.startswith('Browser ready'):
                 opened.set()
-        task = asyncio.create_task(record(config, root, mcp, os.environ, notify))
+        task = asyncio.create_task(record(config, root, mcp, recorder_env or os.environ, notify))
         await asyncio.wait_for(opened.wait(), 3)
         # No model process exists. Backend holds the MCP process until user Finish.
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(recording_delay)
         self.assertFalse(task.done())
         calls = (root / 'calls.jsonl').read_text()
         self.assertNotIn('browser_close', calls)
@@ -66,6 +76,13 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
             calls = [json.loads(line) for line in (root / 'calls.jsonl').read_text().splitlines()]
             self.assertEqual(calls[-1]['name'], 'browser_close')
             demo = json.loads((root / 'flows/test/demo.json').read_text())
+            if mode == 'timeline':
+                states = demo['workflow_timeline']['ui_states']
+                self.assertEqual(len(states), 2)
+                self.assertEqual(states[-1]['changes_from_previous']['appeared'],
+                                 ['text: Total $80', 'status: Coupon applied',
+                                  'button "Apply Coupon" [disabled]'])
+                self.assertEqual(demo['workflow_timeline']['network_sequence'][0]['method'], 'GET')
             if mode in ('final_snapshot_error', 'snapshot_error'):
                 self.assertIsNone(demo['final_snapshot'])
                 self.assertIn('Target page has been closed', demo['warnings'][-1])
@@ -108,6 +125,11 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
     async def test_both_snapshots_optional(self):
         await self.run_recording('snapshot_error')
 
+    async def test_changed_intermediate_ui_is_written_to_demo_timeline(self):
+        env = dict(os.environ)
+        env['FLOWBUSTERS_UI_SNAPSHOT_INTERVAL'] = '0.25'
+        await self.run_recording('timeline', recording_delay=0.35, recorder_env=env)
+
     async def test_tool_error_retains_diagnostic(self):
         client = McpClient(None)
         client.rpc = AsyncMock(return_value={'isError': True, 'content': [
@@ -132,6 +154,51 @@ class RecorderTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(manifest_ids('3. [POST] /login\n7. [GET] /items'), [3, 7])
         with self.assertRaises(RecordingError):
             manifest_ids('unknown format')
+
+    def test_compact_snapshot_keeps_business_context_and_redacts_secrets(self):
+        result = {'content': [{'type': 'text', 'text': '''### Page state
+- Page URL: https://shop.test/checkout?token=abc&cart=12#access_token=xyz
+- Page Title: Checkout
+- Page Snapshot:
+```yaml
+- generic [ref=e1]:
+  - heading "Checkout" [level=1] [ref=e2]
+  - textbox "Coupon code" [ref=e3]: SAVE20
+  - textbox "Password" [ref=e4]: hunter2
+  - button "Apply Coupon" [disabled] [ref=e5]
+  - text: Maximum discount is $20
+```
+'''}]}
+        compact = compact_snapshot(result)
+        self.assertEqual(compact['url'], 'https://shop.test/checkout?token=%5BREDACTED%5D&cart=12#access_token=%5BREDACTED%5D')
+        self.assertEqual(compact['title'], 'Checkout')
+        self.assertIn('button "Apply Coupon" [disabled]', compact['elements'])
+        self.assertIn('text: Maximum discount is $20', compact['elements'])
+        self.assertNotIn('hunter2', json.dumps(compact))
+        self.assertNotIn('[ref=', json.dumps(compact))
+
+    def test_ui_timeline_deduplicates_and_describes_delta(self):
+        first = {'content': [{'type': 'text', 'text': '- Page URL: https://shop.test/cart\n- text: Total $100'}]}
+        second = {'content': [{'type': 'text', 'text': '- Page URL: https://shop.test/cart\n- text: Total $80\n- status: Coupon applied'}]}
+        timeline = []
+        add_ui_state(timeline, first, 'initial', '2026-01-01T00:00:00Z')
+        add_ui_state(timeline, first, 'change', '2026-01-01T00:00:01Z')
+        add_ui_state(timeline, second, 'final', '2026-01-01T00:00:02Z')
+        self.assertEqual(len(timeline), 2)
+        self.assertEqual(timeline[0]['observations'], 2)
+        self.assertEqual(timeline[1]['changes_from_previous']['appeared'],
+                         ['text: Total $80', 'status: Coupon applied'])
+        self.assertEqual(timeline[1]['changes_from_previous']['disappeared'], ['text: Total $100'])
+
+    def test_network_sequence_contains_keys_not_values(self):
+        outline = network_sequence([{'request': {
+            'method': 'POST', 'url': 'https://shop.test/api/coupon?csrf=secret',
+            'postData': {'text': '{"code":"SAVE20","cart_id":12}'},
+        }, 'response': {'status': 200, 'content': {'text': '{"discount":20,"total":80}'}}}])
+        self.assertEqual(outline[0]['request_body_keys'], ['cart_id', 'code'])
+        self.assertEqual(outline[0]['response_body_keys'], ['discount', 'total'])
+        self.assertNotIn('SAVE20', json.dumps(outline))
+        self.assertNotIn('secret', json.dumps(outline))
 
     async def test_failed_recording_never_launches_agent(self):
         from backend.runtime.crew_runner import CrewConfig, run_crew
@@ -182,4 +249,11 @@ class ModalWaitTests(unittest.IsolatedAsyncioTestCase):
         client.rpc = AsyncMock(return_value=self.modal())
         with self.assertRaises(RecordingError):
             await client.call('browser_navigate', {'url': 'http://fixture.test'})
+        self.assertEqual(client.rpc.await_count, 1)
+
+    async def test_timeline_snapshot_never_dismisses_user_dialog(self):
+        client = McpClient(None)
+        client.rpc = AsyncMock(return_value=self.modal())
+        with self.assertRaises(RecordingError):
+            await client.call('browser_snapshot', {}, recover_modal=False)
         self.assertEqual(client.rpc.await_count, 1)

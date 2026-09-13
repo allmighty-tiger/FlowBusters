@@ -50,24 +50,17 @@ Tell the user:
 >
 > I'm recording all interactions and network traffic for flow `{flow-name}`."
 
-### 4. Capture DOM Interactions
+### 4. Capture Semantic UI States
 
-While the user works, use Playwright MCP snapshot capabilities to track:
-- **Clicks** — element selectors and text content
-- **Form fills** — field names and input types (NOT values for sensitive fields)
-- **Navigation** — URL changes and page transitions
-- **Submissions** — form submissions and their targets
+While the user works, use Playwright MCP accessibility snapshots to capture
+chronological UI states. Deduplicate unchanged states. Keep URL/title, visible
+text, controls and enabled/disabled state, labels/non-sensitive values, alerts,
+prices, limits, permissions and terminal-state language. Strip MCP element refs,
+redact passwords/tokens, cap the retained context, and never save the full DOM.
 
-Structure each interaction as:
-```json
-{
-  "type": "click|fill|navigate|submit|select",
-  "selector": "CSS or accessibility selector",
-  "value": "input value or null",
-  "timestamp": "ISO-8601",
-  "url": "current page URL"
-}
-```
+Each state must include a compact `changes_from_previous` with appeared and
+disappeared semantic elements. These are observed before/after states, not proof
+of a particular click; never fabricate interaction events.
 
 ### 5. Capture Network Traffic (HAR)
 
@@ -133,11 +126,20 @@ When the user signals completion:
   "flow_name": "{flow-name}",
   "timestamp_start": "ISO-8601",
   "timestamp_end": "ISO-8601",
-  "interactions": [
-    { "type": "navigate", "selector": null, "value": "https://...", "timestamp": "..." },
-    { "type": "fill", "selector": "#username", "value": "[REDACTED]", "timestamp": "..." },
-    { "type": "click", "selector": "button[type=submit]", "value": null, "timestamp": "..." }
-  ]
+  "workflow_timeline": {
+    "ui_states": [
+      {
+        "step": 1,
+        "url": "https://...",
+        "elements": ["button Apply Coupon enabled", "text: One coupon per order"],
+        "changes_from_previous": {"appeared": [], "disappeared": []}
+      }
+    ],
+    "network_sequence": [
+      {"sequence": 1, "method": "POST", "url": "https://.../coupon", "status": 200,
+       "request_body_keys": ["code"], "response_body_keys": ["discount", "total"]}
+    ]
+  }
 }
 ```
 
@@ -148,7 +150,7 @@ in step 5c. Verify it exists and contains at least 1 entry.
 
 - Confirm `flows/{flow-name}/demo.json` exists and is valid JSON
 - Confirm `flows/{flow-name}/recording.har` exists and is valid HAR
-- Confirm at least 1 interaction was captured
+- Confirm at least 1 UI state was captured
 - Confirm at least 1 network entry was recorded
 
 ### 8. Report Gate Status

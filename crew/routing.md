@@ -27,7 +27,7 @@ Each run writes artifacts into flow-specific subdirectories so multiple flows ca
 | **Trigger** | Captain receives target URL from user |
 | **Invocation** | Captain passes target URL plus optional `--flow-name {flow-name}`. If omitted, use `default`. |
 | **Input** | Target URL, resolved flow name |
-| **Action** | Open headed browser via Playwright MCP, wait for user to complete full workflow demo (login + business flow) |
+| **Action** | Open headed browser via Playwright MCP, capture compact changed UI states while the user completes the workflow, then capture network traffic |
 | **Output** | `flows/{flow-name}/demo.json` + `flows/{flow-name}/recording.har` |
 | **Gate** | Recorder MUST confirm both files exist and contain valid data at the flow-specific paths. Captain verifies file existence before proceeding. |
 | **Blocks** | Phase 2 cannot start until gate passes |
@@ -95,7 +95,7 @@ Each run writes artifacts into flow-specific subdirectories so multiple flows ca
 
 All inter-phase communication is via JSON files. No prose between agents. Strict schemas:
 
-- `flows/{flow-name}/demo.json` — Array of DOM interaction events with timestamps
+- `flows/{flow-name}/demo.json` — Compact chronological Playwright UI states and a value-free network sequence; states are observations, not fabricated click events
 - `flows/{flow-name}/recording.har` — Standard HAR 1.2 format
 - `flows/{flow-name}/state_map.json` — `{ "target_url": "...", "transitions": [...], "roles": [...], "critical_endpoints": [...] }`
 - `mutations/{flow-name}/*.py` — Self-contained Python scripts, each prints one JSON line to stdout

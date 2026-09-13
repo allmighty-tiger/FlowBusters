@@ -45,7 +45,22 @@ Remove entries that match ANY of these patterns (by URL extension or content-typ
 
 **Keep only:** Requests with content-type `application/json`, `text/html`, `application/x-www-form-urlencoded`, or API-like paths.
 
-### 3. Identify State-Changing Requests
+### 3. Read the UI Workflow Timeline
+
+Read `demo.json.workflow_timeline.ui_states` before classifying requests. Each
+state is a compact Playwright accessibility snapshot; `changes_from_previous`
+is the observed UI delta. Extract security-relevant visible rules and states:
+
+- disabled/enabled actions and terminal/locked/completed states
+- prices, totals, discounts, quantities, maximum/minimum limits
+- role, ownership, approval and authorization language
+- one-time-use, ordering, prerequisite and replay constraints
+
+Treat these as hypotheses about rules the backend must enforce. Do not infer an
+exact click event: the timeline contains observed states, not fabricated clicks.
+Correlate UI states to HAR entries by chronological order, URL and semantics.
+
+### 4. Identify State-Changing Requests
 
 Focus on requests that modify server state:
 - **Method filter:** POST, PUT, DELETE, PATCH (ignore GET, HEAD, OPTIONS)
@@ -70,7 +85,7 @@ For each state-changing request, extract:
 }
 ```
 
-### 4. Extract Authentication Credentials
+### 5. Extract Authentication Credentials
 
 Scan all request headers for auth patterns:
 - **Cookies:** `session`, `sessionid`, `auth`, `token`, `jwt`, `.AspNetCore.*`
@@ -79,7 +94,7 @@ Scan all request headers for auth patterns:
 
 Group by distinct credential sets (each unique set = one role).
 
-### 5. Identify Roles
+### 6. Identify Roles
 
 Determine role contexts by observing:
 - Different cookie values across requests (suggests role switch)
@@ -98,14 +113,14 @@ Each role gets:
 }
 ```
 
-### 6. Classify Criticality
+### 7. Classify Criticality
 
 Rate each endpoint:
 - **HIGH** — Financial transactions, approvals/rejections, role changes, authentication, data deletion
 - **MED** — Data creation/modification, status updates, file uploads
 - **LOW** — Preferences, non-sensitive updates, logging
 
-### 7. Determine Attack Surface
+### 8. Determine Attack Surface
 
 For each critical endpoint, assess which mutation types apply:
 - **SKIP_STEP** — Endpoint has `depends_on` prerequisites that could be bypassed
@@ -114,7 +129,7 @@ For each critical endpoint, assess which mutation types apply:
 - **REPLAY_ATTACK** — Request could be replayed after state change
 - **FORCED_BROWSING** — Endpoint URL is guessable/sequential
 
-### 8. Write State Map
+### 9. Write State Map
 
 Output `flows/{flow-name}/state_map.json`:
 ```json
@@ -124,7 +139,16 @@ Output `flows/{flow-name}/state_map.json`:
   "recorded_at": "2024-01-15T10:30:00Z",
   "transitions": [...],
   "roles": [...],
-  "critical_endpoints": [
+    "observed_ui_rules": [
+      {
+        "text": "One coupon per order",
+        "ui_step": 2,
+        "url": "https://example.com/checkout",
+        "related_transition": "apply_coupon",
+        "security_relevance": "Server must reject replay when UI control is disabled"
+      }
+    ],
+    "critical_endpoints": [
     {
       "url": "https://api.example.com/orders/approve",
       "method": "POST",
@@ -135,13 +159,15 @@ Output `flows/{flow-name}/state_map.json`:
 }
 ```
 
-### 9. Verify Output
+### 10. Verify Output
 
 - Validate JSON structure
 - Confirm `flows/{flow-name}/state_map.json` exists
 - Confirm at least 1 transition exists
 - Confirm at least 1 role with credentials exists
 - Confirm at least 1 critical endpoint identified
+- Confirm `observed_ui_rules` exists (it may be empty only when no relevant
+  constraint or lifecycle state is visible)
 
 ## Important Notes
 
@@ -149,5 +175,6 @@ Output `flows/{flow-name}/state_map.json`:
 - **NEVER send raw response bodies to the LLM** — strip before reasoning
 - **Preserve exact cookie/token values** — Saboteur needs them for replay
 - **Body keys only** — extract field names from request bodies, not values (except IDs needed for targeting)
-- **Cross-reference with demo.json** — use interaction timestamps to establish ordering/dependencies between transitions
+- **Cross-reference with demo.json** — use UI state order and semantic deltas to
+  establish dependencies, and preserve visible rules for mutation design
 - **Flow isolation:** Read and write only inside `flows/{flow-name}/` for the active flow.

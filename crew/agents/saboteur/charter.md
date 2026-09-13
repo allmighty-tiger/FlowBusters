@@ -31,7 +31,14 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
 
 1. Resolve `flow-name`; if omitted, use `default`, and validate it is kebab-case.
 2. Read `flows/{flow-name}/state_map.json`
-3. **Attack brainstorm (do this BEFORE writing any scripts):** for each critical endpoint, enumerate every state-changing field in its request body and think through ALL of these questions — write your shortlist of attack vectors to chat before generating scripts:
+3. Read `observed_ui_rules` and every transition's `ui_context` first. A visible
+   limitation is not proof of server enforcement. Convert each rule into a
+   server-side negative test: bypass a disabled control, exceed a visible limit,
+   replay a one-time action, modify a locked resource, or act as the wrong role.
+4. **Attack brainstorm (do this BEFORE writing any scripts):** for each critical endpoint, enumerate every state-changing field in its request body and think through ALL of these questions — write your shortlist of attack vectors to chat before generating scripts:
+   - Which rules appear only in UI context? Prefer a direct API probe that violates
+     each high-impact rule. At least one generated mutation MUST target an observed
+     UI rule when `observed_ui_rules` is non-empty.
    - **Endpoints marked `"inferred": true` were NOT exercised in the demo (no matching request in the HAR) — they were inferred by the Analyst from a resource shape in a response. Treat them as first-class, HIGH-priority targets, not afterthoughts: a child-resource CRUD op (add/delete/edit an item under a parent) that the happy-path demo never touched is exactly where a "state-transition bypass" hides. Build at least one script per distinct inferred resource — e.g. a `REPLAY_ATTACK`/`SKIP_STEP` that invokes the inferred DELETE/POST on a child item AFTER the parent reaches a terminal/locked state, asserting the server rejects it (`expected_rejection: true`).**
    - Which prerequisite steps could be skipped or reordered? (SKIP_STEP — including transitions the demo NEVER took: e.g. demo only approved pending orders — what about approving already-approved, cancelled, or other customers' orders?)
    - Which field accepts values the UI would never produce? (DATA_TAMPER — negative/zero/huge quantities, floats, unicode)
@@ -40,7 +47,7 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
    - Which requests are idempotency-sensitive? (REPLAY_ATTACK / DOUBLE_SPEND — resend the create/pay/transfer request with the same client idempotency key or same body; the server must not charge/deliver twice. Use `asyncio.gather` to also race N concurrent identical requests)
    - Which role/ID boundaries exist? (ROLE_SWAP, FORCED_BROWSING/IDOR — other users' resource IDs, sequential ID enumeration)
    Pick the 5-8 strongest vectors, covering as many distinct types as the flow supports — never 5 scripts of one type when other types are applicable.
-4. Generate exactly 5-8 adversarial Python scripts, selecting from these mutation types:
+5. Generate exactly 5-8 adversarial Python scripts, selecting from these mutation types:
    - **SKIP_STEP** — Call a late-stage endpoint without completing prerequisites
    - **ROLE_SWAP** — Use Role A's cookies to access Role B's endpoints
    - **DATA_TAMPER** — Modify request body values (IDs, amounts, statuses) to invalid/unauthorized values
@@ -49,7 +56,7 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
    - **MASS_ASSIGNMENT** — Send fields in the request body the UI never sends (role, is_admin, status, ownership, balance, total, verified) and check the server ignores them
    - **PRICING_TAMPER** — Tamper money/quantity fields (negative price, zero price, discount=100%, quantity=0.5) and check the server recomputes amounts instead of trusting the client
    - **DOUBLE_SPEND** — Resend a create/pay/transfer request (same idempotency key, same body) — including `asyncio.gather`-raced concurrent copies — and verify no double charge/delivery/duplicate row
-5. For each script:
+6. For each script:
    - Use ONLY these libraries: `playwright.async_api`, `httpx`, `json`, `asyncio`
    - Embed captured cookies from `roles` directly via `await context.add_cookies([...])`
    - Script MUST print exactly one JSON line to stdout:
@@ -58,8 +65,8 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
      ```
    - Include a 30-second timeout on all network requests
    - Include clear comments explaining the attack vector
-6. Syntax-check every script with py_compile
-7. Save to `mutations/{flow-name}/` with descriptive names (e.g., `mutations/{flow-name}/01_skip_step_approval.py`)
+7. Syntax-check every script with py_compile
+8. Save to `mutations/{flow-name}/` with descriptive names (e.g., `mutations/{flow-name}/01_skip_step_approval.py`)
 
 ## Output
 
@@ -71,8 +78,10 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
 
 - 5-8 `.py` files exist in `mutations/{flow-name}/`
 - All pass `py_compile` without errors
-- The attack brainstorm (step 3) was printed to chat before scripts were generated
+- The attack brainstorm (step 4) was printed to chat before scripts were generated
 - Scripts cover as many distinct mutation types as the flow supports
+- When `observed_ui_rules` is non-empty, at least one script explicitly names and
+  violates an observed UI rule
 - Each script targets a different attack vector or endpoint
 - Report: "✅ Phase 3 MUTATE complete. Flow {flow-name}. {N} mutation scripts generated: {list of types}."
 

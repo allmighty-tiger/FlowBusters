@@ -34,11 +34,11 @@ Manages the 4-phase sequential pipeline end-to-end. Validates the target URL aga
 
 ### Recorder — Flow Recorder
 
-Opens a headed browser via Playwright MCP, navigates to the target URL, and captures the user's complete workflow demonstration including DOM interactions and network traffic.
+Opens a headed browser via Playwright MCP, navigates to the target URL, and captures compact changed UI states plus network traffic throughout the user's workflow.
 
 **Reads:** Target URL and optional `--flow-name` (from Captain)  
 **Writes:** `flows/{flow-name}/demo.json`, `flows/{flow-name}/recording.har`  
-**Gate:** Both files exist with valid data; at least 1 interaction and 1 network request captured  
+**Gate:** Both files exist with valid data; at least 1 UI state and 1 network request captured
 
 **Constraints:**
 - Never analyzes captured data — that is Analyst's responsibility
@@ -50,7 +50,7 @@ Opens a headed browser via Playwright MCP, navigates to the target URL, and capt
 
 ### Analyst — State Analyst
 
-Reads captured HAR files and DOM interaction traces, identifies critical state-changing endpoints, extracts authentication tokens and role contexts, and produces a structured state map.
+Reads the HAR and compact UI workflow timeline, identifies visible business rules and critical state-changing endpoints, extracts authentication tokens and role contexts, and produces a structured state map.
 
 **Reads:** `flows/{flow-name}/demo.json`, `flows/{flow-name}/recording.har`  
 **Writes:** `flows/{flow-name}/state_map.json`  
@@ -62,6 +62,7 @@ Reads captured HAR files and DOM interaction traces, identifies critical state-c
 - Auth tokens and cookies — session cookies, bearer tokens, CSRF tokens
 - Role contexts — different permission levels (admin, user, approver, etc.)
 - Criticality tiers — HIGH (financial, approval, auth), MED (data modification), LOW (read, nav)
+- Visible business rules — disabled actions, limits, one-time rules, role boundaries, and locked states
 
 **Constraints:**
 - Never opens a browser or records flows — that is Recorder's responsibility
@@ -144,14 +145,14 @@ User: "Captain, run FlowBusters against {url} [--flow-name {name}]"
          ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 1: RECORD                                         │
-│  Recorder opens browser → user demos workflow            │
+│  Recorder captures UI changes → user demos workflow      │
 │  Gate: flows/{flow-name}/demo.json + recording.har       │
 └──────────────────────────┬──────────────────────────────┘
                            │ gate passed
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │  Phase 2: ANALYZE                                        │
-│  Analyst parses HAR → extracts state transitions         │
+│  Analyst joins UI rules + HAR → state transitions        │
 │  Gate: flows/{flow-name}/state_map.json                  │
 └──────────────────────────┬──────────────────────────────┘
                            │ gate passed
