@@ -30,6 +30,8 @@ from typing import Any, Callable, Optional
 
 from backend.runtime.orchestrator import Phase, ProgressEvent
 from backend.runtime.state_lock_probe import ensure_business_logic_finding
+from backend.runtime.verification import load_report
+from backend.runtime.recorder import record, RecordingError
 
 logger = logging.getLogger("flowbusters.crew_runner")
 
@@ -131,7 +133,7 @@ def prepare_run_dir(config: CrewConfig, flow_name: str) -> Path:
 # ── System Prompt Assembly ────────────────────────────────────────────────────
 
 def build_system_prompt(run_dir: Path, flow_name: str) -> str:
-    """Assemble the full system prompt from vendored charters + skills."""
+    """Build recording prompt and write the deferred continuation to disk."""
     crew = run_dir / "crew"
 
     parts: list[str] = []
@@ -145,44 +147,34 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
         "---\n\n"
     )
 
-    # Captain charter
-    captain = crew / "agents" / "captain" / "charter.md"
-    if captain.exists():
-        parts.append(captain.read_text())
+    # Preserve the startup scope gate while deferring later-phase instructions.
+    parts.append(
+        "Before browser navigation validate the flow name as kebab-case. "
+        "If scope.json exists, read it and enforce allowed_domains, "
+        "allowed_paths_prefix and block_production exactly as configured. "
+        "Abort for out-of-scope or blocked production targets. Never test production "
+        "without explicit user confirmation. Do not skip phase gates.\n"
+        "Start with Recorder now. Do not read later-phase files before recording.\n"
+    )
+    for relative in ("agents/recorder/charter.md", "skills/record-flow/SKILL.md"):
+        parts.append((crew / relative).read_text())
 
-    # Recorder charter (with RECORD phase note)
-    recorder = crew / "agents" / "recorder" / "charter.md"
-    if recorder.exists():
-        parts.append("\n\n---\n\n" + recorder.read_text())
-
-    # Analyst charter
-    analyst = crew / "agents" / "analyst" / "charter.md"
-    if analyst.exists():
-        parts.append("\n\n---\n\n" + analyst.read_text())
-
-    # Saboteur charter
-    saboteur = crew / "agents" / "saboteur" / "charter.md"
-    if saboteur.exists():
-        parts.append("\n\n---\n\n" + saboteur.read_text())
-
-    # Prober charter
-    prober = crew / "agents" / "prober" / "charter.md"
-    if prober.exists():
-        parts.append("\n\n---\n\n" + prober.read_text())
-
-    # Routing rules
-    routing = crew / "routing.md"
-    if routing.exists():
-        parts.append("\n\n---\n\n" + routing.read_text())
-
-    # Skill definitions
-    skills_dir = crew / "skills"
-    skill_names = ["record-flow", "analyze-har", "mutate-flow", "probe-flow"]
-    parts.append("\n\n---\n\n# SKILL DEFINITIONS\n\n")
-    for skill in skill_names:
-        skill_file = skills_dir / skill / "SKILL.md"
-        if skill_file.exists():
-            parts.append(skill_file.read_text() + "\n\n")
+    deferred = ["agents/captain/charter.md", "routing.md",
+                "agents/analyst/charter.md", "skills/analyze-har/SKILL.md",
+                "agents/saboteur/charter.md", "skills/mutate-flow/SKILL.md",
+                "agents/prober/charter.md", "skills/probe-flow/SKILL.md",
+                "skills/probe-flow/VERIFICATION.md"]
+    continuation = "# Post-recording instructions\n\n"
+    for relative in deferred:
+        continuation += "\n---\n# " + relative + "\n" + (crew / relative).read_text() + "\n"
+    continuation += (
+        "\nExecute mutation scripts with python3 <script_path>.py <target_url>, "
+        "30-second timeout each. HTTP codes alone never establish a verdict. "
+        "Apply the verification contract; missing state evidence is NEEDS_REVIEW.\n"
+        "Recording is already complete. Resume at ANALYZE, then MUTATE, PROBE "
+        "and REPORT, sequentially in this same session. Do not restart Recorder.\n"
+    )
+    (run_dir / "_post_recording_instructions.md").write_text(continuation)
 
     # Gate relaxation — inline with Captain charter, not a separate section.
 
@@ -205,17 +197,15 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
         "   waste the user's time.\n"
         "   a. Take a final browser_snapshot.\n"
         "   b. Create the har_data directory: mkdir -p flows/" + flow_name + "/har_data\n"
-        "   c. List the captured API requests:\n"
-        "      browser_network_requests(static=false, filter=\"/api/.*\")\n"
-        "      This returns a numbered list. Note the indexes.\n"
-        "   d. For EACH index N in that list, call:\n"
-        "      browser_network_request(index=N)\n"
-        "      Collect every request's url, method, status, status_text, request_headers,\n"
-        "      request_body, response_headers, response_body, response_mime, started_at,\n"
-        "      duration_ms. Then write flows/" + flow_name + "/har_data/raw_network.json as:\n"
-        "        {\"entries\": [ <one object per request, in order> ]}\n"
-        "      (This is the structured dump the HAR builder needs — a plain list of URLs is\n"
-        "      NOT sufficient; each entry must carry the headers and bodies.)\n"
+        "   c. List captured API requests directly to disk:\n"
+        "      browser_network_requests(static=false, filter=\"/api/.*\", filename=\"flows/" + flow_name + "/har_data/network_requests.log\")\n"
+        "      Read the file and preserve its printed 1-based indexes (filtering may leave gaps).\n"
+        "   d. For EACH printed index N, format N as NNN (001, 002, ...) and call all three:\n"
+        "      browser_network_request(index=N, filename=\"flows/" + flow_name + "/har_data/request_NNN.log\")\n"
+        "      browser_network_request(index=N, part=\"request-body\", filename=\"flows/" + flow_name + "/har_data/request_NNN_request_body.txt\")\n"
+        "      browser_network_request(index=N, part=\"response-body\", filename=\"flows/" + flow_name + "/har_data/request_NNN_response_body.txt\")\n"
+        "      The full-detail call does NOT contain bodies; the two part calls are required.\n"
+        "      Empty GET request bodies are normal. Never infer response text from headers.\n"
         "\n"
         ">>> STOP — CLOSE THE BROWSER NOW <<<\n"
         "   The last browser call you need is done. IMMEDIATELY call browser_close and confirm\n"
@@ -225,10 +215,11 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
         "   the next step after the browser is closed.\n"
         "\n"
         "   Then continue on disk (browser no longer needed):\n"
-        "   e. Run: python3 crew/scripts/synthesize_har.py flows/" + flow_name + "/har_data/raw_network.json flows/" + flow_name + "/recording.har\n"
+        "   e. Run: python3 crew/scripts/synthesize_har.py flows/" + flow_name + "/har_data flows/" + flow_name + "/recording.har\n"
         "   f. Verify synthesize_har.py exited 0 and recording.har exists\n"
         "   g. Write flows/" + flow_name + "/demo.json with interaction trace.\n"
-        "   h. Validate recording.har: it MUST have {log: {version, creator, entries}}.\n"
+        "   h. Validate recording.har: it MUST have {log: {version, creator, entries}}\n"
+        "      and successful JSON responses must contain response.content.text.\n"
         "      If invalid, report the error and do NOT proceed to Phase 2.\n"
         "4. Announce RECORD phase complete with both file paths and counts.\n\n"
         "IMPORTANT: If the target URL has SSL certificate errors, use browser_navigate with\n"
@@ -236,13 +227,13 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
         "proceed with the assessment. This is a test environment.\n\n"
     )
 
-    # Prober phase instructions for Python path
     parts.append(
-        "# PROBE PHASE — SCRIPT EXECUTION\n\n"
-        "Execute each mutation script with:\n"
-        "    python3 <script_path>.py <target_url>\n"
-        "Use a 30-second timeout per script. Parse the JSON line each script prints.\n"
-        "Classify: BUG_FOUND (2xx when rejection expected), REJECTED (4xx/5xx), ERROR.\n\n"
+        "# CONTINUE AFTER RECORDING\n"
+        "After recording_done.marker appears, finish the network dump, close the "
+        "browser, synthesize and validate HAR and demo.json as instructed above. "
+        "Then read ALL of _post_recording_instructions.md (continue reading if "
+        "truncated) before analysis. Follow its phase gates and verification "
+        "contract through final report. Do not end the session after recording.\n"
     )
 
     return "\n".join(parts)
@@ -449,15 +440,33 @@ async def run_crew(
 
     Returns dict with artifact paths and findings.
     """
+    started_at = time.monotonic()
+    milestones: dict[str, float] = {}
     flow_name = config.flow_name
 
     # Prepare working directory
     run_dir = prepare_run_dir(config, flow_name)
 
+    def startup_mark(name: str):
+        if name in milestones:
+            return
+        milestones[name] = round(time.monotonic() - started_at, 3)
+        logger.info("Startup timing %s: %.3fs since run_crew entry", name, milestones[name])
+        try:
+            (run_dir / "startup_timing.json").write_text(json.dumps({
+                "clock": "seconds since run_crew entry (not button click)",
+                "milestones": milestones,
+            }, indent=2))
+        except OSError:
+            logger.warning("Could not write startup timing file")
+
+    startup_mark("run_directory_ready")
     # Build system prompt
     system_prompt = build_system_prompt(run_dir, flow_name)
     prompt_path = run_dir / "_system_prompt.txt"
     prompt_path.write_text(system_prompt)
+    startup_mark("prompt_ready")
+    logger.info("Startup prompt size: %d characters", len(system_prompt))
 
     # Initial user message
     initial_message = (
@@ -486,6 +495,33 @@ async def run_crew(
         resolved_mcp = (portal_base / config.mcp_config).resolve()
         mcp_config_arg = str(resolved_mcp)
 
+    # Recording belongs to the backend, not to a model turn. Do not launch the
+    # analyst until MCP has saved and validated the complete recording.
+    progress_cb(ProgressEvent(Phase.RECORD, 'Opening recording browser...', done=False))
+    try:
+        await record(config, run_dir, mcp_config_arg, env,
+            lambda message: progress_cb(ProgressEvent(Phase.RECORD, message, done=False)))
+    except (RecordingError, OSError, ValueError, asyncio.TimeoutError) as exc:
+        message = f'Recording failed: {exc}'
+        progress_cb(ProgressEvent(Phase.FAILED, message, done=True, error=message))
+        shutil.rmtree(temp_home, ignore_errors=True)
+        return {'error': message, 'run_dir': str(run_dir), 'exit_code': -1,
+                'total_time': time.monotonic() - started_at, 'artifacts': {}}
+    startup_mark('recording_validated')
+    system_prompt = (run_dir / '_post_recording_instructions.md').read_text()
+    system_prompt += (
+        '\nThe backend completed RECORD and closed its MCP session. '
+        'Read the existing flows/' + flow_name + '/recording.har and demo.json. '
+        'Do not reopen a browser or repeat recording. Use HTTP probes for testing. '
+        'Read scope.json and enforce allowed_domains, allowed_paths_prefix and '
+        'block_production before probing. Start at ANALYZE.\n')
+    prompt_path.write_text(system_prompt)
+    initial_message = f'Analyze the validated recording for {config.target_url}, flow {flow_name}; continue through REPORT.'
+    # No browser tools are needed downstream; prevent accidental re-opening.
+    analysis_mcp = run_dir.resolve() / '_analysis_mcp.json'
+    analysis_mcp.write_text('{"mcpServers": {}}')
+    mcp_config_arg = str(analysis_mcp)
+
     # The crew runs with an isolated temp HOME, so the interactive session's
     # effort setting (~/.claude/settings.json) does not apply — the CLI falls
     # back to its default, which some gateways reject (400). Pass an explicit
@@ -498,6 +534,7 @@ async def run_crew(
         "--output-format", "stream-json",
         "--verbose",
         "--mcp-config", mcp_config_arg,
+        "--strict-mcp-config",
         "--model", config.model,
         "--effort", effort,
         "--system-prompt-file", prompt_path.name,
@@ -505,7 +542,7 @@ async def run_crew(
         initial_message,
     ]
 
-    progress_cb(ProgressEvent(Phase.RECORD, "⏳ Spawning Claude Code crew...", done=False))
+    progress_cb(ProgressEvent(Phase.ANALYZE, "Starting analysis of validated recording...", done=False))
 
     # Spawn subprocess
     # limit= raises the StreamReader's max line length (default 64 KB).
@@ -527,8 +564,9 @@ async def run_crew(
     logger.info("Claude Code cwd: %s", run_dir)
     logger.info("Claude Code mcp_config exists: %s", Path(config.mcp_config).exists())
     logger.info("Claude Code prompt_file exists: %s", prompt_path.exists())
+    startup_mark("agent_process_started")
     logger.info("Claude Code subprocess started (pid=%d)", proc.pid)
-    progress_cb(ProgressEvent(Phase.RECORD, "✅ Crew running (pid %d)" % proc.pid, done=False))
+    progress_cb(ProgressEvent(Phase.ANALYZE, "✅ Crew running (pid %d)" % proc.pid, done=False))
 
     parser = StreamJsonParser()
     watcher = ArtifactWatcher(run_dir, flow_name)
@@ -543,9 +581,9 @@ async def run_crew(
     # message instead.
     browser_seen = False
     window_dead_since: Optional[float] = None
-    marker_announced = False
+    marker_announced = True  # backend already completed and validated RECORD
     browser_closed_announced = False
-    browser_force_closed = False  # set once the backend has force-closed the browser
+    browser_force_closed = True  # backend-owned MCP session already closed
     # Set the moment remediation.md lands: the report is DONE then, even if the
     # crew is still printing a final summary. Emit COMPLETE immediately so the
     # "View report" button appears at the end of the Report step instead of
@@ -576,15 +614,17 @@ async def run_crew(
             if not line:
                 break
             text = line.decode("utf-8", errors="replace")
+            startup_mark("first_agent_output")
             stdout_events.append(text)
             parser.feed(text)
 
             # Emit "opening browser" SSE event when first browser_* tool call detected
             if parser.has_first_browser_call() and not parser.first_browser_call_emitted_was_signaled:
                 parser.first_browser_call_emitted_was_signaled = True
+                startup_mark("first_browser_tool_requested")
                 progress_cb(ProgressEvent(
                     Phase.RECORD,
-                    "🌐 Browser opening — Chromium launching now...",
+                    "🌐 Browser tool requested — waiting for browser process...",
                     done=False,
                 ))
 
@@ -652,6 +692,7 @@ async def run_crew(
                 if parser.has_first_browser_call() and not browser_seen:
                     if crew_browser_alive(temp_home):
                         browser_seen = True
+                        startup_mark("browser_process_detected")
                         window_dead_since = None
                         logger.info("Crew recording window confirmed open")
                     else:
@@ -862,6 +903,15 @@ async def run_crew(
     # holding the recording wait, so the browser closed and the recording was
     # lost), mark it a failure instead of a misleading "complete".
     findings_path = run_dir / "reports" / flow_name / "findings.json"
+    if findings_path.exists():
+        try:
+            normalized = load_report(findings_path)
+            staged = findings_path.with_suffix('.normalized.tmp')
+            staged.write_text(json.dumps(normalized, indent=2))
+            staged.replace(findings_path)
+        except (OSError, ValueError, TypeError) as exc:
+            logger.warning('Report evidence reconciliation failed: %s', type(exc).__name__)
+            error_msg = 'Report evidence reconciliation failed; inspect run artifacts.'
     if not error_msg and not findings_path.exists():
         error_msg = (
             "No report was produced — the recording window closed before the "

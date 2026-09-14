@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import PortalPage from './pages/portal';
 import ProgressPage from './pages/progress';
 import ReportPage from './pages/report';
@@ -115,6 +115,8 @@ function NavBar() {
 }
 
 function AppContent() {
+  const { pathname } = useLocation();
+  const isReport = pathname === "/reports" || pathname.endsWith("/report");
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', minHeight: '100vh', color: '#e2e8f0',
       backgroundColor: '#0f0f23',
@@ -123,7 +125,7 @@ function AppContent() {
       backgroundSize: 'cover',
       backgroundPosition: 'center bottom' }}>
       <NavBar />
-      <main style={{ maxWidth: 800, margin: '0 auto', padding: '2rem 1rem' }}>
+      <main style={{ maxWidth: isReport ? 1200 : 800, margin: '0 auto', padding: '2rem 1rem' }}>
         <Routes>
           <Route path="/" element={<PortalPage />} />
           <Route path="/progress" element={<ProgressPage />} />

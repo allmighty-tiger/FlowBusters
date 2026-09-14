@@ -68,9 +68,6 @@ Each script should print exactly one JSON line to stdout:
 
 | Condition | Classification | Meaning |
 |-----------|---------------|---------|
-| `expected_rejection == true` AND `status_code` is 2xx (200-299) | **BUG_FOUND** 🐛 | Server accepted a request it should have rejected |
-| `expected_rejection == true` AND `status_code` is 4xx/5xx | **REJECTED** ✅ | Server properly blocked the attack |
-| `expected_rejection == false` AND `status_code` is 2xx | **REJECTED** ✅ | Expected behavior confirmed |
 | Script times out (>30s) | **ERROR** ⚠️ | Timeout — possible network issue or infinite loop |
 | Script throws exception | **ERROR** ⚠️ | Execution failure |
 | No JSON in stdout | **ERROR** ⚠️ | Malformed script output |
@@ -197,6 +194,23 @@ Schema rules:
 - Any BUG_FOUND script must also appear in `findings[]` (a script that found a bug is a confirmed vulnerability).
 - Severity assignment: auth bypass / full-system access = Critical; unauthorized state-changing action = High; data-integrity issues (e.g. accepting negative quantity) = Medium; information leaks = Low.
 
+**Suspected-but-not-demonstrated findings MUST still be findings — never bare result rows.**
+This is the single most-missed rule. If your probing *suspicion* indicates a business-logic or
+authorization defect (especially IDOR / broken object-level access control) but you could not
+fully demonstrate it in this environment, you MUST still emit a `findings[]` entry — do NOT leave
+it as a lone entry in `results[]` with no `finding_id`. A suspected bug the tool can't exercise
+is still a valid bug a human should verify; dropping it is a report failure.
+- **Demonstrable** (you can prove it on the resource that actually exists): emit the finding and
+  back it with state-change evidence so it is `CONFIRMED`. For IDOR/BAC, demonstrate it by
+  **acting as a second, different principal on the resource that exists** (e.g. a non-owner
+  deleting/reading a part on the owner's board) — do NOT rely on a second dashboard/board
+  existing, because single-resource apps (only one board) will 404 it.
+- **Not exercisable here** (the precondition isn't met, e.g. "no second resource owned by a
+  different principal exists"): still emit the finding, set its evidence to explain what is
+  missing, and note it is **not executed — verify manually**. Give the result's `finding_id` the
+  real finding's ID (never a phantom/placeholder ID, and never `null` when a finding exists).
+  The report will surface it as "not executed / needs manual reproduction."
+
 ### 9. Generate Remediation (If Any Findings)
 
 If `findings[]` is non-empty, generate `reports/{flow-name}/remediation.md` — one `## Finding N:` section per entry in `findings[]`, **Critical first**:
@@ -292,3 +306,12 @@ Summary: {N} findings ({K} critical) | {R} rejected | {E} errors
 - **Report ALL outcomes** — don't skip ERRORs, they indicate setup issues the user needs to fix
 - **Be actionable** — for every ERROR, tell the user exactly how to fix it (install command, config change, etc.)
 - **Flow isolation:** Read only from `mutations/{flow-name}/` and write only to `reports/{flow-name}/`.
+
+## Required verification contract (supersedes legacy outcome examples above)
+Read `crew/skills/probe-flow/VERIFICATION.md` before probing.
+Never classify a vulnerability or a successful defense from HTTP status alone.
+Legacy BUG_FOUND labels and automatic auth Critical instructions do not bypass
+backend verification. A token response alone is not proof of usable access.
+Use CONFIRMED, NEEDS_REVIEW, NOT_REPRODUCED or CHECK_ERROR. The backend
+recomputes the verdict from supported evidence. Include every suspected finding,
+including inconclusive results, and associate probe evidence using finding_id.
