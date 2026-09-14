@@ -80,6 +80,31 @@ class VerificationTests(unittest.TestCase):
         del record['verification']['after']['response']
         self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
 
+    def test_negative_business_invariant_precedes_missing_rule_reference(self):
+        record = self.business_rule(False)
+        record['verification']['rule'] = {'source': 'agent', 'reference': ''}
+        self.assertEqual(classify(record)[0], 'NOT_REPRODUCED')
+
+    def test_positive_business_invariant_still_requires_rule_reference(self):
+        record = self.business_rule(True)
+        record['verification']['rule'] = {'source': 'agent', 'reference': ''}
+        status, reason = classify(record)
+        self.assertEqual(status, 'NEEDS_REVIEW')
+        self.assertIn('user, specification, or observed-UI', reason)
+
+    def test_incomplete_negative_evidence_does_not_bypass_validation(self):
+        record = self.business_rule(False)
+        record['verification']['rule'] = {'source': 'agent', 'reference': ''}
+        del record['verification']['after']['response']
+        self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
+
+    def test_mismatched_provenance_precedes_negative_invariant(self):
+        record = self.business_rule(False)
+        record['_provenance_error'] = 'Signed HTTP trace does not match the reported evidence.'
+        status, reason = classify(record)
+        self.assertEqual(status, 'NEEDS_REVIEW')
+        self.assertIn('does not match', reason)
+
     def test_rejected_raw_attempt_is_not_reproduced(self):
         self.assertEqual(classify({'outcome': 'REJECTED'})[0], 'NOT_REPRODUCED')
         self.assertEqual(classify({'outcome': 'NEEDS_REVIEW',
@@ -98,6 +123,17 @@ class VerificationTests(unittest.TestCase):
                                    'summary': {'critical_findings': 99}})
         self.assertEqual(report['summary']['critical_findings'], 1)
         self.assertEqual(report['summary']['potential_critical_findings'], 1)
+
+    def test_confirmed_result_inherits_verified_linked_finding(self):
+        finding = self.business_rule()
+        finding.update({'id': 'F-1', 'severity': 'Critical'})
+        report = normalize_report({'findings': [finding], 'results': [{
+            'script': 'interleave.py', 'finding_id': 'F-1',
+            'outcome': 'CONFIRMED',
+        }]})
+        self.assertEqual(report['findings'][0]['verification_status'], 'CONFIRMED')
+        self.assertEqual(report['results'][0]['outcome'], 'CONFIRMED')
+        self.assertEqual(report['summary']['bugs_found'], 1)
 
     def test_non_dict_verification_does_not_crash_render(self):
         # Regression: the crew can emit verification as a bare string (e.g.
@@ -165,7 +201,9 @@ class VerificationTests(unittest.TestCase):
             out = load_report(base / 'findings.json')
         probe = [f for f in out['findings'] if f.get('source') == 'STATE_LOCK_PROBE']
         self.assertTrue(probe, 'probe finding was lost by the evidence join')
-        self.assertEqual(probe[0]['verification_status'], 'CONFIRMED')
+        # Raw state evidence remains intact, but an unsigned legacy capture
+        # cannot establish who executed it under the provenance contract.
+        self.assertEqual(probe[0]['verification_status'], 'NEEDS_REVIEW')
         self.assertNotIn('execution', probe[0], 'crew NOT_EXECUTED stub must not overwrite probe')
         self.assertEqual(probe[0]['verification']['after']['item_ids'], [2])
 

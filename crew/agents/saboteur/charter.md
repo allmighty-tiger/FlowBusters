@@ -70,10 +70,14 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
 6. For each script:
    - Use ONLY these libraries: `playwright.async_api`, `httpx`, `json`, `asyncio`
    - Embed captured cookies from `roles` directly via `await context.add_cookies([...])`
-   - Script MUST print exactly one JSON line to stdout:
-     ```json
-     {"url": "...", "mutation_type": "SKIP_STEP|ROLE_SWAP|DATA_TAMPER|REPLAY_ATTACK|FORCED_BROWSING|MASS_ASSIGNMENT|PRICING_TAMPER|DOUBLE_SPEND", "status_code": 200, "response_body_snippet": "first 200 chars...", "expected_rejection": true}
-     ```
+   - Read `crew/skills/probe-flow/EXECUTION.md` before authoring scripts.
+   - Script MUST print exactly one JSON object satisfying that backend evidence
+     contract, including `title`, `mutation_type`, `url`, `status_code`,
+     `outcome`, and a `verification` built from actual response objects with a
+     complete independent `before` / `actions` / `after` chain.
+   - Invariant paths start at the full HTTP response root. Include envelope keys
+     (for example `["order", "totalReturned"]`), and never rely on recursive
+     field lookup or guessed array indexes.
    - Include a 30-second timeout on all network requests
    - Include clear comments explaining the attack vector
 7. Syntax-check every script with py_compile

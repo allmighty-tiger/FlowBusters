@@ -5,9 +5,11 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
+import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from backend.runtime.verification import load_report
+from backend.runtime.probe_executor import execute
 
 spec = importlib.util.spec_from_file_location('verified_delete', Path(__file__).parents[2] / 'crew/scripts/verified_delete.py')
 executor = importlib.util.module_from_spec(spec)
@@ -45,14 +47,20 @@ class HttpEvidenceTest(unittest.TestCase):
                           complete_collection=True, isolated_resource=True,
                           rule={'source': source, 'reference': 'Approved items must remain'},
                           remediation='Enforce approval lock on DELETE.')
-            capture = executor.execute(config)
             with tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
-                (root / 'evidence').mkdir()
-                (root / 'evidence/F-002.json').write_text(json.dumps(capture))
-                report = root / 'findings.json'
-                report.write_text(json.dumps({'findings': [{'id': 'F-002', 'title': 'Old summary'}],
-                    'results': [{'finding_id': 'F-002', 'outcome': 'BUG_FOUND'}]}))
+                run = root / 'runs' / 'sample'
+                reports = run / 'reports' / 'sample'
+                reports.mkdir(parents=True)
+                (run / 'scope.json').write_text(json.dumps({'allowed_domains': [origin], 'allowed_paths_prefix': ['*'], 'block_production': True}))
+                script = run / 'verified.py'
+                helper = str(Path(__file__).parents[2] / 'crew/scripts/verified_delete.py')
+                script.write_text('import runpy, json\nhelper = runpy.run_path(' + repr(helper) + ')\nprint(json.dumps(helper["execute"](' + repr(config) + ')))\n')
+                receipt = asyncio.run(execute(script, reports, root=root, cwd=run, source='VERIFICATION_PROBE'))
+                capture = receipt['parsed_result']
+                capture.update(source='VERIFICATION_PROBE', script=script.name, execution_id=receipt['execution_id'])
+                report = reports / 'findings.json'
+                report.write_text(json.dumps({'findings': [capture], 'results': []}))
                 return load_report(report)
         finally:
             server.shutdown()

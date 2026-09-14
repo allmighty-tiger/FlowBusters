@@ -1,0 +1,114 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const Module = require('node:module');
+const ts = require('typescript');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+const filename = path.resolve(__dirname, '../src/components/ReportView.tsx');
+const loaded = new Module(filename, module);
+loaded.paths = module.paths;
+loaded._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2021 },
+}).outputText, filename);
+const { default: ReportView, evidenceCaptures, invariantFor, remediationFor } = loaded.exports;
+
+const capture = (method, endpoint) => ({ request: { method, url: `http://localhost:3000${endpoint}`, body: null }, response: { ok: true }, status_code: 200 });
+const finding = { id: 'F-1', title: 'Reimbursement overlap', source: 'MUTATION_SCRIPT', script: 'probe.py', cwe: [], evidence: {}, verification_status: 'NEEDS_REVIEW',
+  verification: { before: capture('GET', '/api/order'), actions: [capture('POST', '/api/order/price-adjustment'), capture('POST', '/api/order/refund/request'), capture('POST', '/api/order/refund/complete')], after: capture('GET', '/api/order') } };
+
+test('report renders all three POST actions and both state reads', () => {
+  assert.equal(evidenceCaptures(finding).length, 5);
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [finding], results: [], summary: { errors: 0 } }, remediation: null }));
+  for (const endpoint of ['price-adjustment', 'refund/request', 'refund/complete']) assert.ok(html.includes(`POST /api/order/${endpoint}`));
+  assert.equal((html.match(/class="report-probe/g) || []).length, 5);
+});
+
+test('authenticated trace replaces unexecuted agent claims, including empty trace', () => {
+  assert.deepEqual(evidenceCaptures({ ...finding, execution_trace: [] }), []);
+  const trace = [capture('GET', '/api/order')];
+  assert.deepEqual(evidenceCaptures({ ...finding, execution_trace: trace }), trace);
+});
+
+const northstarFinding = {
+  ...finding,
+  id: 'F-001',
+  title: 'Price adjustment plus completed refund may exceed the order amount',
+  severity: 'Critical',
+  cwe: ['CWE-841'],
+  verification_status: 'CONFIRMED',
+  execution_id: 'signed-execution-1',
+  verification: { resolved_invariant: { operator: 'sum_lte', terms: [['order', 'priceProtection', 'adjustmentAmount'], ['order', 'refund', 'completedAmount']], limit: ['order', 'originalAmount'] } },
+  execution_trace: (() => {
+    const state = (totalReturned, refundStatus, completedAmount, adjustmentAmount) => ({ order: { originalAmount: 100, totalReturned, priceProtection: { adjustmentAmount }, refund: { status: refundStatus, completedAmount } } });
+    return [
+      { ...capture('POST', '/api/demo/reset'), response: state(0, 'none', 0, 0) },
+      { ...capture('GET', '/api/order'), response: state(0, 'none', 0, 0) },
+      { ...capture('POST', '/api/order/price-adjustment'), response: state(30, 'none', 0, 30) },
+      { ...capture('POST', '/api/order/refund/request'), response: state(30, 'pending', 0, 30) },
+      { ...capture('POST', '/api/order/refund/complete'), response: state(130, 'completed', 100, 30) },
+      { ...capture('GET', '/api/order'), response: state(130, 'completed', 100, 30) },
+    ];
+  })(),
+};
+
+test('confirmed invariant is primary and renders operands, result, limit, and complete trace', () => {
+  const invariant = invariantFor(northstarFinding);
+  assert.equal(invariant.total, 130);
+  assert.equal(invariant.maximum, 100);
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [northstarFinding], results: [], summary: { errors: 0 } }, remediation: null }));
+  for (const text of ['$30', 'price adjustment', '$100', 'completed refund', '$130', 'Allowed maximum:']) assert.ok(html.includes(text), text);
+  assert.ok(html.includes('Complete ordered request/action trace'));
+  assert.equal((html.match(/class="report-probe/g) || []).length, 6);
+  assert.ok(!html.includes('Not recorded separately'));
+  assert.ok(html.includes('1 confirmed vulnerability requires action.'));
+  assert.ok(html.includes('Price adjustment ($30) plus completed refund ($100) exceeds the original order amount ($100).'));
+  assert.ok(!html.includes('may exceed'));
+  for (const label of ['Test setup', 'Before state', 'Action 1', 'Action 2', 'Action 3', 'After state']) assert.ok(html.includes(label), label);
+  assert.ok(html.includes('Reset the authorized test fixture; this is setup, not an attack action.'));
+  assert.equal((html.match(/View full response/g) || []).length, 6);
+  assert.ok(html.includes('totalReturned</code><strong>$0 → $30 → $130'));
+  assert.ok(html.includes('refund.status</code><strong>none → pending → completed'));
+});
+
+test('summary identifies held results represented by a deduplicated finding', () => {
+  const held = { ...finding, id: 'F-002', verification_status: 'NOT_REPRODUCED', deduplicated_from: ['F-003'] };
+  const heldCancel = { ...finding, id: 'F-004', title: 'Cancel then refund may double-pay', verification_status: 'NOT_REPRODUCED', verification_reason: 'The refund request was rejected and total returned stayed within the allowed maximum.', execution_trace: [capture('POST', '/api/demo/reset'), capture('GET', '/api/order'), capture('POST', '/api/order/cancel'), { ...capture('POST', '/api/order/refund/request'), status_code: 409 }, capture('GET', '/api/order')] };
+  const held2 = { ...finding, id: 'F-005', verification_status: 'NOT_REPRODUCED' };
+  const results = ['one', 'two', 'three', 'four'].map(script => ({ script, mutation_type: 'STATE_INTERLEAVING', outcome: 'NOT_REPRODUCED', status_code: 409, url_tested: '/api/order', response_snippet: null, error_message: null }));
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [northstarFinding, held, heldCancel, held2], results, summary: { errors: 0 } }, remediation: null }));
+  assert.ok(html.includes('4</strong><span>Controls held'));
+  assert.ok(html.includes('3 scenarios + 1 deduplicated'));
+  assert.ok(html.includes('0</strong><span>Needs review'));
+  assert.ok(html.includes('Controls validated'));
+  assert.ok(html.includes('F-003'));
+  assert.ok(html.includes('Order cancellation followed by refund request — control held.'));
+  assert.ok(!html.includes('may double-pay</h3>'));
+});
+
+test('held control hides absent roles and speculative active remediation', () => {
+  const held = { ...finding, id: 'F-004', title: 'Cancel then refund may double-pay', verification_status: 'NOT_REPRODUCED', verification_reason: 'The refund request returned HTTP 409 and the invariant remained within bounds.', execution_trace: [capture('GET', '/api/order'), capture('POST', '/api/order/cancel'), { ...capture('POST', '/api/order/refund/request'), status_code: 409 }, capture('GET', '/api/order')] };
+  const markdown = '## Finding F-004\n\n- **Issue:** A draft speculative issue.\n- **Fix:**\n  - Change the refund workflow.\n';
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [held], results: [{ outcome: 'NOT_REPRODUCED' }], summary: { errors: 0 } }, remediation: markdown }));
+  assert.ok(html.includes('Control observed'));
+  assert.ok(html.includes('Original hypothesis'));
+  assert.ok(html.includes('Order cancellation followed by refund request — control held.'));
+  assert.ok(!html.includes('Role:'));
+  assert.ok(!html.includes('Recommended remediation'));
+  assert.ok(!html.includes('Change the refund workflow.'));
+});
+
+test('markdown remediation is rendered as structured fields without stale speculation', () => {
+  const markdown = '## Finding F-001\n\n- **CWE:** CWE-841: Workflow\n- **Severity:** Critical\n- **Endpoints:** `POST /api/a`, `POST /api/b`\n- **Issue:** No single recording ever tested this speculative sequence.\n- **Evidence:** Draft evidence.\n- **Fix:**\n  - Enforce one remedy atomically.\n  - Cap returned value.\n';
+  const view = remediationFor(northstarFinding, markdown, invariantFor(northstarFinding));
+  assert.deepEqual(view.endpoints, ['POST /api/order/price-adjustment', 'POST /api/order/refund/request', 'POST /api/order/refund/complete']);
+  assert.deepEqual(view.fixes, ['Enforce one remedy atomically.', 'Cap returned value.']);
+  assert.ok(!view.issue.includes('No single recording'));
+  assert.ok(view.evidence.includes('signed-execution-1'));
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [northstarFinding], results: [], summary: { errors: 0 } }, remediation: markdown }));
+  for (const label of ['CWE', 'Severity', 'Affected endpoints', 'Issue', 'Evidence', 'Fix']) assert.ok(html.includes(label));
+  assert.ok(!html.includes('Analyst remediation draft'));
+  assert.ok(!html.includes('**CWE:**'));
+  assert.equal((html.match(/class="endpoint-chips"/g) || []).length, 1);
+});

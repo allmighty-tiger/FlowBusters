@@ -99,7 +99,11 @@ def load_report(path):
         for result in data.get('results', []):
             if result.get('finding_id') == fid:
                 result['verification'] = deepcopy(capture['verification'])
-    return normalize_report(data)
+    from backend.runtime.probe_executor import reconcile
+    # Production reports are gated using backend-signed receipts, including
+    # legacy reports. Never accept provenance flags stored in agent JSON.
+    root = next((parent.parent for parent in path.parents if parent.name == 'runs'), path.parent)
+    return normalize_report(reconcile(data, path.parent, root))
 
 
 def _mentions_setup_path(finding, setup_paths):
@@ -266,6 +270,9 @@ def _classify_auth(record, linked_results=()):
 
 
 def classify(record, linked_results=()):
+    if record.get('_provenance_error'):
+        v = record.get('verification')
+        return ('CHECK_ERROR' if record.get('error_message') or isinstance(v, dict) and v.get('error') else 'NEEDS_REVIEW', record['_provenance_error'])
     v = record.get('verification')
     execution = record.get('execution') or (v.get('execution') if isinstance(v, dict) else None)
     if record.get('error_message') or (isinstance(v, dict) and v.get('error')):
@@ -337,11 +344,6 @@ def _classify_business_rule(verification):
     whether the invariant was violated. This supports workflows such as
     refund-pending -> cancel -> complete without hard-coding one application.
     """
-    rule = verification.get('rule')
-    if (not isinstance(rule, dict)
-            or rule.get('source') not in ('user', 'specification', 'observed_ui')
-            or not str(rule.get('reference') or '').strip()):
-        return 'NEEDS_REVIEW', 'The business rule needs a user, specification, or observed-UI reference.'
     before, after = verification.get('before'), verification.get('after')
     actions = verification.get('actions')
     if not isinstance(before, dict) or not isinstance(after, dict) or not isinstance(actions, list) or not actions:
@@ -364,9 +366,18 @@ def _classify_business_rule(verification):
     description = str(violation.get('description') or '').strip()
     if not description:
         return 'NEEDS_REVIEW', 'The observed invariant result needs a concrete description.'
-    if violation['observed']:
-        return 'CONFIRMED', description
-    return 'NOT_REPRODUCED', description
+    # A complete authenticated negative execution is conclusive about this
+    # attempted scenario even when the proposed rule came from weak analysis.
+    # Rule provenance gates promotion of a violation, not recognition that the
+    # control held and the invariant remained within bounds.
+    if not violation['observed']:
+        return 'NOT_REPRODUCED', description
+    rule = verification.get('rule')
+    if (not isinstance(rule, dict)
+            or rule.get('source') not in ('user', 'specification', 'observed_ui')
+            or not str(rule.get('reference') or '').strip()):
+        return 'NEEDS_REVIEW', 'The business rule needs a user, specification, or observed-UI reference.'
+    return 'CONFIRMED', description
 
 
 def _resource_path(value):
@@ -455,7 +466,8 @@ def normalize_report(report):
             v = {}
         if isinstance(v.get('execution'), dict) and 'execution' not in finding:
             finding['execution'] = deepcopy(v['execution'])
-        captures = [v[k] for k in ('before', 'action', 'after') if isinstance(v.get(k), dict)]
+        actions = v.get('actions') if isinstance(v.get('actions'), list) else [v.get('action')]
+        captures = [c for c in [v.get('before'), *actions, v.get('after')] if isinstance(c, dict)]
         if captures:
             finding['evidence'] = {
                 'summary': finding['verification_reason'],
@@ -466,9 +478,17 @@ def normalize_report(report):
     # Collapse multi-source duplicates of the same violation before counting, so the
     # findings list and summary reflect distinct bugs, not repeated reports of one.
     findings = _collapse_duplicate_findings(findings)
+    finding_by_id = {finding.get('id'): finding for finding in findings if finding.get('id')}
     for result in results:
         result.setdefault('original_outcome', result.get('outcome'))
-        result['outcome'], result['verification_reason'] = classify(result)
+        linked_finding = finding_by_id.get(result.get('finding_id'))
+        original = str(result.get('original_outcome') or '').upper()
+        if (linked_finding and original == 'CONFIRMED'
+                and linked_finding.get('verification_status') == 'CONFIRMED'):
+            result['outcome'] = 'CONFIRMED'
+            result['verification_reason'] = linked_finding.get('verification_reason')
+        else:
+            result['outcome'], result['verification_reason'] = classify(result)
     counts = {s: sum(f['verification_status'] == s for f in findings) for s in ('CONFIRMED', 'NEEDS_REVIEW', 'NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR')}
     data['findings'], data['results'] = findings, results
     data['summary'] = {**(data.get('summary') or {}), 'reported_findings': len(findings),

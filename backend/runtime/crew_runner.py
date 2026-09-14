@@ -29,7 +29,6 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from backend.runtime.orchestrator import Phase, ProgressEvent
-from backend.runtime.state_lock_probe import ensure_business_logic_finding
 from backend.runtime.verification import load_report
 from backend.runtime.recorder import record, RecordingError
 
@@ -51,6 +50,7 @@ class CrewConfig:
     phase_timeout: int      # per-phase timeout seconds
     overall_timeout: int    # overall assessment timeout seconds
     auto_complete: bool = False  # auto-write marker file after browser opens
+    cross_flow_inputs: dict | None = None
 
 
 # ── Working Directory Preparation ─────────────────────────────────────────────
@@ -505,10 +505,16 @@ async def run_crew(
 
     # Recording belongs to the backend, not to a model turn. Do not launch the
     # analyst until MCP has saved and validated the complete recording.
-    progress_cb(ProgressEvent(Phase.RECORD, 'Opening recording browser...', done=False))
+    progress_cb(ProgressEvent(Phase.RECORD, 'Loading source recordings...' if config.cross_flow_inputs is not None else 'Opening recording browser...', done=False))
     try:
-        await record(config, run_dir, mcp_config_arg, env,
-            lambda message: progress_cb(ProgressEvent(Phase.RECORD, message, done=False)))
+        if config.cross_flow_inputs is not None:
+            from backend.runtime.application_model import prepare_inputs
+            prepare_inputs(run_dir, flow_name, config.cross_flow_inputs)
+            (run_dir / 'recording_done.marker').write_text('cross-flow snapshots ready', encoding='utf-8')
+            progress_cb(ProgressEvent(Phase.RECORD, 'Source recordings loaded; no browser required', done=True))
+        else:
+            await record(config, run_dir, mcp_config_arg, env,
+                lambda message: progress_cb(ProgressEvent(Phase.RECORD, message, done=False)))
     except (RecordingError, OSError, ValueError, asyncio.TimeoutError) as exc:
         message = f'Recording failed: {exc}'
         progress_cb(ProgressEvent(Phase.FAILED, message, done=True, error=message))
@@ -523,6 +529,25 @@ async def run_crew(
         'Do not reopen a browser or repeat recording. Use HTTP probes for testing. '
         'Read scope.json and enforce allowed_domains, allowed_paths_prefix and '
         'block_production before probing. Start at ANALYZE.\n')
+    if config.cross_flow_inputs is not None:
+        from backend.runtime.application_model import CROSS_FLOW_INSTRUCTIONS
+        system_prompt += CROSS_FLOW_INSTRUCTIONS.replace('{flow}', flow_name)
+    system_prompt += '''
+BACKEND EXECUTION CONTRACT (supersedes all earlier probing instructions):
+You prepare mutation scripts and a draft findings.json/remediation.md, then exit.
+Do NOT execute mutation scripts or send HTTP probes yourself. The backend runs
+every script once after your session ends, captures HTTPX/requests transport
+traffic and signs execution receipts. Do not edit scripts after execution.
+Follow crew/skills/probe-flow/EXECUTION.md for the raw output contract.
+Write suspected findings with script and source MUTATION_SCRIPT; leave
+verification absent in the draft. Their evidence comes from script stdout and
+must match the transport capture. Draft statuses are NEEDS_REVIEW.
+Additional verification requests belong in separate Python scripts under
+verification_probes/FLOW_NAME/, source VERIFICATION_PROBE, with triggered_by
+pointing to the original mutation script. Never attribute those calls to it.
+Do not execute scope setup/reset manually: each script establishes its own
+preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
+'''.replace('FLOW_NAME', flow_name)
     prompt_path.write_text(system_prompt, encoding="utf-8")
     initial_message = f'Analyze the validated recording for {config.target_url}, flow {flow_name}; continue through REPORT.'
     # No browser tools are needed downstream; prevent accidental re-opening.
@@ -543,6 +568,7 @@ async def run_crew(
         "--verbose",
         "--mcp-config", mcp_config_arg,
         "--strict-mcp-config",
+        "--tools", "Read,Write,Edit,Glob,Grep",
         "--model", config.model,
         "--effort", effort,
         "--system-prompt-file", prompt_path.name,
@@ -740,8 +766,10 @@ async def run_crew(
                 # progress page advances each step the moment it's complete instead
                 # of holding "X in progress" until the next phase's artifact lands.
                 artifact_done = name in (
-                    "state_map.json", "mutations", "findings.json", "remediation.md",
+                    "state_map.json", "mutations",
                 )
+                if name in ('findings.json', 'remediation.md'):
+                    artifact_phase = Phase.MUTATE
                 progress_cb(ProgressEvent(
                     artifact_phase,
                     f"📄 Artifact written: {name}",
@@ -751,13 +779,8 @@ async def run_crew(
 
                 # The final report is complete the instant remediation.md exists —
                 # declare it now rather than waiting for the crew to exit.
-                if name == "remediation.md" and not completion_emitted:
-                    completion_emitted = True
-                    progress_cb(ProgressEvent(
-                        Phase.COMPLETE,
-                        f"✅ Assessment complete ({time.time() - overall_start:.0f}s)",
-                        done=True,
-                    ))
+                # Agent artifacts are drafts. Only backend execution and final
+                # provenance reconciliation can complete the assessment.
 
                 # Validate HAR immediately
                 if name == "recording.har":
@@ -878,6 +901,17 @@ async def run_crew(
         ))
 
     # Optional deterministic business-logic coverage guarantee, OFF by default.
+    if not error_msg:
+        from backend.runtime.probe_executor import execute_run
+        try:
+            await execute_run(run_dir, flow_name, config.run_dir,
+                lambda message: progress_cb(ProgressEvent(Phase.PROBE, message, done=False)))
+            progress_cb(ProgressEvent(Phase.PROBE, 'Execution receipts saved', done=True))
+            progress_cb(ProgressEvent(Phase.REPORT, 'Checking report provenance and invariant evidence', done=False))
+        except Exception as exc:
+            error_msg = f'Backend probe execution failed: {exc}'
+            progress_cb(ProgressEvent(Phase.FAILED, error_msg, done=True, error=error_msg))
+
     # The default run stands entirely on the crew's own discovery — that's what
     # the assessment is for, and it's what a demo of the tool should show. When
     # you need the result guaranteed regardless of the LLM crew (e.g. you've hit
@@ -889,11 +923,12 @@ async def run_crew(
     # and never raises.
     if os.environ.get("ALLOW_STATE_LOCK_PROBE", "").strip().lower() in ("1", "true", "yes", "on"):
         try:
-            fid = await ensure_business_logic_finding(run_dir, flow_name, config.target_url)
+            from backend.runtime.probe_executor import execute_state_lock
+            fid = await execute_state_lock(run_dir, flow_name, config.run_dir, config.target_url)
             if fid:
                 progress_cb(ProgressEvent(
                     Phase.PROBE,
-                    f"🔒 State-lock probe confirmed business-logic violation ({fid})",
+                    f"🔒 State-lock probe captured evidence ({fid}); awaiting provenance verification",
                     done=True,
                 ))
         except Exception as e:  # defensive — the runner is already guarded, belt-and-braces
@@ -911,6 +946,16 @@ async def run_crew(
     # holding the recording wait, so the browser closed and the recording was
     # lost), mark it a failure instead of a misleading "complete".
     findings_path = run_dir / "reports" / flow_name / "findings.json"
+    if config.cross_flow_inputs is not None:
+        for artifact_name in ('application_state_map.json', 'cross_flow_candidates.json'):
+            artifact_path = run_dir / 'flows' / flow_name / artifact_name
+            try:
+                model_data = json.loads(artifact_path.read_text(encoding='utf-8'))
+                if not isinstance(model_data, (dict, list)):
+                    raise ValueError('Expected an object or array')
+            except (OSError, ValueError):
+                error_msg = f'Cross-flow analysis incomplete: missing or invalid {artifact_name}'
+                progress_cb(ProgressEvent(Phase.FAILED, error_msg, done=True, error=error_msg))
     if findings_path.exists():
         try:
             normalized = load_report(findings_path)

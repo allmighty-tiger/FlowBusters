@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -76,6 +77,45 @@ class AssessmentRequest(BaseModel):
     app_name: str
     target_url: str
     flow_name: str = "default"
+
+
+class CrossFlowRequest(BaseModel):
+    target_url: str
+    run_ids: list[str]
+    same_environment_confirmed: bool = False
+
+
+@app.get('/api/applications')
+async def applications():
+    from backend.runtime.application_model import catalog
+    return {'applications': await asyncio.to_thread(catalog, os.environ.get('ARTIFACTS_DIR', '.'))}
+
+
+@app.post('/api/applications/cross-flow')
+async def start_cross_flow(body: CrossFlowRequest):
+    from backend.runtime.application_model import collect
+    global _active_run, _last_findings, _last_remediation, _last_flow_name
+    if _active_run and not _active_run.done():
+        return JSONResponse(status_code=409, content={'detail': 'An assessment is already running'})
+    if not body.same_environment_confirmed:
+        return JSONResponse(status_code=400, content={'detail': 'Confirm the selected recordings belong to the same application environment and compatible version'})
+    root = os.environ.get('ARTIFACTS_DIR', '.')
+    try:
+        inputs = collect(root, body.run_ids, body.target_url)
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        return JSONResponse(status_code=400, content={'detail': f'Cannot load selected recordings: {exc}'})
+    flow = 'cross-flow-' + uuid.uuid4().hex[:12]
+    _last_findings = None
+    _last_remediation = None
+    _last_flow_name = flow
+    _recent_events.clear()
+    _active_run = asyncio.ensure_future(run_flowbusters(
+        target_url=inputs['target_url'], flow_name=flow, run_dir=root,
+        anthropic_api_key=os.environ.get('ANTHROPIC_API_KEY', ''),
+        anthropic_model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5'),
+        progress_cb=_make_progress_cb(), cross_flow_inputs=inputs))
+    asyncio.ensure_future(_progress_writer())
+    return {'status': 'started', 'flow_name': flow}
 
 
 def _broadcast(event: ProgressEvent | None):

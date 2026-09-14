@@ -2,6 +2,15 @@
 
 ## Purpose
 
+Read `crew/skills/probe-flow/EXECUTION.md` before authoring any script. Its
+backend evidence contract supersedes the legacy output examples below. Every
+script must establish and capture its own independent before/actions/after
+scenario and print the required structured `verification`; status codes and a
+`violation_observed` flag alone are not acceptable evidence.
+Invariant paths must start at the HTTP response root and include every envelope
+key (for example `["order", "totalReturned"]`). Never use nested-relative paths,
+recursive field lookup, or guessed array indexes.
+
 Generate adversarial Python scripts that probe business logic flaws by manipulating workflow state, replaying requests, swapping roles, and tampering with data extracted from the state map.
 
 ## Confidence: medium

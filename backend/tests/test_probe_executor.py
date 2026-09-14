@@ -1,0 +1,327 @@
+import asyncio
+from copy import deepcopy
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import json
+from pathlib import Path
+import tempfile
+import threading
+import unittest
+
+from backend.runtime.probe_executor import execute, execute_run, load_receipts, normalize_response, reconcile, resolve_numeric_path, trace_error
+from backend.runtime.verification import load_report, normalize_report
+
+
+class ExecutionTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.run = self.root / 'runs' / 'sample'
+        self.reports = self.run / 'reports' / 'sample'
+        self.reports.mkdir(parents=True)
+        self.state = {'originalAmount': 100, 'priceAdjustment': 0, 'completedRefund': 0, 'totalReturned': 0}
+        state = self.state
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args): pass
+            def do_GET(self):
+                self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
+                self.wfile.write(json.dumps(state).encode())
+            def do_POST(self):
+                if self.path.endswith('price-adjustment'): state['priceAdjustment'] = 30
+                if self.path.endswith('refund/complete'): state['completedRefund'] = 100
+                state['totalReturned'] = state['priceAdjustment'] + state['completedRefund']
+                self.do_GET()
+            def do_DELETE(self):
+                state['parts'] = [part for part in state['parts'] if part['id'] != 1]
+                self.do_GET()
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.url = f'http://127.0.0.1:{server.server_port}'
+        (self.run / 'scope.json').write_text(json.dumps({'allowed_domains': [self.url], 'allowed_paths_prefix': ['/api/'], 'block_production': True}))
+
+    def script(self, complete=True, client='urllib'):
+        script = self.run / 'probe.py'
+        code = '''import urllib.request, json, sys
+url = URL
+counter = 0
+def call(method, path):
+    global counter
+    counter += 1
+    with urllib.request.urlopen(urllib.request.Request(url + path, method=method)) as response:
+        value = json.loads(response.read())
+        status = response.status
+    return {'sequence': counter, 'status_code': status, 'complete': True,
+            'request': {'method': method, 'url': url + path, 'body': None}, 'response': value}
+before = call('GET', '/api/order')
+actions = [call('POST', '/api/order/price-adjustment'), call('POST', '/api/order/refund/request')]
+COMPLETE
+after = call('GET', '/api/order')
+v = {'predicate': 'business_rule_must_hold', 'rule': {'source': 'specification', 'reference': 'Reimbursement must not exceed original payment'},
+     'before': before, 'actions': actions, 'after': after,
+     'invariant': {'operator': 'sum_lte', 'terms': [['priceAdjustment'], ['completedRefund']], 'limit': ['originalAmount']},
+     'violation': {'observed': after['response']['totalReturned'] > 100, 'description': 'Captured reimbursement exceeds original payment'}}
+print('diagnostic output')
+print('stderr preserved', file=sys.stderr)
+print(json.dumps({'mutation_type': 'STATE_INTERLEAVING', 'verification': v, 'status_code': 200, 'url': url + '/api/order'}))
+'''.replace('URL', repr(self.url)).replace('COMPLETE', "actions.append(call('POST', '/api/order/refund/complete'))" if complete else '')
+        if client != 'urllib':
+            start = code.index('    with urllib.request.urlopen')
+            end = code.index("    return {'sequence'", start)
+            if client == 'httpx_async':
+                replacement = "    import asyncio, httpx\n    async def fetch():\n        async with httpx.AsyncClient() as client:\n            return await client.request(method, url + path)\n    response = asyncio.run(fetch())\n"
+            else:
+                replacement = f'    import {client}\n    response = {client}.request(method, url + path)\n'
+            code = code[:start] + replacement + '    value = response.json()\n    status = response.status_code\n' + code[end:]
+        script.write_text(code, encoding='utf-8')
+        return script
+
+    def run_script(self, complete=True, **kwargs):
+        script = self.script(complete)
+        original = script.read_bytes()
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run, **kwargs))
+        self.assertEqual(script.read_bytes(), original)
+        return receipt
+
+    def finding(self, receipt):
+        return {'id': 'F-1', 'title': 'Reimbursement overlap', 'source': receipt['source'], 'script': receipt['script'],
+                'triggered_by': receipt.get('triggered_by'),
+                'execution_id': receipt['execution_id'], 'verification': deepcopy(receipt['parsed_result']['verification'])}
+
+    def test_actual_complete_chain_confirmed_and_raw_preserved(self):
+        receipt = self.run_script()
+        self.assertEqual(receipt['exit_code'], 0)
+        self.assertIn('diagnostic output', receipt['stdout'])
+        self.assertIn('stderr preserved', receipt['stderr'])
+        self.assertEqual(json.loads(receipt['stdout'].splitlines()[-1]), receipt['parsed_result'])
+        self.assertEqual(len(receipt['trace']), 5)
+        self.assertEqual(receipt['trace'][-1]['response']['totalReturned'], 130)
+        report = reconcile({'findings': [self.finding(receipt)], 'results': [{'status_code': 999}]}, self.reports, self.root)
+        result = normalize_report(report)
+        self.assertEqual(result['findings'][0]['verification_status'], 'CONFIRMED')
+        self.assertEqual(result['results'][0]['status_code'], 200)
+        self.assertEqual(len(result['findings'][0]['evidence']['requests']), 5)
+
+    def test_missing_complete_cannot_be_invented_by_report(self):
+        receipt = self.run_script(False)
+        finding = self.finding(receipt)
+        action = deepcopy(finding['verification']['actions'][-1])
+        action['request']['url'] = self.url + '/api/order/refund/complete'
+        finding['verification']['actions'].append(action)
+        finding['verification']['after']['response']['totalReturned'] = 130
+        finding['verification']['violation']['observed'] = True
+        result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
+        self.assertEqual(result['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertNotIn('/api/order/refund/complete', json.dumps(result['findings'][0]['execution_trace']))
+
+    def test_fabricated_stdout_does_not_override_transport(self):
+        receipt = self.run_script(False)
+        record = self.finding(receipt)
+        record['verification']['actions'][-1]['request']['url'] = self.url + '/api/order/refund/complete'
+        receipt['parsed_result']['verification'] = deepcopy(record['verification'])
+        self.assertIn('absent', trace_error(record, receipt))
+
+    def test_actual_capture_wrapper_matches_direct_trace_body(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        finding['verification']['before']['response'] = {
+            'actual': finding['verification']['before']['response']}
+        receipt['parsed_result']['verification'] = deepcopy(finding['verification'])
+        self.assertIsNone(trace_error(finding, receipt))
+
+    def test_api_actual_field_with_siblings_is_not_unwrapped(self):
+        payload = {'actual': {'value': 1}, 'expected': {'value': 2}}
+        self.assertEqual(normalize_response(payload, 200), (payload, 200))
+
+    def test_status_body_capture_wrapper_matches(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        before = finding['verification']['before']
+        before['response'] = {'status_code': before['status_code'],
+                              'body': json.dumps(before['response'])}
+        before.pop('status_code')
+        receipt['parsed_result']['verification'] = deepcopy(finding['verification'])
+        self.assertIsNone(trace_error(finding, receipt))
+
+    def test_actual_capture_wrapper_with_different_body_fails(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        finding['verification']['before']['response'] = {'actual': {'different': True}}
+        receipt['parsed_result']['verification'] = deepcopy(finding['verification'])
+        self.assertIn('absent', trace_error(finding, receipt))
+
+    def test_invariant_exact_root_path(self):
+        value, path = resolve_numeric_path({'order': {'totalReturned': 130}},
+                                           ['order', 'totalReturned'])
+        self.assertEqual((value, path), (130, ['order', 'totalReturned']))
+
+    def test_invariant_single_envelope_compatibility_path(self):
+        value, path = resolve_numeric_path({'order': {'totalReturned': 130}},
+                                           ['totalReturned'])
+        self.assertEqual((value, path), (130, ['order', 'totalReturned']))
+
+    def test_invariant_multiple_envelopes_rejected(self):
+        with self.assertRaises(KeyError):
+            resolve_numeric_path({'order': {'totalReturned': 130},
+                                  'data': {'totalReturned': 130}}, ['totalReturned'])
+
+    def test_invariant_recursive_guessing_rejected(self):
+        with self.assertRaises(KeyError):
+            resolve_numeric_path({'payload': {'order': {'totalReturned': 130}}},
+                                 ['totalReturned'])
+
+    def test_invariant_exact_and_fallback_conflict_rejected(self):
+        response = {'order': {'totalReturned': 130,
+                              'order': {'totalReturned': 30}}}
+        with self.assertRaises(ValueError):
+            resolve_numeric_path(response, ['order', 'totalReturned'])
+
+    def test_northstar_envelope_invariant_and_resolved_metadata(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        verification = finding['verification']
+        after = verification['after']
+        after['response'] = {'order': {'originalAmount': 100,
+                                       'priceAdjustment': 30,
+                                       'completedRefund': 100,
+                                       'totalReturned': 130}}
+        verification['invariant'] = {'operator': 'sum_lte',
+            'terms': [['priceAdjustment'], ['completedRefund']],
+            'limit': ['originalAmount']}
+        verification['violation']['observed'] = True
+        receipt['parsed_result']['verification'] = deepcopy(verification)
+        receipt['trace'][-1]['response'] = deepcopy(after['response'])
+        self.assertIsNone(trace_error(finding, receipt))
+        self.assertEqual(verification['resolved_invariant'], {
+            'operator': 'sum_lte',
+            'terms': [['order', 'priceAdjustment'], ['order', 'completedRefund']],
+            'limit': ['order', 'originalAmount']})
+
+    def test_followup_is_separately_attributed(self):
+        receipt = self.run_script(source='VERIFICATION_PROBE', triggered_by='original.py')
+        finding = self.finding(receipt)
+        self.assertIsNone(trace_error(finding, receipt))
+        finding['source'] = 'MUTATION_SCRIPT'
+        self.assertIn('source', trace_error(finding, receipt))
+        self.assertEqual(receipt['triggered_by'], 'original.py')
+
+    def test_cross_flow_origin_binds_to_mutation_receipt(self):
+        script = self.script()
+        mutations = self.run / 'mutations' / 'sample'
+        mutations.mkdir(parents=True)
+        script.replace(mutations / script.name)
+        draft = {'findings': [{'id': 'XF-1', 'title': 'Cross-flow reimbursement overlap',
+                               'source': 'CROSS_FLOW', 'source_runs': ['one', 'two'],
+                               'script': script.name}]}
+        (self.reports / 'findings.json').write_text(json.dumps(draft), encoding='utf-8')
+        asyncio.run(execute_run(self.run, 'sample', self.root, lambda message: None))
+        saved = json.loads((self.reports / 'findings.json').read_text(encoding='utf-8'))
+        finding = saved['findings'][0]
+        self.assertEqual(finding['source'], 'MUTATION_SCRIPT')
+        self.assertEqual(finding['analysis_source'], 'CROSS_FLOW')
+        self.assertTrue(finding['execution_id'])
+        report = normalize_report(reconcile(saved, self.reports, self.root))
+        self.assertEqual(report['findings'][0]['verification_status'], 'CONFIRMED')
+
+    def test_legacy_cross_flow_report_links_only_unique_signed_receipt(self):
+        receipt = self.run_script()
+        legacy = {'id': 'XF-1', 'title': 'Legacy cross-flow finding', 'source': 'CROSS_FLOW',
+                  'script': receipt['script'],
+                  'verification': deepcopy(receipt['parsed_result']['verification'])}
+        report = normalize_report(reconcile({'findings': [legacy]}, self.reports, self.root))
+        self.assertEqual(report['findings'][0]['execution_id'], receipt['execution_id'])
+        self.assertEqual(report['findings'][0]['analysis_source'], 'CROSS_FLOW')
+        self.assertEqual(report['findings'][0]['verification_status'], 'CONFIRMED')
+
+    def test_tampered_receipt_and_legacy_report_cannot_confirm(self):
+        receipt = self.run_script()
+        path = self.reports / 'executions' / (receipt['execution_id'] + '.json')
+        original = path.read_bytes()
+        path.write_text(original.decode().replace('stderr preserved', 'stderr fabricated'))
+        self.assertEqual(load_receipts(self.reports, self.root), {})
+        report_path = self.reports / 'findings.json'
+        report_path.write_text(json.dumps({'findings': [self.finding(receipt)], 'results': []}))
+        self.assertEqual(load_report(report_path)['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+
+    def test_omitted_action_and_false_invariant_rejected(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        finding['verification']['actions'].pop(1)
+        receipt['parsed_result']['verification'] = deepcopy(finding['verification'])
+        self.assertIn('omitted', trace_error(finding, receipt))
+        self.state.update(priceAdjustment=0, completedRefund=0, totalReturned=0)
+        receipt = self.run_script(False)
+        finding = self.finding(receipt)
+        finding['verification']['violation']['observed'] = True
+        receipt['parsed_result']['verification'] = deepcopy(finding['verification'])
+        self.assertIn('contradicts', trace_error(finding, receipt))
+
+    def test_timeout_retains_partial_output_and_rerun_preserves_receipts(self):
+        script = self.run / 'slow.py'
+        script.write_text("import time, sys\nprint('before timeout', flush=True)\nprint('error detail', file=sys.stderr, flush=True)\ntime.sleep(10)\n")
+        first = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run, timeout=.5))
+        self.assertEqual(first['stdout'].splitlines(), ['before timeout'])
+        self.assertEqual(first['stderr'].splitlines(), ['error detail'])
+        self.assertIsNotNone(first['error'])
+        path = self.reports / 'executions' / (first['execution_id'] + '.json')
+        original = path.read_bytes()
+        second = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run, timeout=.5))
+        self.assertNotEqual(first['execution_id'], second['execution_id'])
+        self.assertEqual(path.read_bytes(), original)
+
+    def test_nonzero_exit_preserved(self):
+        script = self.run / 'failure.py'
+        script.write_text("import sys\nprint('{\"outcome\": \"CONFIRMED\"}')\nprint('failure', file=sys.stderr)\nsys.exit(7)\n")
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        self.assertEqual(receipt['exit_code'], 7)
+        result = normalize_report(reconcile({'findings': []}, self.reports, self.root))
+        self.assertEqual(result['results'][0]['outcome'], 'CHECK_ERROR')
+
+    def test_endpoint_attribution_cannot_name_unexecuted_request(self):
+        receipt = self.run_script(False)
+        finding = self.finding(receipt)
+        finding['url_tested'] = self.url + '/api/order/refund/complete'
+        self.assertIn('endpoint', trace_error(finding, receipt))
+
+    def test_optional_backend_probe_has_its_own_signed_trace(self):
+        from unittest.mock import patch
+        from backend.runtime.probe_executor import execute_state_lock
+        self.state.update(status='APPROVED', parts=[{'id': 1}, {'id': 2}])
+        target = {'base': self.url, 'parent_path': '/api/order', 'children_key': 'parts',
+                  'child_delete_paths': ['/api/parts'], 'lifecycle_field': 'status',
+                  'lifecycle_posts': [], 'locked_states': ['APPROVED'], 'cookie': 'test=1', 'login': None}
+        with patch('backend.runtime.state_lock_probe.find_child_mutation_target', return_value=target):
+            fid = asyncio.run(execute_state_lock(self.run, 'sample', self.root, self.url))
+        self.assertIsNotNone(fid)
+        report = load_report(self.reports / 'findings.json')
+        self.assertEqual(report['summary']['confirmed'], 1)
+        self.assertEqual(report['results'][0]['source'], 'STATE_LOCK_PROBE')
+        self.assertEqual(len(report['findings'][0]['execution_trace']), 5)
+
+    def test_installed_http_clients_capture_complete_chain(self):
+        import importlib.util
+        installed = [name for name in ('httpx', 'requests') if importlib.util.find_spec(name)]
+        if not installed:
+            self.skipTest('Optional HTTPX/requests client adapters require the project runtime dependencies')
+        if 'httpx' in installed:
+            installed.append('httpx_async')
+        for client in installed:
+            with self.subTest(client=client):
+                self.state.update(priceAdjustment=0, completedRefund=0, totalReturned=0)
+                script = self.script(client=client)
+                receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+                self.assertEqual(receipt['exit_code'], 0, receipt['stderr'])
+                self.assertIsNone(trace_error(self.finding(receipt), receipt))
+
+    def test_child_process_calls_fail_closed(self):
+        script = self.run / 'child.py'
+        script.write_text("import subprocess, sys\nsubprocess.run([sys.executable, '-c', 'print(123)'])\n")
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        self.assertNotEqual(receipt['exit_code'], 0)
+        self.assertIn('Probe subprocesses are unsupported', receipt['stderr'])
+
+
+if __name__ == '__main__': unittest.main()

@@ -49,6 +49,7 @@ async def run_flowbusters(
     progress_cb: Optional[Callable[[ProgressEvent], None]] = None,
     headless: bool = True,
     auto_complete: bool = False,
+    cross_flow_inputs: dict | None = None,
 ) -> dict:
     """
     Execute the full FlowBusters pipeline via Claude Code crew subprocess.
@@ -85,6 +86,7 @@ async def run_flowbusters(
         phase_timeout=phase_timeout,
         overall_timeout=overall_timeout,
         auto_complete=auto_complete,
+        cross_flow_inputs=cross_flow_inputs,
     )
 
     result = await run_crew(config, cb)
@@ -92,11 +94,15 @@ async def run_flowbusters(
     # Build findings for V1-compatible return
     findings_path = Path(run_dir) / "runs" / flow_name / "reports" / "findings.json"
     remediation_path = Path(run_dir) / "runs" / flow_name / "reports" / "remediation.md"
+    scoped = Path(run_dir) / 'runs' / flow_name / 'reports' / flow_name
+    if (scoped / 'findings.json').exists():
+        findings_path = scoped / 'findings.json'
+        remediation_path = scoped / 'remediation.md'
 
     if findings_path.exists():
         import json
-        from backend.runtime.verification import normalize_report
-        result["findings"] = normalize_report(json.loads(findings_path.read_text(encoding="utf-8")))
+        from backend.runtime.verification import load_report
+        result["findings"] = load_report(findings_path)
     else:
         result["findings"] = {"summary": {"bugs_found": 0, "rejected": 0, "errors": 0}}
 

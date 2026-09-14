@@ -2,6 +2,11 @@
 
 ## Purpose
 
+Execution is owned by the backend. Read `crew/skills/probe-flow/EXECUTION.md`
+before following the procedures below. Prepare scripts and a review-only draft;
+do not execute HTTP calls or scripts in the agent session. The backend creates
+the final execution log and recomputes verdicts after your session exits.
+
 Execute adversarial mutation scripts, verify state evidence, classify outcomes
 as CONFIRMED / NEEDS_REVIEW / NOT_REPRODUCED / NOT_EXECUTED / CHECK_ERROR, and
 produce findings reports with remediation guidance.
@@ -47,12 +52,8 @@ Sort by filename (numeric prefix ensures execution order).
 
 ### 3. Execute Each Script
 
-For each script, run with a 30-second timeout:
-```bash
-timeout 30 python3 mutations/{flow-name}/{script_name}.py 2>&1
-```
-
-Capture both stdout and stderr separately when possible.
+The backend executes each script with a 30-second timeout and preserves stdout,
+stderr, exit code and HTTP transport events. Do not run this step yourself.
 
 ### 4. Parse Output
 
@@ -99,11 +100,10 @@ ERROR: Script output is not valid JSON. Raw output: {first 200 chars}
 
 Check `flows/{flow-name}/state_map.json` for an auth/login endpoint. If one exists:
 
-1. POST the login endpoint with a known username + a WRONG password
-2. POST the login endpoint with a brand-new unknown username + any password
-3. If EITHER returns 2xx with a usable token/cookie, authentication is not enforced:
-   - Record it as a finding with `source: "AUTH_CHECK"`, severity `Critical`, CWE-287, exact test credentials and responses as evidence
-   - Make it the FIRST finding in `remediation.md` — full-system access dwarfs per-endpoint bugs
+Prepare a separate `verification_probes/{flow-name}/` script for authorized
+authentication checks, including state reads proving access or effects. Its
+source is VERIFICATION_PROBE. A token or 2xx alone cannot confirm a finding.
+Do not perform these requests during the agent session.
 
 ### 8. Compile Findings
 
