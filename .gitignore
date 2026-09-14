@@ -7,6 +7,9 @@ node_modules/
 __pycache__/
 *.pyc
 
+# generated frontend build output
+/frontend/dist/
+
 # per-run artifacts (the current layout)
 runs/
 
