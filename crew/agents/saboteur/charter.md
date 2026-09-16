@@ -80,6 +80,15 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
      contract, including `title`, `mutation_type`, `url`, `status_code`,
      `outcome`, and a `verification` built from actual response objects with a
      complete independent `before` / `actions` / `after` chain.
+   - Use the capture harness sequence from
+     `response.extensions["flowbusters_sequence"]`; never maintain a local
+     sequence counter. Capture fixture setup and every repeated reset in
+     `verification.setup`. Across setup and scenario captures, represent every
+     HTTP request exactly once while keeping setup out of the attack actions.
+   - `business_rule_must_hold` MUST include the supported executable `sum_lte`
+     invariant. If the rule cannot be expressed by a supported predicate, use
+     `unsupported_business_rule` plus a concrete `unsupported_reason`; do not
+     invent an invariant.
    - Invariant paths start at the full HTTP response root. Include envelope keys
      (for example `["order", "totalReturned"]`), and never rely on recursive
      field lookup or guessed array indexes.
@@ -105,6 +114,10 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
 - Every `conflicting_action_pairs` entry has a STATE_INTERLEAVING script covering
   A→B, B→A and a safe concurrent race, with final-state re-reads
 - No script treats a `setup_paths` endpoint as the attacked action or finding
+- Every setup request and repeated reset is captured with its harness-assigned
+  transport sequence; no script invents or locally renumbers sequences
+- Every `business_rule_must_hold` output contains a supported executable
+  invariant with response-root paths
 - Each script targets a different attack vector or endpoint
 - Report: "✅ Phase 3 MUTATE complete. Flow {flow-name}. {N} mutation scripts generated: {list of types}."
 

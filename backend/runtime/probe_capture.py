@@ -69,6 +69,7 @@ def main():
                 response = sync_send(client, request)
                 response.read()
                 finish(event, response.status_code, response.content)
+                response.extensions['flowbusters_sequence'] = event['sequence']
                 return response
             except Exception as exc:
                 finish(event, error=str(exc))
@@ -81,6 +82,7 @@ def main():
                 response = await async_send(client, request)
                 await response.aread()
                 finish(event, response.status_code, response.content)
+                response.extensions['flowbusters_sequence'] = event['sequence']
                 return response
             except Exception as exc:
                 finish(event, error=str(exc))
@@ -99,6 +101,7 @@ def main():
             try:
                 response = original(adapter, request, **kwargs)
                 finish(event, response.status_code, response.content)
+                response.flowbusters_sequence = event['sequence']
                 return response
             except Exception as exc:
                 finish(event, error=str(exc))
@@ -117,6 +120,7 @@ def main():
             response = original_open(handler, connection, request, **kwargs)
             payload = response.read()
             finish(event, response.status, payload)
+            response.flowbusters_sequence = event['sequence']
             buffered = io.BytesIO(payload)
             response.read = lambda amount=None: buffered.read(-1 if amount is None else amount)
             response.readinto = buffered.readinto

@@ -122,6 +122,29 @@ class UIProvenanceTests(unittest.TestCase):
         self.assertEqual(fact['provenance_type'], 'api_state_fact')
         self.assertEqual((fact['before'], fact['after']), (True, False))
 
+    def test_fact_type_requires_its_exact_provenance_type(self):
+        explicit_text = deepcopy(self.state_map)
+        explicit_text['observed_ui_rules'][0]['facts'][0] = {
+            'id': 'UIR-001-F1',
+            'type': 'explicit_ui_text',
+            'provenance_type': 'explicit_visible_ui_text',
+            'source_run': 'price-adjustment',
+            'artifact': 'demo.json',
+            'step': 2,
+            'text': CANCEL,
+            'json_pointer': '/workflow_timeline/ui_states/0/elements/0',
+        }
+        validate_state_map(explicit_text, self.artifacts, 'price-adjustment')
+
+        explicit_text['observed_ui_rules'][0]['facts'][0][
+            'provenance_type'] = 'observed_ui_affordance'
+        with self.assertRaisesRegex(
+                UIProvenanceError,
+                r'Observed UI rule UIR-001 fact UIR-001-F1: explicit_ui_text '
+                r'requires provenance_type explicit_visible_ui_text; '
+                r"got 'observed_ui_affordance'"):
+            validate_state_map(explicit_text, self.artifacts, 'price-adjustment')
+
     def test_fact_artifact_allowlist_and_source_run_traversal(self):
         wrong_artifact = deepcopy(self.state_map)
         wrong_artifact['observed_ui_rules'][0]['facts'][0]['artifact'] = 'state_map.json'
@@ -133,6 +156,15 @@ class UIProvenanceTests(unittest.TestCase):
             'fact_ids': ['UIR-001-F1']}}
         with self.assertRaisesRegex(UIProvenanceError, 'source_run is invalid'):
             validate_rule_reference(reference, self.root)
+
+    def test_missing_fact_artifact_names_the_rule_and_fact(self):
+        missing_artifact = deepcopy(self.state_map)
+        del missing_artifact['observed_ui_rules'][0]['facts'][0]['artifact']
+        with self.assertRaisesRegex(
+                UIProvenanceError,
+                r'Observed UI rule UIR-001 fact UIR-001-F1: '
+                r'ui_element_transition must reference demo\.json'):
+            validate_state_map(missing_artifact, self.artifacts, 'price-adjustment')
 
     def test_cross_flow_cannot_fall_back_to_agent_authored_flow_artifacts(self):
         (self.root / 'cross_flow_inputs.json').write_text(

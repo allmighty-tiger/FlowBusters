@@ -86,16 +86,18 @@ from the active immutable artifacts. A pointer must resolve exactly; never
 search recursively, guess an index, or cite a whole object when an element is
 required.
 
-Allowed facts are:
+Allowed facts use exact, inseparable tuples. Never choose `provenance_type`
+from the element's meaning; choose it from the fact `type`:
 
-- `explicit_ui_text` / `explicit_visible_ui_text`: `artifact: demo.json`, exact
-  `step`, exact semantic element string in `text`, and `json_pointer` to it.
-- `ui_element_transition` / `observed_ui_affordance`: exact before/after steps,
-  role and accessible name, transition (`appeared`, `disappeared`,
+- `explicit_ui_text` + `explicit_visible_ui_text` + `artifact: demo.json`: exact
+  `step`, exact semantic element string in `text`, and `json_pointer` to it. A
+  button or link seen at one sampled step belongs to this tuple.
+- `ui_element_transition` + `observed_ui_affordance` + `artifact: demo.json`:
+  exact before/after steps, role and accessible name, transition (`appeared`, `disappeared`,
   `became_enabled`, or `became_disabled`), and exact before/after pointers. For
   `appeared`, the before pointer resolves to the complete before-state
   `elements` array and the after pointer resolves to the exact `appeared` item.
-- `api_field_transition` / `api_state_fact`: `artifact: recording.har`, exact
+- `api_field_transition` + `api_state_fact` + `artifact: recording.har`: exact
   two HAR entry indexes, response-body pointers, object-key `field_path`, and
   typed before/after values.
 

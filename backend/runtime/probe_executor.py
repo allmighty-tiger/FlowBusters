@@ -1,5 +1,6 @@
 """Backend-owned, append-only execution receipts and report provenance gate."""
 import asyncio
+import ast
 import base64
 from copy import deepcopy
 from datetime import datetime, timezone
@@ -14,6 +15,10 @@ import time
 import uuid
 
 from backend.runtime.ui_provenance import UIProvenanceError, validate_rule_reference
+
+
+PROBE_CONTRACT_VERSION = 1
+SUPPORTED_BUSINESS_INVARIANTS = {'sum_lte'}
 
 
 def canonical(value):
@@ -87,6 +92,7 @@ async def execute(script, report_dir, *, root, cwd, source='MUTATION_SCRIPT', tr
         'stdout': stdout.decode('utf-8', errors='replace'), 'stderr': stderr.decode('utf-8', errors='replace'),
         'stdout_base64': base64.b64encode(stdout).decode(), 'stderr_base64': base64.b64encode(stderr).decode(),
         'parsed_result': parsed, 'trace': events, 'error': failure}
+    receipt['contract_validation'] = validate_probe_output(receipt, enforce_contract=True)
     receipt['signature'] = hmac.new(key_for(root, True), canonical(receipt), hashlib.sha256).hexdigest()
     with (directory / f'{identifier}.json').open('x', encoding='utf-8') as stream:
         json.dump(receipt, stream, indent=2)
@@ -119,6 +125,228 @@ def captures(verification):
     if not isinstance(actions, list):
         actions = [verification['action']] if isinstance(verification.get('action'), dict) else []
     return [verification.get('before'), *actions, verification.get('after')]
+
+
+def _all_declared_captures(verification):
+    """Return every transport capture declared by a versioned probe output."""
+    declared = []
+    setup = verification.get('setup') if isinstance(verification, dict) else None
+    if isinstance(setup, list):
+        declared.extend(setup)
+    declared.extend(captures(verification))
+    scenarios = verification.get('supplementary_scenarios') if isinstance(verification, dict) else None
+    if isinstance(scenarios, dict):
+        for scenario in scenarios.values():
+            if not isinstance(scenario, dict):
+                continue
+            scenario_setup = scenario.get('setup')
+            if isinstance(scenario_setup, list):
+                declared.extend(scenario_setup)
+            declared.extend(captures(scenario))
+    return [capture for capture in declared if capture is not None]
+
+
+def _path_shape(path):
+    return (isinstance(path, list) and bool(path)
+            and all(isinstance(part, str) and part for part in path))
+
+
+def _exact_numeric_value(response, path):
+    value = response
+    for part in path:
+        if not isinstance(value, dict) or part not in value:
+            raise KeyError(part)
+        value = value[part]
+    if type(value) not in (int, float) or not __import__('math').isfinite(value):
+        raise ValueError('Invariant value is not a finite number')
+    return value
+
+
+def preflight_script_contract(script):
+    """Catch literal generated-output contract defects without running a probe.
+
+    Dynamic verification construction is validated after execution. This gate is
+    deliberately conservative: it rejects only defects visible in a literal
+    verification dictionary and never guesses an invariant.
+    """
+    try:
+        tree = ast.parse(Path(script).read_text(encoding='utf-8'), filename=str(script))
+    except (OSError, SyntaxError, UnicodeError) as exc:
+        return f'Probe contract preflight failed: {type(exc).__name__}: {exc}'
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        fields = {}
+        for key, value in zip(node.keys, node.values):
+            if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                fields[key.value] = value
+        predicate = fields.get('predicate')
+        if not isinstance(predicate, ast.Constant) or not isinstance(predicate.value, str):
+            continue
+        if predicate.value == 'business_rule_must_hold' and 'invariant' not in fields:
+            return ('Probe output contract error: business_rule_must_hold requires '
+                    'a supported executable invariant; use unsupported_business_rule '
+                    'with unsupported_reason when no supported predicate applies')
+        if predicate.value == 'unsupported_business_rule' and 'unsupported_reason' not in fields:
+            return ('Probe output contract error: unsupported_business_rule requires '
+                    'a concrete unsupported_reason')
+    return None
+
+
+def validate_probe_output(receipt, *, enforce_contract=False):
+    """Validate backend-captured probe output without trusting an agent flag.
+
+    New receipts opt into the versioned full-transport contract. Legacy receipts
+    remain loadable and continue through the existing strict trace matcher.
+    """
+    result = {'version': PROBE_CONTRACT_VERSION, 'status': 'valid',
+              'category': None, 'error': None}
+    if receipt.get('error') or receipt.get('exit_code') != 0:
+        result.update(status='invalid', category='process_error',
+                      error=receipt.get('error') or 'Probe process exited non-zero')
+        return result
+    parsed = receipt.get('parsed_result')
+    if not isinstance(parsed, dict):
+        result.update(status='invalid', category='evidence_contract_error',
+                      error='Probe output contract error: final stdout JSON object is required')
+        return result
+    verification = parsed.get('verification')
+    if not isinstance(verification, dict):
+        result.update(status='invalid', category='evidence_contract_error',
+                      error='Probe output contract error: verification must be an object')
+        return result
+    predicate = verification.get('predicate')
+    if predicate == 'business_rule_must_hold':
+        invariant = verification.get('invariant')
+        if not isinstance(invariant, dict):
+            result.update(status='invalid', category='evidence_contract_error',
+                          error=('Probe output contract error: business_rule_must_hold '
+                                 'requires a supported executable invariant'))
+            return result
+        if invariant.get('operator') not in SUPPORTED_BUSINESS_INVARIANTS:
+            result.update(status='invalid', category='evidence_contract_error',
+                          error=('Probe output contract error: unsupported invariant operator; '
+                                 'use unsupported_business_rule instead of inventing an invariant'))
+            return result
+        terms = invariant.get('terms')
+        if not isinstance(terms, list) or not terms or not all(_path_shape(path) for path in terms):
+            result.update(status='invalid', category='evidence_contract_error',
+                          error='Probe output contract error: invariant terms need non-empty response-root paths')
+            return result
+        if not _path_shape(invariant.get('limit')):
+            result.update(status='invalid', category='evidence_contract_error',
+                          error='Probe output contract error: invariant limit needs a response-root path')
+            return result
+        violation = verification.get('violation')
+        if not isinstance(violation, dict) or type(violation.get('observed')) is not bool:
+            result.update(status='invalid', category='evidence_contract_error',
+                          error='Probe output contract error: violation.observed must be boolean')
+            return result
+    elif predicate == 'unsupported_business_rule':
+        reason = verification.get('unsupported_reason')
+        if not isinstance(reason, str) or not reason.strip():
+            result.update(status='invalid', category='evidence_contract_error',
+                          error=('Probe output contract error: unsupported_business_rule '
+                                 'requires a concrete unsupported_reason'))
+            return result
+        result['status'] = 'reviewable'
+    chain = captures(verification)
+    if len(chain) < 3 or any(not isinstance(capture, dict) for capture in chain):
+        result.update(status='invalid', category='evidence_contract_error',
+                      error='Probe output contract error: complete before/actions/after captures are required')
+        return result
+    scenarios = [('primary', verification)]
+    supplementary = verification.get('supplementary_scenarios')
+    if isinstance(supplementary, dict):
+        scenarios.extend((str(name), scenario) for name, scenario in supplementary.items()
+                         if isinstance(scenario, dict) and any(captures(scenario)))
+    for name, scenario in scenarios:
+        scenario_chain = captures(scenario)
+        scenario_sequences = [capture.get('sequence') for capture in scenario_chain
+                              if isinstance(capture, dict)]
+        if (scenario_sequences and
+                (not all(type(value) is int and value > 0 for value in scenario_sequences)
+                 or scenario_sequences != sorted(scenario_sequences)
+                 or len(set(scenario_sequences)) != len(scenario_sequences))):
+            result.update(status='invalid', category='evidence_contract_error',
+                          error=(f'Probe output contract error: {name} scenario capture '
+                                 'sequences must be unique and increasing'))
+            return result
+    declared = _all_declared_captures(verification) if enforce_contract else chain
+    sequences = [capture.get('sequence') for capture in declared if isinstance(capture, dict)]
+    if (len(sequences) != len(declared) or not all(type(value) is int and value > 0 for value in sequences)
+            or len(set(sequences)) != len(sequences)):
+        result.update(status='invalid', category='evidence_contract_error',
+                      error='Probe output contract error: capture sequences must be unique positive integers')
+        return result
+    trace = receipt.get('trace')
+    if not isinstance(trace, list):
+        trace = []
+    by_sequence = {event.get('sequence'): event for event in trace if isinstance(event, dict)}
+    if len(by_sequence) != len(trace):
+        result.update(status='invalid', category='trace_mismatch',
+                      error='Signed transport trace contains duplicate or missing sequence numbers')
+        return result
+    for capture in declared:
+        sequence = capture['sequence']
+        event = by_sequence.get(sequence)
+        if event is None:
+            result.update(status='invalid', category='evidence_contract_error',
+                          error=f'Probe output contract error: capture sequence {sequence} is absent from the signed transport trace')
+            return result
+        request = capture.get('request') or {}
+        request = {key: request.get(key) for key in ('method', 'url', 'body')}
+        if (event.get('request') != request
+                or normalize_response(event.get('response'), event.get('status_code'))
+                != normalize_response(capture.get('response'), capture.get('status_code'))
+                or not event.get('complete')):
+            result.update(status='invalid', category='evidence_contract_error',
+                          error=(f'Probe output contract error: capture sequence {sequence} '
+                                 'does not match its signed transport event'))
+            return result
+    if predicate == 'business_rule_must_hold':
+        after_response, _ = normalize_response(
+            verification['after'].get('response'), verification['after'].get('status_code'))
+        invariant = verification['invariant']
+        try:
+            for path in [*invariant['terms'], invariant['limit']]:
+                _exact_numeric_value(after_response, path)
+        except (KeyError, TypeError, ValueError):
+            result.update(status='invalid', category='evidence_contract_error',
+                          error=('Probe output contract error: invariant paths must resolve '
+                                 'to finite numbers from the full AFTER response root'))
+            return result
+    if enforce_contract:
+        unaccounted = sorted(set(by_sequence) - set(sequences))
+        if unaccounted:
+            result.update(status='invalid', category='evidence_contract_error',
+                          error=('Probe output contract error: signed transport sequences '
+                                 f'{unaccounted} are not represented in setup or scenario captures'))
+            return result
+    record = {'script': receipt.get('script'), 'source': receipt.get('source'),
+              'triggered_by': receipt.get('triggered_by'), 'verification': deepcopy(verification),
+              'url_tested': parsed.get('url_tested', parsed.get('url', ''))}
+    error = trace_error(record, receipt)
+    if error:
+        category = ('evidence_contract_error' if error in {
+            'Business invariant has no supported executable predicate',
+            'Invariant paths cannot be evaluated against captured state',
+            'Claimed invariant result contradicts captured state',
+        } else 'trace_mismatch')
+        result.update(status='invalid', category=category, error=error)
+    return result
+
+
+def receipt_evidence_error(record, receipt):
+    """Apply the new output gate only to receipts created with that contract."""
+    if not receipt:
+        return 'No authenticated execution receipt for this finding'
+    declared = receipt.get('contract_validation')
+    if isinstance(declared, dict) and declared.get('version') == PROBE_CONTRACT_VERSION:
+        validation = validate_probe_output(receipt, enforce_contract=True)
+        if validation.get('status') == 'invalid':
+            return validation.get('error')
+    return trace_error(record, receipt)
 
 
 def normalize_response(response, status=None):
@@ -391,7 +619,7 @@ def reconcile(data, report_dir, root):
                 and isinstance(finding.get('execution'), dict)
                 and finding['execution'].get('status') == 'NOT_EXECUTED'):
             finding['agent_draft_execution'] = deepcopy(finding.pop('execution'))
-        finding['_provenance_error'] = trace_error(finding, receipt) if receipt else 'No authenticated execution receipt for this finding'
+        finding['_provenance_error'] = receipt_evidence_error(finding, receipt)
         finding['execution_trace'] = deepcopy(receipt.get('trace', [])) if receipt else []
         attach_rule_provenance(finding)
     partial_coverage = []
@@ -406,12 +634,19 @@ def reconcile(data, report_dir, root):
         parsed = receipt.get('parsed_result') or {}
         row = {'script': receipt['script'], 'source': receipt['source'],
             'triggered_by': receipt.get('triggered_by'), 'execution_id': identifier,
+            'title': parsed.get('title', ''),
             'mutation_type': parsed.get('mutation_type', ''), 'outcome': parsed.get('outcome', 'NEEDS_REVIEW'),
             'url_tested': parsed.get('url_tested', parsed.get('url', '')),
             'status_code': parsed.get('status_code'), 'response_snippet': parsed.get('response_body_snippet'),
             'verification': deepcopy(parsed.get('verification')), 'parsed_result': deepcopy(parsed),
             'error_message': receipt.get('error') or ('Script execution failed' if receipt['exit_code'] else None)}
-        row['_provenance_error'] = trace_error(row, receipt)
+        validation = (validate_probe_output(receipt, enforce_contract=True)
+                      if isinstance(receipt.get('contract_validation'), dict)
+                      and receipt['contract_validation'].get('version') == PROBE_CONTRACT_VERSION
+                      else None)
+        row['evidence_validation_status'] = validation.get('status') if validation else 'legacy'
+        row['evidence_error_category'] = validation.get('category') if validation else None
+        row['_provenance_error'] = receipt_evidence_error(row, receipt)
         attach_rule_provenance(row)
         linked = [f for f in findings if f.get('execution_id') == identifier]
         if len(linked) == 1:
@@ -430,6 +665,10 @@ def reconcile(data, report_dir, root):
         identifier for identifier, receipt in terminal_receipts.items()
         if not isinstance(receipt.get('parsed_result'), dict)
     }
+    contract_failures = {
+        row['execution_id'] for row in results
+        if row.get('evidence_error_category') == 'evidence_contract_error'
+    }
     # trace_error also evaluates supported business invariants. An unsupported
     # predicate is a verdict/provenance limitation, not a transport trace
     # mismatch and must not turn a completed authenticated execution into an
@@ -444,6 +683,7 @@ def reconcile(data, report_dir, root):
         if row['execution_id'] in terminal_receipts
         and row['execution_id'] not in executor_failures
         and row['execution_id'] not in parse_failures
+        and row['execution_id'] not in contract_failures
         and row.get('_provenance_error')
         and row['_provenance_error'] not in semantic_failures
     }
@@ -455,7 +695,9 @@ def reconcile(data, report_dir, root):
         'completed_executions': len(terminal_receipts),
         'pending_execution': pending,
         'missing_receipts': pending,
-        'execution_errors': len(executor_failures | parse_failures | trace_failures),
+        'process_errors': len(executor_failures),
+        'evidence_contract_errors': len(parse_failures | contract_failures),
+        'execution_errors': len(executor_failures | parse_failures | contract_failures | trace_failures),
         'trace_mismatches': len(trace_failures),
         'untrusted_receipts': max(0, raw_receipt_count - len(receipts)),
     }
@@ -485,7 +727,9 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
     scripts += sorted(extra.glob('*.py'))
     completed = 0
     attempts = 0
-    errors = 0
+    process_errors = 0
+    contract_errors = 0
+    trace_mismatches = 0
     total = len(scripts)
     for index, script in enumerate(scripts, start=1):
         source = 'VERIFICATION_PROBE' if script.parent == extra else 'MUTATION_SCRIPT'
@@ -494,6 +738,18 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
                          or source == 'MUTATION_SCRIPT' and f.get('source') == 'CROSS_FLOW')]
         triggered_by = matching[0].get('triggered_by') if len(matching) == 1 else None
         scenario_name = _readable_scenario_name(script)
+        preflight_error = preflight_script_contract(script)
+        if preflight_error:
+            contract_errors += 1
+            if execution_progress is not None:
+                execution_progress({
+                    'stage': 'contract_failed',
+                    'message': f'Probe {index}/{total} contract validation failed: {scenario_name}',
+                    'technical_detail': f'Script: {script.name}; {preflight_error}',
+                })
+            else:
+                progress(f'Probe contract validation failed for {script.name}: {preflight_error}')
+            break
         if execution_progress is not None:
             execution_progress({
                 'stage': 'started',
@@ -519,17 +775,24 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
             raise
         completed += 1
         parsed = receipt.get('parsed_result') or {}
-        failed = (receipt.get('exit_code') != 0 or not isinstance(receipt.get('parsed_result'), dict)
-                  or bool(receipt.get('error')))
-        errors += int(failed)
+        validation = validate_probe_output(receipt, enforce_contract=True)
+        category = validation.get('category')
+        process_errors += int(category == 'process_error')
+        contract_errors += int(category == 'evidence_contract_error')
+        trace_mismatches += int(category == 'trace_mismatch')
+        failed = validation.get('status') == 'invalid'
         if execution_progress is not None:
-            outcome = 'failed' if failed else 'completed'
+            outcome = ('process failed' if category == 'process_error'
+                       else 'evidence validation failed' if category == 'evidence_contract_error'
+                       else 'trace validation failed' if category == 'trace_mismatch'
+                       else 'completed')
             execution_progress({
-                'stage': outcome,
+                'stage': 'failed' if failed else 'completed',
                 'message': (f'Probe {index}/{total} {outcome}: {scenario_name} '
-                            f'({time.monotonic() - probe_started:.1f}s)'),
+                             f'({time.monotonic() - probe_started:.1f}s)'),
                 'technical_detail': (f'Script: {script.name}; '
-                                     f'execution_id: {receipt.get("execution_id", "missing")}'),
+                                     f'execution_id: {receipt.get("execution_id", "missing")}; '
+                                     f'{validation.get("error") or "evidence contract valid"}'),
             })
         if not matching and parsed.get('verification'):
             finding = {'id': f'EXEC-{receipt["execution_id"]}', 'title': parsed.get('title', script.stem),
@@ -545,15 +808,26 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
             # Claimed captures must agree with stdout. Empty drafts can acquire raw evidence.
             if not finding.get('verification'):
                 finding['verification'] = deepcopy(parsed.get('verification'))
+        # A terminal receipt has already been persisted. Stop before executing
+        # more generated code when its output violates the evidence contract.
+        if failed:
+            break
     findings_path.write_text(json.dumps(draft, indent=2), encoding='utf-8')
     if execution_progress is not None:
         attempt_noun = 'attempt' if attempts == 1 else 'attempts'
-        error_noun = 'error' if errors == 1 else 'errors'
+        pending = max(0, total - attempts)
+        receipt_noun = 'receipt' if completed == 1 else 'receipts'
+        summary_label = ('Execution stopped' if pending and
+                         (process_errors or contract_errors or trace_mismatches)
+                         else 'Execution complete')
         execution_progress({
             'stage': 'summary',
-            'message': (f'Execution complete: {completed}/{total} probes completed; '
-                        f'{attempts} execution {attempt_noun}; {errors} {error_noun}'),
-            'technical_detail': 'Counts derived from terminal backend execution receipts',
+            'message': (f'{summary_label}: {attempts}/{total} probes attempted; '
+                        f'{completed} authenticated terminal {receipt_noun}; '
+                        f'{process_errors} process errors; {contract_errors} evidence-contract errors; '
+                        f'{trace_mismatches} trace mismatches; {pending} pending'),
+            'technical_detail': ('Counts derived from terminal backend execution receipts; '
+                                 f'{attempts} execution {attempt_noun}'),
         })
 
 
@@ -593,6 +867,8 @@ if finding:
             v['before'].update(before)
             v['action'].update(events[i])
             v['after'].update(after)
+            represented = {before['sequence'], events[i]['sequence'], after['sequence']}
+            v['setup'] = [event for event in events if event['sequence'] not in represented]
     finding['script'] = script_name
     print(json.dumps(finding))
 else:

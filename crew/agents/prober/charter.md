@@ -92,6 +92,7 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
           "before": {"sequence": 1, "status_code": 200, "complete": true, "request": {}, "response": {}},
           "actions": [{"sequence": 2, "request": {}, "response": {}}],
           "after": {"sequence": 3, "status_code": 200, "complete": true, "request": {}, "response": {}},
+          "invariant": {"operator": "sum_lte", "terms": [["responseRoot", "returned"]], "limit": ["responseRoot", "originalAmount"]},
           "violation": {"observed": true, "description": "Concrete invariant violation shown by the final state"}
         }
       }
@@ -172,7 +173,8 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
 - **ALWAYS** print the summary table before declaring the gate passed
 
 ## Required verification contract (supersedes legacy outcome examples above)
-Read `crew/skills/probe-flow/VERIFICATION.md` before probing.
+Read `crew/skills/probe-flow/EXECUTION.md` and
+`crew/skills/probe-flow/VERIFICATION.md` before probing.
 Never classify a vulnerability or a successful defense from HTTP status alone.
 Legacy BUG_FOUND labels and automatic auth Critical instructions do not bypass
 backend verification. A token response alone is not proof of usable access.

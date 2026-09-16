@@ -50,7 +50,18 @@ For `business_rule_must_hold`, provide:
   `complete: true`, and captured `request`/`response`
 - non-empty `actions`, each with increasing `sequence` and captured
   `request`/`response`
+- `invariant`: a supported executable `sum_lte` object whose non-empty `terms`
+  and `limit` are arrays of exact keys from the full AFTER response root,
+  including any response envelope
 - `violation`: `{observed: boolean, description: concrete final-state evidence}`
+
+The harness-provided `response.extensions["flowbusters_sequence"]` value is
+authoritative. Include every setup response in `verification.setup`; setup
+requests consume sequence numbers but are not attack actions. Never use an
+independent counter. If `sum_lte` cannot express the rule, use
+`unsupported_business_rule` with a concrete `unsupported_reason`; the result
+stays NEEDS_REVIEW. Omitting `invariant` from `business_rule_must_hold` is an
+evidence-contract error, not an unsupported scenario.
 
 Use this for state interleavings such as A→B, B→A, and A/B races. `observed:true`
 means CONFIRMED only when all required captures are present; `observed:false`

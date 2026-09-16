@@ -10,6 +10,14 @@ scenario and print the required structured `verification`; status codes and a
 Invariant paths must start at the HTTP response root and include every envelope
 key (for example `["order", "totalReturned"]`). Never use nested-relative paths,
 recursive field lookup, or guessed array indexes.
+Use `response.extensions["flowbusters_sequence"]` as the capture sequence for
+every HTTPX response. Never maintain a parallel counter. Capture setup requests
+and every repeated reset in `verification.setup`; their sequences are part of
+the same signed transport trace even though they are not attack actions. The
+declared setup and scenario captures must account for every HTTP request once.
+`business_rule_must_hold` requires a supported `sum_lte` invariant. If the rule
+cannot be represented by a supported predicate, emit
+`unsupported_business_rule` with `unsupported_reason` and keep it reviewable.
 
 Generate adversarial Python scripts that probe business logic flaws by manipulating workflow state, replaying requests, swapping roles, and tampering with data extracted from the state map.
 

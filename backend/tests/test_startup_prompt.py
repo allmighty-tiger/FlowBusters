@@ -29,6 +29,10 @@ class StartupPromptTests(unittest.TestCase):
                 '_post_recording_instructions.md','Do not end the session']:
                 self.assertIn(token,prompt)
             self.assertIn('Resume at ANALYZE',deferred)
+            self.assertIn('explicit_ui_text + explicit_visible_ui_text + demo.json', deferred)
+            self.assertIn('ui_element_transition + observed_ui_affordance + demo.json', deferred)
+            self.assertIn('api_field_transition + api_state_fact + recording.har', deferred)
+            self.assertIn('A visible element at one sampled step is explicit_ui_text', deferred)
     def test_missing_required_instruction_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileNotFoundError):build_system_prompt(Path(tmp),'test')

@@ -13,6 +13,9 @@ export interface ScriptResult {
   execution_id?: string;
   presentation_status?: string;
   presentation_reason?: string;
+  deduplicated_into?: string;
+  evidence_validation_status?: string;
+  evidence_error_category?: string | null;
   execution?: { status: string; missing_precondition?: string; next_step?: string };
 }
 
@@ -28,6 +31,11 @@ export interface Finding {
   execution?: { status: string; missing_precondition?: string; next_step?: string };
   related_findings?: string[];
   deduplicated_from?: string[];
+  backend_requirement?: {
+    id: string; product: string; asserted_on: string; effective_from: string;
+    statement: string; application_mode: string; assertion_context: string;
+    allowed_run_ids?: string[];
+  };
   title: string;
   source: string; // AUTH_CHECK | MUTATION_SCRIPT | ANALYSIS
   severity?: string; // Missing values are not assessed
@@ -51,7 +59,7 @@ interface Capture {
 }
 
 interface ResolvedInvariant { operator: string; terms: string[][]; limit: string[]; }
-interface InvariantView { operands: { label: string; value: number; path: string }[]; total: number; maximum: number; maximumLabel: string; statement: string; }
+interface InvariantView { operands: { label: string; value: number; path: string }[]; total: number; totalLabel: string; maximum: number; maximumLabel: string; statement: string; }
 interface RemediationView { cwe: string; severity: string; endpoints: string[]; issue: string; evidence: string; fixes: string[]; }
 interface TraceView { label: string; role: string; summary: string; capture: Capture; }
 interface PartialCoverage {
@@ -83,6 +91,7 @@ interface LegacyObservation {
 }
 
 export interface FindingsReport {
+  normalized_run_id?: string;
   run_timestamp: string;
   target_url: string;
   flow_name: string;
@@ -104,6 +113,8 @@ export interface FindingsReport {
     completed_executions?: number;
     pending_execution?: number;
     missing_receipts?: number;
+    process_errors?: number;
+    evidence_contract_errors?: number;
     execution_errors?: number;
     trace_mismatches?: number;
     controls_held?: number;
@@ -172,8 +183,15 @@ export function invariantFor(finding: Finding): InvariantView | null {
   if (operands.some(x => typeof x.value !== 'number' || !Number.isFinite(x.value)) || typeof maximum !== 'number' || !Number.isFinite(maximum)) return null;
   const typed = operands as { path: string; label: string; value: number }[];
   const total = typed.reduce((sum, item) => sum + item.value, 0);
-  return { operands: typed, total, maximum, maximumLabel: labelForPath(invariant.limit),
-    statement: `${typed.map(x => `${money(x.value)} ${x.label}`).join(' + ')} = ${money(total)} returned against a ${money(maximum)} ${labelForPath(invariant.limit)}.` };
+  const leaves = invariant.terms.map(path => path.at(-1));
+  const totalLabel = leaves.some(leaf => ['completedAmount', 'reimbursementAmount', 'totalReturned'].includes(leaf || ''))
+    && !leaves.some(leaf => ['currentPrice', 'requestedAmount'].includes(leaf || ''))
+    ? 'returned' : 'evaluated total';
+  const maximumLabel = labelForPath(invariant.limit);
+  return { operands: typed, total, totalLabel, maximum, maximumLabel,
+    statement: totalLabel === 'returned'
+      ? `${typed.map(x => `${money(x.value)} ${x.label}`).join(' + ')} = ${money(total)} returned against a ${money(maximum)} ${maximumLabel}.`
+      : `${typed.map(x => `${money(x.value)} ${x.label}`).join(' + ')} = ${money(total)} evaluated total; allowed maximum: ${money(maximum)} ${maximumLabel}.` };
 }
 
 const responseBody = (value: unknown) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 && 'actual' in value ? (value as Record<string, unknown>).actual : value;
@@ -200,7 +218,7 @@ const conciseChange = (previous: Capture | undefined, current: Capture, label: s
     return [`${name}: ${format(from)} → ${format(to)}`];
   });
   if (changes.length) return changes.join(' · ');
-  return label === 'Before state' ? 'Captured the baseline order state.' : label === 'After state' ? 'Confirmed the final state; no additional change.' : 'Request completed without a tracked order-state change.';
+  return label === 'Before state' ? 'Captured the signed pre-action order state.' : label === 'After state' ? 'Confirmed the final state; no additional change.' : 'Request completed without a tracked order-state change.';
 };
 
 export function traceViews(finding: Finding): TraceView[] {
@@ -257,19 +275,25 @@ export function guidanceFor(finding: Finding, markdown: string | null): string |
   return matches.length === 1 ? matches[0]?.[2]?.trim() : undefined;
 }
 
-export function remediationFor(finding: Finding, markdown: string | null, invariant: InvariantView | null): RemediationView {
+export function remediationFor(finding: Finding, markdown: string | null, invariant: InvariantView | null, normalizedRunId?: string): RemediationView {
   const text = guidanceFor(finding, markdown) || '';
   const field = (name: string) => text.match(new RegExp(`^- \\*\\*${name}:\\*\\*\\s*([\\s\\S]*?)(?=\\n- \\*\\*[A-Z][^:]*:\\*\\*|$(?![\\s\\S]))`, 'm'))?.[1]?.trim() || '';
   const recordedEndpoints = [...field('Endpoints').matchAll(/`([^`]+)`/g)].map(match => match[1] || '').filter(Boolean);
   const executedEndpoints = evidenceCaptures(finding).filter(c => !['GET', 'HEAD', 'OPTIONS'].includes(String(c.request?.method || '')) && endpoint(c.request?.url) !== '/api/demo/reset').map(c => `${c.request?.method} ${endpoint(c.request?.url)}`);
   const verified = finding.verification_status === 'CONFIRMED' && invariant;
+  const executionKind = normalizedRunId === 'northstar-refund-v4-reanalysis'
+    ? 'recorded-flow reanalysis' : 'backend execution';
+  const verifiedFixes = invariant ? [
+    `Before committing ${invariant.operands.map(x => x.label).join(' or ')}, atomically recompute their combined amount and reject the state transition if it would exceed ${invariant.maximumLabel}.`,
+    'Perform the limit check and compensation-state update in the same transaction, with idempotency or version enforcement on both state-changing endpoints.',
+  ] : [];
   return {
     cwe: field('CWE') || finding.cwe?.join(', ') || 'Not recorded',
-    severity: field('Severity') || finding.severity || 'Not assessed',
+    severity: verified ? finding.severity || 'Not assessed' : field('Severity') || finding.severity || 'Not assessed',
     endpoints: [...new Set(verified ? executedEndpoints : recordedEndpoints)],
-    issue: verified ? `A signed cross-flow execution demonstrated that combined remedies exceeded the permitted order amount.` : field('Issue') || finding.title,
+    issue: verified ? `A signed ${executionKind} demonstrated that combined compensation exceeded the permitted order amount.` : field('Issue') || finding.title,
     evidence: verified ? `${invariant.statement} Verified by execution ${finding.execution_id || 'receipt not shown'}.` : invariant?.statement || finding.verification_reason || 'No verified evidence summary available.',
-    fixes: [...field('Fix').matchAll(/^\s*-\s+(.+)$/gm)].map(match => (match[1] || '').trim()).filter(Boolean),
+    fixes: verified ? verifiedFixes : [...field('Fix').matchAll(/^\s*-\s+(.+)$/gm)].map(match => (match[1] || '').trim()).filter(Boolean),
   };
 }
 
@@ -287,6 +311,8 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
   const completedExecutions = report.summary.completed_executions ?? executionAttempts;
   const pendingExecutions = report.summary.pending_execution ?? Math.max(0, plannedExecutions - completedExecutions);
   const executionErrors = report.summary.execution_errors ?? errors;
+  const processErrors = report.summary.process_errors ?? errors;
+  const evidenceContractErrors = report.summary.evidence_contract_errors ?? 0;
   const traceMismatches = report.summary.trace_mismatches ?? 0;
   const deduplicatedIds = findings.flatMap(f => f.deduplicated_from || []);
   const partialCoverage = report.partial_coverage || [];
@@ -302,7 +328,7 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
     const steps = traceViews(finding);
     const transitions = transitionSummary(finding);
     const displayTitle = displayTitleFor(finding, invariant);
-    const remediationView = remediationFor(finding, remediation, invariant);
+    const remediationView = remediationFor(finding, remediation, invariant, report.normalized_run_id);
     const severity = Object.keys(SEVERITY_RANK).find(level => level.toLowerCase() === finding.severity?.trim().toLowerCase());
     const status = finding.verification_status || 'NEEDS_REVIEW';
     const trace = steps.map(({ capture, label, role, summary }, i) => <section className={`report-probe trace-${label.toLowerCase().replaceAll(' ', '-')}`} key={i}>
@@ -322,21 +348,23 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       <div className="finding-body">
         {invariant && <section className={`report-invariant ${status === 'CONFIRMED' ? 'invariant-confirmed' : ''}`} aria-label="Verified invariant">
           <p className="report-eyebrow">Backend-evaluated invariant</p>
-          <div className="invariant-equation">{invariant.operands.map((item, i) => <span className="invariant-part" key={item.path}>{i > 0 && <span className="invariant-operator">+</span>}<strong>{money(item.value)}</strong><small>{item.label}</small></span>)}<span className="invariant-operator">=</span><span className="invariant-total"><strong>{money(invariant.total)}</strong><small>returned</small></span></div>
+          <div className="invariant-equation">{invariant.operands.map((item, i) => <span className="invariant-part" key={item.path}>{i > 0 && <span className="invariant-operator">+</span>}<strong>{money(item.value)}</strong><small>{item.label}</small></span>)}<span className="invariant-operator">=</span><span className="invariant-total"><strong>{money(invariant.total)}</strong><small>{invariant.totalLabel}</small></span></div>
           <p className="invariant-limit">Allowed maximum: <strong>{money(invariant.maximum)}</strong> {invariant.maximumLabel}</p>
         </section>}
         {(!invariant || status === 'NEEDS_REVIEW') && <p className="report-verdict"><strong>{status === 'NEEDS_REVIEW' ? 'Missing evidence' : 'Verification'}</strong><span>{finding.verification_reason || 'No supported state verification recorded.'}</span></p>}
+        {finding.backend_requirement && <section className="report-expected"><h4>Backend-controlled requirement</h4><p><strong>{finding.backend_requirement.id}</strong> · {finding.backend_requirement.product}</p><p>{finding.backend_requirement.statement}</p>{!!finding.backend_requirement.allowed_run_ids?.length && <p className="report-muted">Scoped run: {finding.backend_requirement.allowed_run_ids.join(', ')}</p>}<p className="report-muted">Asserted {finding.backend_requirement.asserted_on}; applied as {finding.backend_requirement.application_mode.replaceAll('_', ' ')}. {finding.backend_requirement.assertion_context}</p></section>}
+        {status === 'NEEDS_REVIEW' && finding.title?.trim() && <section className="report-expected"><h4>Claim under review</h4><p>{finding.title}</p></section>}
         {finding.verification_status === 'NOT_EXECUTED' && <section className="report-guidance"><h4>Missing prerequisite</h4><p>{finding.execution?.missing_precondition || finding.verification_reason}</p><h4>Next step / manual test</h4><p>{finding.execution?.next_step || 'No specific next step recorded.'}</p></section>}
         {!!finding.deduplicated_from?.length && <p className="report-deduplicated">Also represents deduplicated check: {finding.deduplicated_from.join(', ')}</p>}
         {finding.url_tested && <p className="report-endpoint"><strong>Tested endpoint</strong><code>{finding.url_tested}</code></p>}
         <section className="report-expected"><h4>Expected invariant</h4><p>{finding.expected_behavior || (invariant ? `${invariant.operands.map(x => x.label).join(' + ')} must not exceed ${invariant.maximumLabel} (${money(invariant.maximum)}).` : 'No executable invariant was recorded.')}</p></section>
         {(transitions.totalReturned.length > 1 || transitions.refundStatus.length > 1) && <section className="report-transitions"><h4>State transition summary</h4>{transitions.totalReturned.length > 1 && <p><code>totalReturned</code><strong>{transitions.totalReturned.join(' → ')}</strong></p>}{transitions.refundStatus.length > 1 && <p><code>refund.status</code><strong>{transitions.refundStatus.join(' → ')}</strong></p>}</section>}
         {status === 'CONFIRMED' ? <section className="report-evidence trace-primary"><h4>Complete ordered request/action trace <span>{chain.length} steps</span></h4><p className="report-muted">Execution: {finding.execution_id}</p>{trace}<p className="report-muted">Source: {finding.source.replaceAll('_', ' ')}{finding.script ? ` · Script: ${finding.script}` : ''}</p></section> : <details className="report-evidence"><summary>Inspect ordered request/action trace ({chain.length})</summary>{trace}</details>}
-        {status === 'NOT_REPRODUCED' ? <section className="report-control-observed"><h4>Control observed</h4><p>{finding.verification_reason || 'The signed execution completed without violating the evaluated invariant.'}</p><details><summary>Original hypothesis</summary><p>{finding.title}</p>{remediationView.issue !== finding.title && <p>{remediationView.issue}</p>}</details></section> : <section className="report-remediation"><h4>Recommended remediation</h4><dl>
+        {status === 'NOT_REPRODUCED' ? <section className="report-control-observed"><h4>Control observed</h4><p>{finding.verification_reason || 'The signed execution completed without violating the evaluated invariant.'}</p>{finding.title?.trim() && <details><summary>Original hypothesis</summary><p>{finding.title}</p>{remediationView.issue !== finding.title && <p>{remediationView.issue}</p>}</details>}</section> : <section className="report-remediation"><h4>Recommended remediation</h4><dl>
           <div><dt>CWE</dt><dd>{remediationView.cwe}</dd></div><div><dt>Severity</dt><dd>{remediationView.severity}</dd></div>
           <div><dt>Affected endpoints</dt><dd className="endpoint-chips">{remediationView.endpoints.length ? remediationView.endpoints.map(x => <code key={x}>{x}</code>) : 'Not recorded'}</dd></div>
-          <div><dt>Issue</dt><dd>{remediationView.issue}</dd></div><div><dt>Evidence</dt><dd>{remediationView.evidence}</dd></div>
-          <div><dt>Fix</dt><dd>{remediationView.fixes.length ? <ul>{remediationView.fixes.map(x => <li key={x}>{x}</li>)}</ul> : 'No specific fix recorded.'}</dd></div>
+          <div><dt>Issue</dt><dd>{remediationView.issue}</dd></div><div><dt>{status === 'CONFIRMED' ? 'Proven facts' : 'Evidence available'}</dt><dd>{remediationView.evidence}</dd></div>
+          <div><dt>Recommendation (not evidence)</dt><dd>{remediationView.fixes.length ? <ul>{remediationView.fixes.map(x => <li key={x}>{x}</li>)}</ul> : 'No specific recommendation recorded.'}</dd></div>
         </dl></section>}
       </div>
     </details>;
@@ -362,15 +390,16 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       <dl>
         <div><dt>Planned</dt><dd>{plannedExecutions}</dd></div>
         <div><dt>Attempts</dt><dd>{executionAttempts}</dd></div>
-        <div><dt>Completed</dt><dd>{completedExecutions}</dd></div>
+        <div><dt>Authenticated terminal receipts</dt><dd>{completedExecutions}</dd></div>
         <div><dt>Pending</dt><dd>{pendingExecutions}</dd></div>
-        <div><dt>Errors</dt><dd>{executionErrors}</dd></div>
+        <div><dt>Process errors</dt><dd>{processErrors}</dd></div>
+        <div><dt>Evidence-contract errors</dt><dd>{evidenceContractErrors}</dd></div>
         <div><dt>Trace mismatches</dt><dd>{traceMismatches}</dd></div>
       </dl>
       <p>Primary execution results: <strong>{executionResultCounts.needs_review || 0}</strong> need review, <strong>{executionResultCounts.not_reproduced || 0}</strong> not reproduced, <strong>{executionResultCounts.confirmed || 0}</strong> confirmed, and <strong>{executionResultCounts.check_error || 0}</strong> check errors.</p>
       <p>Deduplicated primary chains: <strong>{report.summary.deduplicated_primary_chains ?? deduplicatedIds.length}</strong>. All {executionAttempts} authenticated attempts remain listed below.</p>
     </section>
-    {(notExecuted > 0 || errors > 0 || pendingExecutions > 0 || executionErrors > 0) && <p className="report-notice" role="status">Coverage is incomplete: {notExecuted} not executed findings, {pendingExecutions} pending executions, {executionErrors} execution errors. These are unknown results, not a clean bill of health.</p>}
+    {(notExecuted > 0 || errors > 0 || pendingExecutions > 0 || executionErrors > 0) && <p className="report-notice" role="status">Coverage is incomplete: {notExecuted} not executed findings, {pendingExecutions} pending probes, {processErrors} process errors, {evidenceContractErrors} evidence-contract errors, and {traceMismatches} signed-trace mismatches. A terminal receipt with invalid evidence is not a successful check.</p>}
 
     <section className="report-section">
       <div className="report-section-heading"><div><p className="report-eyebrow">Evidence-backed</p><h2>Confirmed vulnerabilities</h2></div><span>{confirmed.length}</span></div>
@@ -401,9 +430,9 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
     </section>}
 
     <details className="report-appendix"><summary>Probe execution log <span>{executionAttempts} attempts</span></summary>
-      <p className="report-muted">Individual checks are supporting evidence, not additional vulnerabilities.</p>
+      <p className="report-muted">Individual checks are supporting evidence, not additional vulnerabilities. A zero process exit does not make evidence valid.</p>
       {report.results.length === 0 && <p>No execution records available.</p>}
-      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={result.execution_id || i} open={result.outcome === 'NOT_EXECUTED'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.presentation_status === 'EXCLUDED_SETUP_PATH' ? 'Excluded setup-path scenario' : result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.presentation_reason && <p><strong>{result.presentation_reason}</strong></p>}{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</div></details>)}</div>
+      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={result.execution_id || i} open={result.outcome === 'NOT_EXECUTED' || result.evidence_validation_status === 'invalid'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.presentation_status === 'EXCLUDED_SETUP_PATH' ? 'Excluded setup-path scenario' : result.presentation_status === 'DEDUPLICATED_PRIMARY_CHAIN' ? `Deduplicated evidence for ${result.deduplicated_into}` : result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.evidence_validation_status === 'invalid' && <p className="report-notice"><strong>Evidence invalid:</strong> {result.evidence_error_category?.replaceAll('_', ' ') || 'contract or trace validation failed'}. This receipt is not a successful check.</p>}{result.presentation_reason && <p><strong>{result.presentation_reason}</strong></p>}{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</div></details>)}</div>
     </details>
   </section>;
 }

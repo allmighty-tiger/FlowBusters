@@ -178,6 +178,13 @@ Output `flows/{flow-name}/state_map.json`:
 - Confirm `observed_ui_rules` follows version 1. It may be empty only when
   semantic UI capture succeeded, its state count matches `demo.json`, and a
   `no_relevant_rules_reason` is recorded.
+- Inspect every rule fact before writing the file. The only valid tuples are:
+  `explicit_ui_text` + `explicit_visible_ui_text` + `demo.json`;
+  `ui_element_transition` + `observed_ui_affordance` + `demo.json`;
+  `api_field_transition` + `api_state_fact` + `recording.har`. Never mix tuple
+  values. A button observed at one step is explicit UI text; it becomes a UI
+  affordance transition only when exact before/after evidence supports one.
+  A JSON pointer does not replace the mandatory `artifact` field.
 
 ## Important Notes
 

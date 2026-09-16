@@ -351,7 +351,10 @@ async def list_reports():
             "execution_attempts": summary.get("execution_attempts", len(results)),
             "completed_executions": summary.get("completed_executions", 0),
             "pending_execution": summary.get("pending_execution", 0),
+            "process_errors": summary.get("process_errors", 0),
+            "evidence_contract_errors": summary.get("evidence_contract_errors", 0),
             "execution_errors": summary.get("execution_errors", 0),
+            "trace_mismatches": summary.get("trace_mismatches", 0),
             "deduplicated_execution_results": summary.get("deduplicated_execution_results", 0),
         })
 

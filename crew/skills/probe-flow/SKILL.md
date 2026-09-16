@@ -316,7 +316,8 @@ Summary: {N} findings ({K} critical) | {R} rejected | {E} errors
 - **Flow isolation:** Read only from `mutations/{flow-name}/` and write only to `reports/{flow-name}/`.
 
 ## Required verification contract (supersedes legacy outcome examples above)
-Read `crew/skills/probe-flow/VERIFICATION.md` before probing.
+Read `crew/skills/probe-flow/EXECUTION.md` and
+`crew/skills/probe-flow/VERIFICATION.md` before probing.
 Never classify a vulnerability or a successful defense from HTTP status alone.
 Legacy BUG_FOUND labels and automatic auth Critical instructions do not bypass
 backend verification. A token response alone is not proof of usable access.

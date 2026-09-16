@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from backend.runtime.crew_runner import (
+    ArtifactWatcher,
+    ProbeContractError,
     _cross_flow_artifact_events,
     _cross_flow_final_message,
     run_crew,
@@ -65,6 +67,9 @@ class RunModeProgressTests(unittest.IsolatedAsyncioTestCase):
             'completed_executions': 6,
             'execution_attempts': 6,
             'execution_errors': 0,
+            'process_errors': 0,
+            'evidence_contract_errors': 0,
+            'trace_mismatches': 0,
             'partial_coverage': 2,
             'excluded_setup_executions': 1,
             'deduplicated_primary_chains': 0,
@@ -77,7 +82,8 @@ class RunModeProgressTests(unittest.IsolatedAsyncioTestCase):
             'Partial coverage: 2 supplementary scenarios. '
             'Excluded setup-path executions: 1. '
             'Probes: 6/6 authenticated terminal receipts from 6 attempts; '
-            '0 execution errors. Primary execution results: 2 need review, '
+            '0 process errors, 0 evidence-contract errors, 0 trace mismatches. '
+            'Primary execution results: 2 need review, '
             '4 not reproduced. Deduplicated primary chains: 0. '
             'Total duration: 12.3s.',
         )
@@ -106,29 +112,60 @@ class ProbeProgressTests(unittest.IsolatedAsyncioTestCase):
         return {
             'execution_id': 'receipt-1', 'exit_code': 0,
             'parsed_result': {'outcome': 'NOT_REPRODUCED'},
+            'contract_validation': {'version': 1, 'status': 'valid', 'category': None, 'error': None},
         }
 
     async def test_recorded_flow_probe_message_remains_unchanged(self):
         messages = []
-        with patch('backend.runtime.probe_executor.execute', AsyncMock(return_value=self._receipt())):
+        with patch('backend.runtime.probe_executor.execute', AsyncMock(return_value=self._receipt())), patch(
+                'backend.runtime.probe_executor.validate_probe_output', return_value=self._receipt()['contract_validation']):
             await execute_run(self.run, 'cross-flow-test', self.root, messages.append)
         self.assertEqual(messages, ['Executing 001_cancel_then_refund.py with transport capture'])
 
     async def test_cross_flow_probe_uses_readable_name_and_actual_terminal_count(self):
         events = []
-        with patch('backend.runtime.probe_executor.execute', AsyncMock(return_value=self._receipt())):
+        with patch('backend.runtime.probe_executor.execute', AsyncMock(return_value=self._receipt())), patch(
+                'backend.runtime.probe_executor.validate_probe_output', return_value=self._receipt()['contract_validation']):
             await execute_run(
                 self.run, 'cross-flow-test', self.root, lambda message: None,
                 execution_progress=events.append,
             )
         self.assertEqual(events[0]['message'], 'Executing probe 1/1: Cancel then refund')
         self.assertRegex(events[1]['message'], r'^Probe 1/1 completed: Cancel then refund \(\d+\.\d+s\)$')
-        self.assertEqual(
-            events[-1]['message'],
-            'Execution complete: 1/1 probes completed; 1 execution attempt; 0 errors',
-        )
+        self.assertEqual(events[-1]['message'],
+            'Execution complete: 1/1 probes attempted; 1 authenticated terminal receipt; '
+            '0 process errors; 0 evidence-contract errors; 0 trace mismatches; 0 pending')
         self.assertNotIn('.py', events[0]['message'])
         self.assertIn('001_cancel_then_refund.py', events[0]['technical_detail'])
+
+    async def test_evidence_contract_failure_stops_before_remaining_probe(self):
+        second = self.run / 'mutations' / 'cross-flow-test' / '002_second.py'
+        second.write_text('print("unused")', encoding='utf-8')
+        invalid = {'version': 1, 'status': 'invalid',
+                   'category': 'evidence_contract_error',
+                   'error': 'Probe output contract error: invariant missing'}
+        receipt = {**self._receipt(), 'contract_validation': invalid}
+        events = []
+        mocked = AsyncMock(return_value=receipt)
+        with patch('backend.runtime.probe_executor.execute', mocked), patch(
+                'backend.runtime.probe_executor.validate_probe_output', return_value=invalid):
+            await execute_run(self.run, 'cross-flow-test', self.root,
+                              lambda message: None, execution_progress=events.append)
+        self.assertEqual(mocked.await_count, 1)
+        self.assertIn('evidence validation failed', events[1]['message'])
+        self.assertEqual(events[-1]['message'],
+            'Execution stopped: 1/2 probes attempted; 1 authenticated terminal receipt; '
+            '0 process errors; 1 evidence-contract errors; 0 trace mismatches; 1 pending')
+
+    def test_artifact_gate_rejects_literal_missing_invariant(self):
+        broken = "verification = {'predicate': 'business_rule_must_hold'}\n"
+        for path in (self.run / 'mutations' / 'cross-flow-test').glob('*.py'):
+            path.write_text(broken, encoding='utf-8')
+        for index in (2, 3):
+            (self.run / 'mutations' / 'cross-flow-test' / f'00{index}_broken.py').write_text(
+                broken, encoding='utf-8')
+        with self.assertRaisesRegex(ProbeContractError, 'requires a supported executable invariant'):
+            ArtifactWatcher(self.run, 'cross-flow-test').check()
 
 
 if __name__ == '__main__':

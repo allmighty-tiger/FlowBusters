@@ -248,22 +248,32 @@ def validate_observed_ui_rule(rule, source_run, artifact_dir):
     _require(isinstance(facts, list) and facts, 'Observed UI rule needs directly sourced facts')
     ids = []
     for fact in facts:
-        _require(isinstance(fact, dict), 'Rule fact must be an object')
-        fact_id, fact_type = fact.get('id'), fact.get('type')
-        _require(bool(_FACT_ID.fullmatch(str(fact_id or ''))), 'Rule fact id is invalid')
-        _require(str(fact_id).startswith(rule['id'] + '-F'),
-                 'Rule fact id must be namespaced by its rule id')
-        _require(fact_id not in ids, 'Rule fact ids must be unique')
-        _require(fact_type in _FACT_PROVENANCE, 'Unsupported rule fact type')
-        _require(fact.get('provenance_type') == _FACT_PROVENANCE[fact_type],
-                 'Rule fact provenance type contradicts its fact type')
-        ids.append(fact_id)
-        if fact_type == 'explicit_ui_text':
-            _validate_ui_text(fact, source_run, artifact_dir)
-        elif fact_type == 'ui_element_transition':
-            _validate_ui_transition(fact, source_run, artifact_dir)
-        else:
-            _validate_api_transition(fact, source_run, artifact_dir)
+        fact_id = fact.get('id') if isinstance(fact, dict) else None
+        fact_label = fact_id if isinstance(fact_id, str) and fact_id else '<unknown>'
+        try:
+            _require(isinstance(fact, dict), 'Rule fact must be an object')
+            fact_id, fact_type = fact.get('id'), fact.get('type')
+            _require(bool(_FACT_ID.fullmatch(str(fact_id or ''))), 'Rule fact id is invalid')
+            _require(str(fact_id).startswith(rule['id'] + '-F'),
+                     'Rule fact id must be namespaced by its rule id')
+            _require(fact_id not in ids, 'Rule fact ids must be unique')
+            _require(fact_type in _FACT_PROVENANCE, 'Unsupported rule fact type')
+            expected_provenance = _FACT_PROVENANCE[fact_type]
+            actual_provenance = fact.get('provenance_type')
+            _require(actual_provenance == expected_provenance,
+                     f'{fact_type} requires provenance_type {expected_provenance}; '
+                     f'got {actual_provenance!r}')
+            ids.append(fact_id)
+            if fact_type == 'explicit_ui_text':
+                _validate_ui_text(fact, source_run, artifact_dir)
+            elif fact_type == 'ui_element_transition':
+                _validate_ui_transition(fact, source_run, artifact_dir)
+            else:
+                _validate_api_transition(fact, source_run, artifact_dir)
+        except UIProvenanceError as exc:
+            raise UIProvenanceError(
+                f'Observed UI rule {rule["id"]} fact {fact_label}: {exc}'
+            ) from exc
     _require(any(fact.get('type') in _UI_FACT_TYPES for fact in facts),
              'An observed UI rule must contain at least one raw UI fact')
     inference = rule.get('inference')

@@ -2,17 +2,17 @@
 
 ## What to say first
 
-**Single flow:** “I record one legitimate workflow. The AI proposes abuse cases. The backend runs the probes and verifies the result against captured HTTP evidence.”
+**Single flow:** “I record one legitimate workflow. The AI proposes abuse cases. The backend runs each valid probe and verifies its output against captured HTTP evidence.”
 
 **Cross-flow:** “I combine several recorded workflows. FlowBusters looks for unsafe interactions between actions that were previously tested only in isolation.”
 
-**Trust boundary:** “The AI proposes; the backend executes and decides. A model-written finding is never proof by itself.”
+**Trust boundary:** “The AI proposes; the backend assigns request sequence numbers, captures, authenticates, validates the evidence contract, and decides. A model-written finding is never proof by itself.”
 
 ## What happens after I click Start or Analyze?
 
-**Start Assessment:** FlowBusters opens the authorized target in a Playwright-controlled browser. I perform a normal workflow and finish the recording. The AI models the saved workflow and drafts test scenarios. The backend then executes each probe, captures its HTTP trace, and derives the report verdict.
+**Start Assessment:** FlowBusters opens the authorized target in a Playwright-controlled browser. I perform a normal workflow and finish the recording. The AI models the saved workflow and drafts test scenarios. The backend preflights generated output contracts, executes probes, captures their HTTP traces, and derives the report verdicts. If executed output breaks the evidence contract, its terminal receipt is retained and later probes are not started.
 
-**Analyze selected flows:** I select two to eight compatible source flows. The backend copies and authenticates their evidence. The AI proposes cross-flow conflicts. The backend validates the references, runs the probes, and builds the final normalized report.
+**Analyze selected flows:** I select two to eight compatible source flows. The backend copies and authenticates their evidence. The AI proposes cross-flow conflicts. The backend validates the references and probe contracts, runs the valid probes, and builds the final normalized report.
 
 Progress comes from real backend phases and execution results. Raw filenames and process details stay in the collapsed **Technical details** view.
 
@@ -40,6 +40,8 @@ Northstar is external to this repository. Start it from its own project on port 
 
 - Recording and sampled semantic accessibility snapshots work.
 - Cross-flow probes execute and receive locally signed receipts.
+- New probe output accounts for setup requests with harness-assigned transport
+  sequences; a zero process exit with invalid evidence is not a successful check.
 - The verifier prevents unsupported results from becoming `CONFIRMED`.
 - The normalized report separates security findings, execution results, partial coverage, and excluded fixture executions instead of forcing them into one total.
 - The final verified-UI demo still requires fresh schema-v2 source flows. Existing legacy source maps remain unverified provenance.
@@ -50,18 +52,18 @@ Northstar is external to this repository. Start it from its own project on port 
 |---|---|
 | Workflow interpretation and attack hypotheses | Recording lifecycle and scope enforcement |
 | State maps, application models, candidates, and mutation scripts | State-map, candidate, and provenance validation |
-| Draft findings, explanations, and remediation suggestions | Probe execution, independent HTTP capture, receipt signing, invariant evaluation, verdicts, deduplication, and counts |
+| Draft findings, explanations, and remediation suggestions | Probe execution, independent HTTP capture, receipt signing, controlled requirement matching, invariant evaluation, verdicts, deduplication, and counts |
 
 The HMAC is a local pipeline-integrity check. It is not external attestation and does not defend against an operator who controls both the run artifacts and the local signing key.
 
 ## What does the final report prove?
 
-- `CONFIRMED`: authenticated execution violated a supported invariant and has acceptable business-rule provenance.
+- `CONFIRMED`: authenticated execution violated a supported invariant, the predicate actually expresses the claim, and the rule has an accepted user/specification source or an exact backend-controlled requirement match.
 - `NOT_REPRODUCED`: the authenticated scenario completed, but the evaluated invariant held. This is not a universal safety claim.
 - `NEEDS_REVIEW`: the execution or hypothesis is useful, but a required semantic or provenance element is missing.
 - `CHECK_ERROR`: execution or verification could not be completed reliably.
 
-The evidence view shows the ordered signed HTTP trace and the backend-resolved invariant. Setup steps are separated from attack actions. Agent-authored summary numbers cannot override backend-derived counts.
+The evidence view shows the ordered signed HTTP trace and the backend-resolved invariant. Setup steps are separated from attack actions. Proven facts are displayed separately from remediation recommendations. Agent-authored summary numbers cannot override backend-derived counts.
 
 If the agent's preserved pre-execution draft still says `NOT_EXECUTED`, an authenticated terminal receipt replaces that stale verification in the normalized in-memory view. The original draft remains preserved for audit. A post-execution claim that contradicts the receipt is still rejected.
 
@@ -71,9 +73,18 @@ The report deliberately uses different units:
 - **Primary execution results** show what every authenticated probe receipt produced before presentation filtering.
 - **Partial coverage** means a supplementary path was captured, but it did not have its own complete trace, invariant, and violation result. It is evidence for follow-up, not a verdict.
 - **Excluded setup-path execution** means the probe tested fixture setup, such as the demo reset endpoint. It stays visible in the execution log but is not counted as attack surface.
-- **Probe accounting** reports planned probes, attempts, authenticated receipts, pending probes, and errors independently of finding counts.
+- **Probe accounting** reports planned probes, attempts, authenticated terminal
+  receipts, pending probes, process errors, evidence-contract errors, and signed
+  trace mismatches independently of finding counts.
 
 That is why the number of execution results can differ from the number of security findings without any receipt disappearing.
+
+Equivalent findings are collapsed only when their authenticated state-changing
+request chain and evaluated invariant match. A different CWE, severity, title,
+or claimed scheduling mode does not create a second vulnerability. The extra
+receipt remains visible as deduplicated evidence for the canonical finding.
+The displayed verdict explanation is generated from the backend-evaluated
+invariant; free-form probe prose cannot promote a concurrency or impact claim.
 
 ## Northstar narration
 
@@ -85,15 +96,28 @@ That is why the number of execution results can differ from the number of securi
 
 “The probe executed and the report shows its authenticated HTTP evidence. The backend did not promote the result to confirmed because the report identifies a missing requirement, such as verified business-rule provenance. This is a reviewable hypothesis, not a proven vulnerability.”
 
+For UI-derived arithmetic claims: “The UI evidence can prove which controls were visible. It does not by itself prove a payout ceiling. Until an accepted user/specification source or an exact backend-controlled requirement supplies that rule, the measured violation remains `NEEDS_REVIEW`.”
+
+For the refund reanalysis: “Northstar requirement `NSM-RETURN-CAP-2026-09-16` was explicitly asserted on September 16, 2026, after the probe had already run. Its backend registry entry allowlists only `northstar-refund-v4-reanalysis`; the backend also checks the exact origin and invariant. It applies the rule retrospectively to unchanged signed evidence without claiming that the rule existed before execution.”
+
+For client-input tampering: “The signed trace shows the submitted value, the action response, and the final state. A final-state sum can show that accounting stayed bounded, but it cannot prove whether the server trusted, clamped, ignored, or recomputed that input. That claim remains `NEEDS_REVIEW` unless an executable request-to-expected-state predicate covers it.”
+
 ## Six likely technical questions
 
 ### 1. “Why should I trust the finding if an LLM wrote the test?”
 
 Do not trust the LLM claim by itself. The backend snapshots the script, independently captures supported HTTP transports, signs the receipt, and requires the report evidence to match it.
 
+Setup and reset requests receive sequence numbers too. Generated probes copy
+the sequence assigned by the harness instead of maintaining a second counter.
+A missing invariant or malformed sequence is an evidence-contract error; a
+crashed or timed-out process is a separate process error.
+
 ### 2. “Can the model invent a UI rule or set `validated: true`?”
 
 It can emit text, but that flag has no authority. Verified UI provenance must resolve exact structured facts to the copied raw semantic timeline.
+
+The model also cannot create a trusted business requirement by writing a run ID, link, sentence, or `validated` flag. The backend derives the run ID from the canonical report path and requires that exact ID to be allowlisted in the reviewed registry, in addition to matching the origin and executable predicate. Missing or substituted path context fails closed.
 
 ### 3. “Does HTTP 200 mean the attack worked?”
 
@@ -117,7 +141,8 @@ Both authenticated receipts stay in the execution log. One is the reviewable sec
 - Recording and semantic snapshots: [`backend/runtime/recorder.py` — `record`, `compact_snapshot`, `add_ui_state`, `check_scope`](../backend/runtime/recorder.py)
 - Cross-flow source preparation and candidates: [`backend/runtime/application_model.py` — `collect`, `prepare_inputs`, `validate_cross_flow_candidates`](../backend/runtime/application_model.py)
 - State-map and UI provenance validation: [`backend/runtime/ui_provenance.py` — `validate_state_map`, `normalize_observed_ui_rules`, `validate_rule_reference`](../backend/runtime/ui_provenance.py)
-- Probe execution, receipt precedence, partial coverage, trace verification, and counts: [`backend/runtime/probe_executor.py` — `key_for`, `execute`, `load_receipts`, `_is_stale_unexecuted_draft`, `_partial_coverage_for`, `trace_error`, `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/probe_capture.py` — `main`](../backend/runtime/probe_capture.py)
+- Controlled business requirements: [`backend/runtime/business_requirements.json`](../backend/runtime/business_requirements.json); [`backend/runtime/business_requirements.py` — `load_business_requirements`, `apply_backend_requirements`](../backend/runtime/business_requirements.py); [`backend/runtime/verification.py` — `load_report`, `_classify_business_rule`](../backend/runtime/verification.py)
+- Probe execution, output-contract validation, receipt precedence, partial coverage, trace verification, and counts: [`backend/runtime/probe_executor.py` — `key_for`, `preflight_script_contract`, `execute`, `validate_probe_output`, `load_receipts`, `_is_stale_unexecuted_draft`, `_partial_coverage_for`, `trace_error`, `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/probe_capture.py` — `main`](../backend/runtime/probe_capture.py)
 - Atomic verdict normalization, setup exclusion, and deduplication: [`backend/runtime/verification.py` — `load_report`, `_is_setup_path_centered`, `_dedup_key`, `_collapse_duplicate_findings`, `classify`, `_classify_business_rule`, `normalize_report`](../backend/runtime/verification.py)
 - Cross-flow final count wording: [`backend/runtime/crew_runner.py` — `_cross_flow_final_message`](../backend/runtime/crew_runner.py)
 - Evidence rendering: [`frontend/src/components/ReportView.tsx` — `invariantFor`, `traceViews`, `ReportView`](../frontend/src/components/ReportView.tsx)

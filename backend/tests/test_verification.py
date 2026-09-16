@@ -72,8 +72,24 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(old['findings'][0]['verification_status'],'NEEDS_REVIEW')
 
     def test_business_rule_with_complete_state_evidence(self):
-        self.assertEqual(classify(self.business_rule())[0], 'CONFIRMED')
-        self.assertEqual(classify(self.business_rule(False))[0], 'NOT_REPRODUCED')
+        positive_status, positive_reason = classify(self.business_rule())
+        negative_status, negative_reason = classify(self.business_rule(False))
+        self.assertEqual(positive_status, 'CONFIRMED')
+        self.assertEqual(negative_status, 'NOT_REPRODUCED')
+        self.assertEqual(positive_reason,
+                         'The captured final state violated the backend-evaluated invariant.')
+        self.assertEqual(negative_reason,
+                         'The captured final state did not violate the backend-evaluated invariant.')
+
+    def test_agent_description_cannot_add_race_claim_to_normalized_verdict(self):
+        record = self.business_rule()
+        record['verification']['violation']['description'] = (
+            'Critical race condition was exploited concurrently.'
+        )
+        status, reason = classify(record)
+        self.assertEqual(status, 'CONFIRMED')
+        self.assertNotIn('race', reason.lower())
+        self.assertNotIn('concurrent', reason.lower())
 
     def test_business_rule_requires_complete_evidence(self):
         record = self.business_rule()
@@ -102,11 +118,47 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(status, 'NEEDS_REVIEW')
         self.assertIn('did not validate', reason)
 
-    def test_validated_observed_ui_can_confirm_positive_invariant(self):
+    def test_validated_observed_ui_facts_do_not_bind_an_arithmetic_rule(self):
         record = self.business_rule(True)
         record['verification']['rule'] = {'source': 'observed_ui', 'provenance': {}}
         record['_rule_provenance_valid'] = True
-        self.assertEqual(classify(record)[0], 'CONFIRMED')
+        status, reason = classify(record)
+        self.assertEqual(status, 'NEEDS_REVIEW')
+        self.assertIn('does not bind those facts to this arithmetic invariant', reason)
+        self.assertIn('UI action availability is not evidence', reason)
+
+    def test_price_conservation_invariant_does_not_decide_client_input_trust(self):
+        record = self.business_rule(False)
+        record.update({
+            'title': 'Price adjustment endpoint may trust a client-supplied adjustment amount',
+            'mutation_type': 'PRICING_TAMPER',
+        })
+        state = {'order': {'originalAmount': 100, 'totalReturned': 30,
+                           'priceProtection': {'adjustmentAmount': 30, 'currentPrice': 70}}}
+        record['verification'].update({
+            'rule': {'source': 'agent_inference'},
+            'actions': [{
+                'sequence': 2,
+                'request': {'method': 'POST', 'url': '/api/order/price-adjustment',
+                            'body': {'adjustmentAmount': 999999}},
+                'response': {'actual': deepcopy(state)},
+            }],
+            'after': {'sequence': 3, 'status_code': 200, 'complete': True,
+                      'request': {'method': 'GET', 'url': '/api/order'},
+                      'response': {'actual': deepcopy(state)}},
+            'invariant': {
+                'operator': 'sum_lte',
+                'terms': [['order', 'priceProtection', 'adjustmentAmount'],
+                          ['order', 'priceProtection', 'currentPrice']],
+                'limit': ['order', 'originalAmount'],
+            },
+        })
+        status, reason = classify(record)
+        self.assertEqual(status, 'NEEDS_REVIEW')
+        self.assertIn('adjustmentAmount=999999', reason)
+        self.assertIn('action response recorded adjustmentAmount=30', reason)
+        self.assertIn('final state recorded adjustmentAmount=30', reason)
+        self.assertIn('cannot determine whether the server trusted', reason)
 
     def test_incomplete_negative_evidence_does_not_bypass_validation(self):
         record = self.business_rule(False)
@@ -187,6 +239,79 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(kept['deduplicated_from'], ['F-002'])
         self.assertIn('F-003', [f['id'] for f in normalized['findings']])
         self.assertEqual(normalized['summary']['deduplicated_primary_chains'], 1)
+
+    def test_authenticated_state_changing_chain_deduplicates_across_draft_labels(self):
+        invariant = {
+            'operator': 'sum_lte',
+            'terms': [['order', 'cancellation', 'reimbursementAmount'],
+                      ['order', 'refund', 'completedAmount']],
+            'limit': ['order', 'originalAmount'],
+        }
+
+        def capture(method, path, body=None):
+            return {'request': {'method': method, 'url': f'http://h{path}', 'body': body}}
+
+        def finding(identifier, observed, trace, action_mode, cwe, severity):
+            record = self.business_rule(observed)
+            record.update({'id': identifier, 'source': 'MUTATION_SCRIPT',
+                           'script': f'{identifier}.py', 'url_tested': 'http://h/api/order',
+                           'cwe': cwe, 'severity': severity, 'execution_trace': trace})
+            if action_mode == 'last_only':
+                record['verification']['actions'] = [record['verification']['actions'][-1]]
+            record['verification']['invariant'] = deepcopy(invariant)
+            return record
+
+        reset = capture('POST', '/api/demo/reset')
+        request = capture('POST', '/api/order/refund/request')
+        cancel = capture('POST', '/api/order/cancel')
+        complete = capture('POST', '/api/order/refund/complete')
+        read = capture('GET', '/api/order')
+        positive_trace = [reset, request, read, cancel, complete, read]
+        reverse_trace_a = [reset, request, read, complete, cancel, read]
+        reverse_trace_b = [reset, request, complete, read, cancel, read]
+        records = [
+            finding('F-001', True, positive_trace, 'all', ['CWE-841'], 'High'),
+            finding('F-003', True, positive_trace, 'all', ['CWE-362', 'CWE-841'], 'Critical'),
+            finding('F-002', False, reverse_trace_a, 'all', ['CWE-841'], 'High'),
+            finding('F-008', False, reverse_trace_b, 'last_only', ['CWE-841'], 'High'),
+        ]
+        results = [{
+            'script': record['script'], 'finding_id': record['id'],
+            'outcome': 'CONFIRMED' if record['verification']['violation']['observed'] else 'NOT_REPRODUCED',
+            'verification': deepcopy(record['verification']),
+        } for record in records]
+        normalized = normalize_report({
+            'findings': records, 'results': results,
+            '_setup_paths': ['/api/demo/reset'],
+        })
+        self.assertEqual([record['id'] for record in normalized['findings']], ['F-001', 'F-002'])
+        self.assertEqual(normalized['findings'][0]['deduplicated_from'], ['F-003'])
+        self.assertEqual(normalized['findings'][1]['deduplicated_from'], ['F-008'])
+        self.assertEqual(normalized['summary']['deduplicated_primary_chains'], 2)
+        self.assertEqual(normalized['summary']['deduplicated_execution_results'], 2)
+        by_finding = {result['finding_id']: result for result in normalized['results']}
+        self.assertEqual(by_finding['F-003']['deduplicated_into'], 'F-001')
+        self.assertEqual(by_finding['F-008']['deduplicated_into'], 'F-002')
+        self.assertNotIn('race-condition', by_finding['F-003']['verification_reason'].lower())
+        self.assertIn('does not independently establish concurrent execution',
+                      by_finding['F-003']['verification_reason'])
+
+    def test_different_authenticated_state_changing_chains_do_not_deduplicate(self):
+        invariant = {'operator': 'sum_lte', 'terms': [['order', 'totalReturned']],
+                     'limit': ['order', 'originalAmount']}
+        first = self.business_rule(False)
+        second = self.business_rule(False)
+        for identifier, record, path in (
+                ('F-004', first, '/api/order/refund/complete'),
+                ('F-005', second, '/api/order/refund/request')):
+            record.update({'id': identifier, 'source': 'MUTATION_SCRIPT', 'cwe': ['CWE-841'],
+                           'url_tested': 'http://h/api/order', 'execution_trace': [
+                               {'request': {'method': 'POST', 'url': f'http://h{path}', 'body': None}},
+                           ]})
+            record['verification']['invariant'] = deepcopy(invariant)
+        normalized = normalize_report({'findings': [first, second], 'results': []})
+        self.assertEqual([record['id'] for record in normalized['findings']], ['F-004', 'F-005'])
+        self.assertEqual(normalized['summary']['deduplicated_primary_chains'], 0)
 
     def test_deterministic_finding_not_clobbered_by_llm_evidence(self):
         # Regression: a STATE_LOCK_PROBE finding whose ID matched an LLM crew

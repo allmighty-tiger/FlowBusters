@@ -35,6 +35,10 @@ from backend.runtime.ui_provenance import UIProvenanceError, validate_state_map
 
 logger = logging.getLogger("flowbusters.crew_runner")
 
+
+class ProbeContractError(ValueError):
+    """A generated probe has a statically detectable output-contract defect."""
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 @dataclass
@@ -52,6 +56,7 @@ class CrewConfig:
     overall_timeout: int    # overall assessment timeout seconds
     auto_complete: bool = False  # auto-write marker file after browser opens
     cross_flow_inputs: dict | None = None
+    reanalysis_inputs: dict | None = None
 
 
 # ── Working Directory Preparation ─────────────────────────────────────────────
@@ -59,7 +64,11 @@ class CrewConfig:
 def prepare_run_dir(config: CrewConfig, flow_name: str) -> Path:
     """Copy vendored crew files into runs/<flow-name>/ and patch config.json."""
     base = Path(config.run_dir) / "runs" / flow_name
-    base.mkdir(parents=True, exist_ok=True)
+    if config.reanalysis_inputs is not None:
+        base.parent.mkdir(parents=True, exist_ok=True)
+        base.mkdir(exist_ok=False)
+    else:
+        base.mkdir(parents=True, exist_ok=True)
 
     # Only copy files actually read by the crew at runtime.
     # Everything else (templates/, casting/, decisions/, etc.) is dead weight
@@ -177,6 +186,17 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
     for relative in deferred:
         continuation += "\n---\n# " + relative + "\n" + (crew / relative).read_text(encoding="utf-8") + "\n"
     continuation += (
+        "\nBefore writing state_map.json, audit every observed_ui_rules fact "
+        "against this exact, inseparable type/provenance/artifact matrix:\n"
+        "- explicit_ui_text + explicit_visible_ui_text + demo.json\n"
+        "- ui_element_transition + observed_ui_affordance + demo.json\n"
+        "- api_field_transition + api_state_fact + recording.har\n"
+        "A visible element at one sampled step is explicit_ui_text, even when "
+        "it is a button or other affordance. Use ui_element_transition and "
+        "observed_ui_affordance only for an exact supported before/after "
+        "transition. Never mix values between rows. The artifact field is "
+        "required on every fact and may not be inferred from its JSON pointer. "
+        "Re-read the completed file and verify every row before continuing.\n"
         "\nExecute mutation scripts with python3 <script_path>.py <target_url>, "
         "30-second timeout each. HTTP codes alone never establish a verdict. "
         "Apply the verification contract; missing state evidence is NEEDS_REVIEW.\n"
@@ -362,6 +382,11 @@ class ArtifactWatcher:
         if "mutations" not in self.found:
             pys = sorted(self.mutations.glob("*.py")) if self.mutations.exists() else []
             if len(pys) >= 3:
+                from backend.runtime.probe_executor import preflight_script_contract
+                for script in pys:
+                    error = preflight_script_contract(script)
+                    if error:
+                        raise ProbeContractError(f"{script.name}: {error}")
                 self.found["mutations"] = self.mutations
                 new.append(("mutations", self.mutations))
 
@@ -390,6 +415,56 @@ def validate_har(path: Path) -> tuple[bool, str]:
         return False, "HAR 'log.entries' is not an array"
 
     return True, f"Valid HAR 1.2 with {len(log['entries'])} entries"
+
+
+async def prepare_recording_evidence(config, run_dir, mcp_config_arg, env, progress_cb):
+    """Prepare one recording source; reanalysis deliberately never calls Playwright."""
+    if config.cross_flow_inputs is not None:
+        from backend.runtime.application_model import prepare_inputs
+        from backend.runtime.ui_provenance import validate_cross_flow_manifest
+        prepare_inputs(run_dir, config.flow_name, config.cross_flow_inputs, root=config.run_dir)
+        progress_cb(ProgressEvent(Phase.ANALYZE, 'Authenticating source evidence', done=False))
+        validate_cross_flow_manifest(run_dir, root=config.run_dir)
+        (run_dir / 'recording_done.marker').write_text('cross-flow snapshots ready', encoding='utf-8')
+        progress_cb(ProgressEvent(
+            Phase.ANALYZE,
+            'Source evidence authenticated',
+            done=False,
+            technical_detail='Cross-flow evidence manifest validated',
+        ))
+        return
+    if config.reanalysis_inputs is not None:
+        from backend.runtime.reanalyze import prepare_reanalysis_inputs
+        prepare_reanalysis_inputs(
+            run_dir, config.flow_name, config.reanalysis_inputs, root=config.run_dir)
+        progress_cb(ProgressEvent(
+            Phase.ANALYZE,
+            f'Validated recording copied from {config.reanalysis_inputs["source_run"]}',
+            done=False,
+            technical_detail='recording_source.json authenticated; Playwright was not started',
+        ))
+        return
+    await record(config, run_dir, mcp_config_arg, env,
+                 lambda message: progress_cb(ProgressEvent(Phase.RECORD, message, done=False)))
+
+
+def validate_final_state_map(run_dir, flow_name):
+    """Always revalidate the final on-disk map immediately before probe execution."""
+    path = Path(run_dir) / 'flows' / flow_name / 'state_map.json'
+    try:
+        state_map = json.loads(path.read_text(encoding='utf-8'))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise UIProvenanceError(f'Invalid state_map.json: {exc}') from exc
+    return validate_state_map(state_map, path.parent, flow_name, require_current=True)
+
+
+async def execute_validated_probes(run_dir, flow_name, root, progress,
+                                   execution_progress=None):
+    """The only runner entry used here: state-map validation precedes execution."""
+    validate_final_state_map(run_dir, flow_name)
+    from backend.runtime.probe_executor import execute_run
+    return await execute_run(run_dir, flow_name, root, progress,
+                             execution_progress=execution_progress)
 
 
 def _crew_chrome_pids(temp_home: str) -> list[int]:
@@ -459,6 +534,9 @@ async def run_crew(
     milestones: dict[str, float] = {}
     flow_name = config.flow_name
     cross_flow = config.cross_flow_inputs is not None
+    reanalysis = config.reanalysis_inputs is not None
+    if cross_flow and reanalysis:
+        raise ValueError('Cross-flow and single-flow reanalysis modes are mutually exclusive')
 
     # Prepare working directory
     run_dir = prepare_run_dir(config, flow_name)
@@ -514,31 +592,28 @@ async def run_crew(
     # Recording belongs to the backend, not to a model turn. Do not launch the
     # analyst until MCP has saved and validated the complete recording.
     source_count = len(config.cross_flow_inputs.get('sources', [])) if cross_flow else 0
+    if cross_flow:
+        recording_message = f'Loading {source_count} source flows'
+    elif reanalysis:
+        recording_message = (
+            f'Loading validated recording from {config.reanalysis_inputs["source_run"]}')
+    else:
+        recording_message = 'Opening recording browser...'
     progress_cb(ProgressEvent(
         Phase.RECORD,
-        f'Loading {source_count} source flows' if cross_flow else 'Opening recording browser...',
+        recording_message,
         done=False,
     ))
     try:
-        if cross_flow:
-            from backend.runtime.application_model import prepare_inputs
-            from backend.runtime.ui_provenance import validate_cross_flow_manifest
-            prepare_inputs(run_dir, flow_name, config.cross_flow_inputs, root=config.run_dir)
-            progress_cb(ProgressEvent(Phase.ANALYZE, 'Authenticating source evidence', done=False))
-            validate_cross_flow_manifest(run_dir, root=config.run_dir)
-            (run_dir / 'recording_done.marker').write_text('cross-flow snapshots ready', encoding='utf-8')
-            progress_cb(ProgressEvent(
-                Phase.ANALYZE,
-                'Source evidence authenticated',
-                done=False,
-                technical_detail='Cross-flow evidence manifest validated',
-            ))
-        else:
-            await record(config, run_dir, mcp_config_arg, env,
-                lambda message: progress_cb(ProgressEvent(Phase.RECORD, message, done=False)))
+        await prepare_recording_evidence(
+            config, run_dir, mcp_config_arg, env, progress_cb)
     except (RecordingError, OSError, ValueError, asyncio.TimeoutError) as exc:
-        message = (f'Cross-flow source evidence failed: {exc}' if cross_flow
-                   else f'Recording failed: {exc}')
+        if cross_flow:
+            message = f'Cross-flow source evidence failed: {exc}'
+        elif reanalysis:
+            message = f'Reanalysis source evidence failed: {exc}'
+        else:
+            message = f'Recording failed: {exc}'
         progress_cb(ProgressEvent(Phase.FAILED, message, done=True, error=message))
         shutil.rmtree(temp_home, ignore_errors=True)
         return {'error': message, 'run_dir': str(run_dir), 'exit_code': -1,
@@ -554,6 +629,14 @@ async def run_crew(
     if config.cross_flow_inputs is not None:
         from backend.runtime.application_model import CROSS_FLOW_INSTRUCTIONS
         system_prompt += CROSS_FLOW_INSTRUCTIONS.replace('{flow}', flow_name)
+    elif reanalysis:
+        system_prompt += (
+            '\nMODE: SINGLE_FLOW_REANALYSIS. The backend copied and authenticated '
+            f'recording evidence from source run {config.reanalysis_inputs["source_run"]} '
+            f'into new run {flow_name}. Do not read or modify the source run. Treat the '
+            'copied demo.json and recording.har as this destination run\'s immutable raw '
+            f'evidence. Every new state_map flow_name and fact source_run must be {flow_name}. '
+            'Do not copy or reuse any source state map, draft, mutation, report, or receipt.\n')
     system_prompt += '''
 BACKEND EXECUTION CONTRACT (supersedes all earlier probing instructions):
 You prepare mutation scripts and a draft findings.json/remediation.md, then exit.
@@ -708,14 +791,17 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
         while proc.returncode is None:
             try:
                 new_artifacts = watcher.check()
-            except UIProvenanceError as exc:
+            except (UIProvenanceError, ProbeContractError) as exc:
                 new_artifacts = []
                 current_error = str(exc)
                 if current_error != last_state_map_error:
                     last_state_map_error = current_error
+                    label = ("State map" if isinstance(exc, UIProvenanceError)
+                             else "Probe contract")
+                    phase = Phase.ANALYZE if isinstance(exc, UIProvenanceError) else Phase.MUTATE
                     progress_cb(ProgressEvent(
-                        Phase.ANALYZE,
-                        f"State map is not valid yet: {current_error}. Waiting for a corrected file.",
+                        phase,
+                        f"{label} is not valid yet: {current_error}. Waiting for a corrected file.",
                         done=False,
                     ))
             else:
@@ -961,6 +1047,16 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
                 done=False,
             ))
 
+    if not error_msg and reanalysis:
+        from backend.runtime.reanalyze import validate_reanalysis_copy
+        try:
+            validate_reanalysis_copy(
+                run_dir, flow_name, config.reanalysis_inputs, root=config.run_dir)
+        except (OSError, ValueError) as exc:
+            error_msg = f'Reanalysis evidence validation failed: {exc}'
+            progress_cb(ProgressEvent(
+                Phase.FAILED, error_msg, done=True, error=error_msg))
+
     # Cross-flow hypotheses are gated before any backend-owned script executes.
     if not error_msg and config.cross_flow_inputs is not None:
         from backend.runtime.application_model import validate_cross_flow_candidates
@@ -985,7 +1081,6 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
     # Optional deterministic business-logic coverage guarantee, OFF by default.
     execution_summary_detail = None
     if not error_msg:
-        from backend.runtime.probe_executor import execute_run
         try:
             execution_progress = None
             if cross_flow:
@@ -1010,12 +1105,15 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
                         technical_detail=detail.get('technical_detail'),
                     ))
 
-            await execute_run(run_dir, flow_name, config.run_dir,
+            await execute_validated_probes(run_dir, flow_name, config.run_dir,
                 lambda message: progress_cb(ProgressEvent(Phase.PROBE, message, done=False)),
                 execution_progress=execution_progress)
             if not cross_flow:
                 progress_cb(ProgressEvent(Phase.PROBE, 'Execution receipts saved', done=True))
                 progress_cb(ProgressEvent(Phase.REPORT, 'Checking report provenance and invariant evidence', done=False))
+        except UIProvenanceError as exc:
+            error_msg = f'State-map validation failed: {exc}'
+            progress_cb(ProgressEvent(Phase.FAILED, error_msg, done=True, error=error_msg))
         except Exception as exc:
             error_msg = f'Backend probe execution failed: {exc}'
             progress_cb(ProgressEvent(Phase.FAILED, error_msg, done=True, error=error_msg))
@@ -1169,7 +1267,9 @@ def _cross_flow_final_message(summary: dict, duration: float) -> str:
     planned = int(summary.get('planned_executions', 0) or 0)
     completed = int(summary.get('completed_executions', 0) or 0)
     attempts = int(summary.get('execution_attempts', 0) or 0)
-    execution_errors = int(summary.get('execution_errors', 0) or 0)
+    process_errors = int(summary.get('process_errors', 0) or 0)
+    contract_errors = int(summary.get('evidence_contract_errors', 0) or 0)
+    trace_mismatches = int(summary.get('trace_mismatches', 0) or 0)
     result_counts = summary.get('execution_result_counts') or {}
     partial = int(summary.get('partial_coverage', 0) or 0)
     excluded = int(summary.get('excluded_setup_executions', 0) or 0)
@@ -1184,7 +1284,8 @@ def _cross_flow_final_message(summary: dict, duration: float) -> str:
         f"Partial coverage: {partial} supplementary scenarios. "
         f"Excluded setup-path executions: {excluded}. "
         f"Probes: {completed}/{planned} authenticated terminal receipts from "
-        f"{attempts} attempts; {execution_errors} execution errors. "
+        f"{attempts} attempts; {process_errors} process errors, "
+        f"{contract_errors} evidence-contract errors, {trace_mismatches} trace mismatches. "
         f"Primary execution results: {int(result_counts.get('needs_review', 0) or 0)} need review, "
         f"{int(result_counts.get('not_reproduced', 0) or 0)} not reproduced. "
         f"Deduplicated primary chains: {deduplicated}."

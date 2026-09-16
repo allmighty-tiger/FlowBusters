@@ -57,13 +57,14 @@ async def run_flowbusters(
     headless: bool = True,
     auto_complete: bool = False,
     cross_flow_inputs: dict | None = None,
+    reanalysis_inputs: dict | None = None,
 ) -> dict:
     """
     Execute the full FlowBusters pipeline via Claude Code crew subprocess.
 
     All arguments from the V1 interface are accepted for compatibility.
-    `headless` and `auto_complete` are acknowledged but the RECORD phase
-    is always user-driven (headed browser + marker file handshake).
+    `headless` and `auto_complete` are acknowledged for new recordings.
+    Reanalysis supplies already validated recording evidence and skips RECORD.
     """
     from backend.runtime.crew_runner import CrewConfig, run_crew
 
@@ -98,6 +99,7 @@ async def run_flowbusters(
         overall_timeout=overall_timeout,
         auto_complete=auto_complete,
         cross_flow_inputs=cross_flow_inputs,
+        reanalysis_inputs=reanalysis_inputs,
     )
 
     result = await run_crew(config, mode_cb)

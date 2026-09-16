@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "requirements": [
+    {
+      "id": "NSM-RETURN-CAP-2026-09-16",
+      "product": "Northstar Market",
+      "authority": "user_asserted_requirement",
+      "controlled_by": "backend_registry",
+      "asserted_on": "2026-09-16",
+      "effective_from": "2026-09-16",
+      "target_origins": [
+        "http://localhost:3000"
+      ],
+      "allowed_run_ids": [
+        "northstar-refund-v4-reanalysis"
+      ],
+      "statement": "Combined cancellation reimbursement and completed refund compensation must not exceed the order originalAmount.",
+      "predicate": {
+        "operator": "sum_lte",
+        "terms": [
+          ["order", "cancellation", "reimbursementAmount"],
+          ["order", "refund", "completedAmount"]
+        ],
+        "limit": ["order", "originalAmount"]
+      },
+      "application_mode": "retrospective_evidence_evaluation",
+      "assertion_context": "Asserted on 2026-09-16 after northstar-refund-v4-reanalysis executed. This record does not claim that the requirement existed before that run. It authorizes evaluating the run's preserved signed evidence against the requirement as of the assertion date."
+    }
+  ]
+}

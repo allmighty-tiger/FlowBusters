@@ -134,11 +134,22 @@ def load_report(path):
         for result in data.get('results', []):
             if result.get('finding_id') == fid:
                 result['verification'] = deepcopy(capture['verification'])
+    from backend.runtime.business_requirements import (
+        apply_backend_requirements,
+        trusted_report_run_id,
+    )
     from backend.runtime.probe_executor import reconcile
     # Production reports are gated using backend-signed receipts, including
     # legacy reports. Never accept provenance flags stored in agent JSON.
     root = next((parent.parent for parent in path.parents if parent.name == 'runs'), path.parent)
-    return normalize_report(reconcile(data, path.parent, root))
+    reconciled = reconcile(data, path.parent, root)
+    trusted_run_id = trusted_report_run_id(path)
+    apply_backend_requirements(reconciled, trusted_run_id=trusted_run_id)
+    if trusted_run_id:
+        reconciled['normalized_run_id'] = trusted_run_id
+    else:
+        reconciled.pop('normalized_run_id', None)
+    return normalize_report(reconciled)
 
 
 def _is_setup_path_centered(finding, setup_paths):
@@ -337,6 +348,10 @@ def classify(record, linked_results=()):
         return 'NEEDS_REVIEW', 'Not-executed status lacks a missing precondition.'
     if isinstance(v, dict) and v.get('predicate') == 'business_rule_must_hold':
         return _classify_business_rule(record, v)
+    if isinstance(v, dict) and v.get('predicate') == 'unsupported_business_rule':
+        reason = str(v.get('unsupported_reason') or '').strip()
+        return ('NEEDS_REVIEW', 'Unsupported business-rule predicate: ' + reason
+                if reason else 'Unsupported business-rule predicate lacks an explanation.')
     if not isinstance(v, dict):
         outcome = str(record.get('original_outcome') or record.get('outcome') or '').upper()
         if outcome in ('ERROR', 'CHECK_ERROR'):
@@ -411,27 +426,133 @@ def _classify_business_rule(record, verification):
     description = str(violation.get('description') or '').strip()
     if not description:
         return 'NEEDS_REVIEW', 'The observed invariant result needs a concrete description.'
+    coverage_reason = _claim_coverage_error(record, verification)
+    if coverage_reason:
+        return 'NEEDS_REVIEW', coverage_reason
+    # The description is an agent/script-authored contract field. It must be
+    # present, but it cannot add unverified scheduling, causality, or impact
+    # claims to the normalized verdict. The backend-owned view describes only
+    # the invariant result that trace_error independently recomputed.
+    evaluated_reason = (
+        'The captured final state violated the backend-evaluated invariant.'
+        if violation['observed'] else
+        'The captured final state did not violate the backend-evaluated invariant.'
+    )
     # A complete authenticated negative execution is conclusive about this
     # attempted scenario even when the proposed rule came from weak analysis.
     # Rule provenance gates promotion of a violation, not recognition that the
     # control held and the invariant remained within bounds.
     if not violation['observed']:
-        return 'NOT_REPRODUCED', description
+        return 'NOT_REPRODUCED', evaluated_reason
+    requirement = record.get('backend_requirement')
+    if record.get('_backend_requirement_valid') is True and isinstance(requirement, dict):
+        return ('CONFIRMED',
+                f"Backend-controlled requirement {requirement.get('id')} for "
+                f"{requirement.get('product')} was asserted on {requirement.get('asserted_on')} "
+                "and is being applied retrospectively to preserved signed evidence. "
+                f"{requirement.get('assertion_context')} The captured final state violated "
+                "its exact executable invariant.")
     rule = verification.get('rule')
     if not isinstance(rule, dict):
         return 'NEEDS_REVIEW', 'The business rule needs verified provenance.'
     source = rule.get('source')
     if source in ('user', 'specification') and str(rule.get('reference') or '').strip():
-        return 'CONFIRMED', description
+        return 'CONFIRMED', evaluated_reason
     if source == 'observed_ui':
         if record.get('_rule_provenance_valid') is True:
-            return 'CONFIRMED', description
+            # Schema v1 authenticates raw UI/API facts and keeps inference
+            # separate, but it has no machine-verifiable binding from those
+            # facts to an arithmetic sum_lte rule. An affordance can motivate a
+            # probe; it cannot establish a financial limit.
+            return ('NEEDS_REVIEW',
+                    'The structured observed-UI provenance validates its cited raw facts, '
+                    'but schema v1 does not bind those facts to this arithmetic invariant. '
+                    'UI action availability is not evidence that combined compensation must '
+                    'not exceed originalAmount; an explicit user/specification rule or a '
+                    'future structured executable-rule binding is required.')
         detail = str(record.get('_rule_provenance_error') or '').strip()
         reason = 'Observed-UI rule provenance did not validate against immutable source artifacts.'
         return 'NEEDS_REVIEW', reason + (f' {detail}' if detail else '')
     if source in ('api_state', 'agent_inference'):
         return 'NEEDS_REVIEW', 'API state and agent inference cannot serve as observed-UI business-rule provenance.'
     return 'NEEDS_REVIEW', 'The business rule needs a user, specification, or validated observed-UI reference.'
+
+
+def _capture_response_body(capture):
+    if not isinstance(capture, dict):
+        return None
+    value = capture.get('response')
+    if isinstance(value, dict) and set(value) == {'actual'}:
+        return value['actual']
+    if isinstance(value, dict) and 'status_code' in value and 'body' in value:
+        value = value['body']
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except ValueError:
+                return value
+    return value
+
+
+def _exact_value(value, path):
+    for part in path:
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _claim_coverage_error(record, verification):
+    """Reject a supported invariant when it does not express the stated claim.
+
+    ``sum_lte`` can evaluate a final-state bound. It cannot establish whether a
+    server trusted, ignored, clamped, or recomputed an attacker-controlled
+    request field. Preserve the useful signed request/response observation, but
+    keep that input-trust hypothesis reviewable until a predicate explicitly
+    relates the request value to independently derived expected state.
+    """
+    title = str(record.get('title') or '').lower()
+    mutation = str(record.get('mutation_type') or '').upper()
+    if mutation != 'PRICING_TAMPER' and not (
+            ('client-supplied' in title or 'client supplied' in title)
+            and ('trust' in title or 'tamper' in title)):
+        return None
+    invariant = verification.get('invariant')
+    if not isinstance(invariant, dict) or invariant.get('operator') != 'sum_lte':
+        return None
+    actions = verification.get('actions')
+    if not isinstance(actions, list):
+        actions = []
+    request_fields = []
+    for action in actions:
+        request = action.get('request') if isinstance(action, dict) else None
+        body = request.get('body') if isinstance(request, dict) else None
+        if isinstance(body, dict):
+            request_fields.extend((key, value) for key, value in body.items()
+                                  if isinstance(key, str) and type(value) in (int, float))
+    term_paths = invariant.get('terms')
+    if not request_fields or not isinstance(term_paths, list):
+        return None
+    after_body = _capture_response_body(verification.get('after'))
+    for field, supplied in request_fields:
+        matching = [path for path in term_paths
+                    if isinstance(path, list) and path and path[-1] == field]
+        if not matching:
+            continue
+        final_value = _exact_value(after_body, matching[0])
+        action_value = None
+        for action in reversed(actions):
+            candidate = _exact_value(_capture_response_body(action), matching[0])
+            if candidate is not None:
+                action_value = candidate
+                break
+        observed = (f'The signed request supplied {field}={supplied}; the action response recorded '
+                    f'{field}={action_value}, and the final state recorded {field}={final_value}. ')
+        return (observed + 'These are authenticated observations, but sum_lte evaluates only a '
+                'final-state bound and cannot determine whether the server trusted, clamped, '
+                'ignored, or recomputed the client value. The input-trust claim needs a '
+                'request-to-expected-state predicate and remains reviewable.')
+    return None
 
 
 def _resource_path(value):
@@ -453,53 +574,64 @@ def _resource_path(value):
     return path or None
 
 
-def _dedup_key(finding):
-    """Identify an equivalent executed chain and invariant.
+def _dedup_key(finding, setup_paths=()):
+    """Identify one equivalent executed state-changing chain and invariant.
 
-    CWE, resource, or similar prose is never sufficient: separate request bodies,
-    action ordering, or evaluated invariants represent distinct checks.
+    The signed transport trace is authoritative when present.  Read placement,
+    CWE, severity, resource, title, and the agent's setup/action grouping do not
+    create a second security check.  Request order, endpoint, body, or invariant
+    differences do.
     """
-    cwes = finding.get('cwe')
-    if not isinstance(cwes, list) or not cwes:
-        return None
-    v = finding.get('verification')
-    resource = _resource_path(v['before'].get('resource_id')) \
-        if (isinstance(v, dict) and isinstance(v.get('before'), dict)) else None
-    if not resource:
-        resource = _resource_path(finding.get('url_tested'))
-    if not resource:
-        return None
     verification = finding.get('verification')
     if not isinstance(verification, dict):
         return None
-    actions = verification.get('actions')
-    if not isinstance(actions, list):
-        actions = [verification.get('action')] if isinstance(verification.get('action'), dict) else []
-    if not actions or not isinstance(verification.get('invariant'), dict):
+    if not isinstance(verification.get('invariant'), dict):
         return None
+    trace = finding.get('execution_trace')
+    if isinstance(trace, list):
+        captures = trace
+    else:
+        setup = verification.get('setup')
+        actions = verification.get('actions')
+        if not isinstance(actions, list):
+            actions = ([verification.get('action')]
+                       if isinstance(verification.get('action'), dict) else [])
+        captures = [*(setup if isinstance(setup, list) else []), *actions]
+    normalized_setup_paths = {
+        urlsplit(str(path)).path.rstrip('/') or '/'
+        for path in setup_paths if path
+    }
     action_chain = []
-    for capture in actions:
+    for capture in captures:
         if not isinstance(capture, dict) or not isinstance(capture.get('request'), dict):
             return None
         request = capture['request']
+        method = str(request.get('method') or '').upper()
+        if method in ('GET', 'HEAD', 'OPTIONS'):
+            continue
+        path = urlsplit(str(request.get('url') or '')).path.rstrip('/') or '/'
+        if path in normalized_setup_paths:
+            continue
         action_chain.append((
-            str(request.get('method') or '').upper(),
-            _resource_path(request.get('url')) or str(request.get('url') or ''),
+            method,
+            path,
             json.dumps(request.get('body'), sort_keys=True, separators=(',', ':'), default=str),
         ))
+    if not action_chain:
+        return None
     invariant = json.dumps(verification['invariant'], sort_keys=True,
                            separators=(',', ':'), default=str)
-    return (cwes[0], resource, tuple(action_chain), invariant)
+    return (tuple(action_chain), invariant)
 
 
 _DUP_RANK = {'CONFIRMED': 4, 'NEEDS_REVIEW': 3, 'NOT_REPRODUCED': 2, 'NOT_EXECUTED': 1, 'CHECK_ERROR': 0}
 
 
-def _collapse_duplicate_findings(findings):
+def _collapse_duplicate_findings(findings, setup_paths=()):
     """Collapse only equivalent executed action chains and invariants."""
     groups = {}
     for f in findings:
-        k = _dedup_key(f)
+        k = _dedup_key(f, setup_paths)
         if k is not None:
             groups.setdefault(k, []).append(f)
     drop = set()
@@ -509,6 +641,8 @@ def _collapse_duplicate_findings(findings):
         group.sort(key=lambda f: -_DUP_RANK.get(f.get('verification_status'), 0))
         keep = group[0]
         keep.setdefault('deduplicated_from', []).extend(x.get('id') for x in group[1:])
+        for duplicate in group[1:]:
+            duplicate['deduplicated_into'] = keep.get('id')
         drop.update(x.get('id') for x in group[1:])
     return [f for f in findings if f.get('id') not in drop]
 
@@ -557,7 +691,12 @@ def normalize_report(report):
                          if _is_setup_path_centered(finding, setup_paths)]
     security_findings = [finding for finding in findings if finding not in excluded_findings]
     # Collapse only equivalent primary checks before counting security findings.
-    findings = _collapse_duplicate_findings(security_findings)
+    findings = _collapse_duplicate_findings(security_findings, setup_paths)
+    deduplicated_into = {
+        finding.get('id'): finding.get('deduplicated_into')
+        for finding in security_findings
+        if finding.get('id') and finding.get('deduplicated_into')
+    }
     all_finding_by_id = {finding.get('id'): finding for finding in [*findings, *excluded_findings]
                          if finding.get('id')}
     for result in results:
@@ -570,6 +709,26 @@ def normalize_report(report):
             result['verification_reason'] = linked_finding.get('verification_reason')
         else:
             result['outcome'], result['verification_reason'] = classify(result)
+        duplicate_target = deduplicated_into.get(result.get('finding_id'))
+        if duplicate_target:
+            result['deduplicated_into'] = duplicate_target
+            result['presentation_status'] = 'DEDUPLICATED_PRIMARY_CHAIN'
+            result['presentation_reason'] = (
+                f'Deduplicated into {duplicate_target}: this authenticated receipt has the same '
+                'state-changing action chain and evaluated invariant. It remains a separate '
+                'execution attempt, not a separate security finding.'
+            )
+            if result['outcome'] == 'CONFIRMED':
+                result['verification_reason'] = (
+                    'The authenticated receipt reproduced the same backend-evaluated invariant '
+                    f'violation represented by {duplicate_target}; its ordered HTTP trace does '
+                    'not independently establish concurrent execution.'
+                )
+            elif result['outcome'] == 'NOT_REPRODUCED':
+                result['verification_reason'] = (
+                    'The authenticated receipt reproduced the same non-violating invariant result '
+                    f'represented by {duplicate_target}.'
+                )
         if linked_finding in excluded_findings:
             result['presentation_status'] = 'EXCLUDED_SETUP_PATH'
             result['presentation_reason'] = ('Excluded setup-path scenario: the central tested behavior '
@@ -592,21 +751,9 @@ def normalize_report(report):
         if identifier
     }
     controls_held = sum(result.get('outcome') == 'NOT_REPRODUCED' for result in results)
-    visible_control_executions = {
-        finding.get('execution_id') for finding in findings
-        if finding.get('verification_status') == 'NOT_REPRODUCED'
-        and finding.get('execution_id')
-    }
-    unrepresented_controls = sum(
-        result.get('outcome') == 'NOT_REPRODUCED'
-        and result.get('execution_id') not in visible_control_executions
-        for result in results)
-    # Some agent drafts already collapse findings before backend loading and
-    # preserve only deduplicated_from IDs, not a finding_id on the corresponding
-    # result row. Count only the overlap supported by both facts: an explicit
-    # deduplication ID and a completed negative execution not represented by a
-    # visible control finding. Do not guess which ID maps to which script.
-    deduplicated_results = min(len(deduplicated_ids), unrepresented_controls)
+    # A deduplicated result remains an authenticated execution attempt. This
+    # count describes presentation mapping, not discarded receipts.
+    deduplicated_results = sum(bool(result.get('deduplicated_into')) for result in results)
     if not isinstance(execution_summary, dict) or execution_summary.get('derived') is not True:
         # normalize_report is also used by isolated unit-level callers. Never
         # reuse agent summary values; absent a receipt reconciliation, expose
@@ -617,6 +764,8 @@ def normalize_report(report):
             'completed_executions': 0,
             'pending_execution': 0,
             'missing_receipts': 0,
+            'process_errors': sum(bool(result.get('error_message')) for result in results),
+            'evidence_contract_errors': 0,
             'execution_errors': sum(result.get('outcome') == 'CHECK_ERROR' for result in results),
             'trace_mismatches': 0,
             'untrusted_receipts': 0,
@@ -645,7 +794,8 @@ def normalize_report(report):
         'errors': sum(r['outcome'] == 'CHECK_ERROR' and r.get('finding_id') not in {f['id'] for f in findings} for r in results) + counts['CHECK_ERROR'],
         **{key: execution_summary.get(key, 0) for key in (
             'planned_executions', 'execution_attempts', 'completed_executions',
-            'pending_execution', 'missing_receipts', 'execution_errors',
+            'pending_execution', 'missing_receipts', 'process_errors',
+            'evidence_contract_errors', 'execution_errors',
             'trace_mismatches', 'untrusted_receipts')},
     }
     data['verification_schema_version'] = 2

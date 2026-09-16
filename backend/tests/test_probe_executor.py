@@ -7,7 +7,11 @@ import tempfile
 import threading
 import unittest
 
-from backend.runtime.probe_executor import execute, execute_run, load_receipts, normalize_response, reconcile, resolve_numeric_path, trace_error
+from backend.runtime.probe_executor import (
+    execute, execute_run, load_receipts, normalize_response,
+    preflight_script_contract, reconcile, resolve_numeric_path, trace_error,
+    validate_probe_output,
+)
 from backend.runtime.verification import load_report, normalize_report
 
 
@@ -86,6 +90,51 @@ print(json.dumps({'mutation_type': 'STATE_INTERLEAVING', 'verification': v, 'sta
         self.assertEqual(script.read_bytes(), original)
         return receipt
 
+    def sequenced_httpx_script(self, *, multiple_resets=False, predicate='business_rule_must_hold',
+                               include_invariant=True):
+        script = self.run / 'sequenced.py'
+        predicate_fields = "'predicate': " + repr(predicate)
+        if predicate == 'unsupported_business_rule':
+            predicate_fields += ", 'unsupported_reason': 'The current verifier cannot express a status-transition exclusivity rule'"
+        invariant = (", 'invariant': {'operator': 'sum_lte', 'terms': [['priceAdjustment'], ['completedRefund']], 'limit': ['originalAmount']}"
+                     if include_invariant else '')
+        supplementary = ""
+        if multiple_resets:
+            supplementary = """
+        second_reset = await call(client, 'POST', '/api/demo/reset')
+        second_before = await call(client, 'GET', '/api/order')
+        second_action = await call(client, 'POST', '/api/order/price-adjustment')
+        second_after = await call(client, 'GET', '/api/order')
+        setup.append(second_reset)
+        supplementary_scenarios = {'second': {'before': second_before, 'actions': [second_action], 'after': second_after}}
+"""
+        code = f'''import asyncio, json, httpx
+url = {self.url!r}
+async def call(client, method, path):
+    response = await client.request(method, url + path)
+    return {{'sequence': response.extensions['flowbusters_sequence'],
+            'status_code': response.status_code, 'complete': True,
+            'request': {{'method': method, 'url': url + path, 'body': None}},
+            'response': response.json()}}
+async def probe():
+    async with httpx.AsyncClient() as client:
+        setup = [await call(client, 'POST', '/api/demo/reset')]
+        before = await call(client, 'GET', '/api/order')
+        action = await call(client, 'POST', '/api/order/price-adjustment')
+        after = await call(client, 'GET', '/api/order')
+        supplementary_scenarios = {{}}
+{supplementary}
+        verification = {{{predicate_fields}, 'rule': {{'source': 'specification', 'reference': 'Returned value must not exceed payment'}},
+            'setup': setup, 'before': before, 'actions': [action], 'after': after{invariant},
+            'violation': {{'observed': False, 'description': 'Returned value stayed within the payment'}} ,
+            'supplementary_scenarios': supplementary_scenarios}}
+        print(json.dumps({{'title': 'Sequenced probe', 'mutation_type': 'STATE_INTERLEAVING',
+                          'url': url + '/api/order', 'verification': verification}}))
+asyncio.run(probe())
+'''
+        script.write_text(code, encoding='utf-8')
+        return script
+
     def finding(self, receipt):
         return {'id': 'F-1', 'title': 'Reimbursement overlap', 'source': receipt['source'], 'script': receipt['script'],
                 'triggered_by': receipt.get('triggered_by'),
@@ -117,6 +166,78 @@ print(json.dumps({'mutation_type': 'STATE_INTERLEAVING', 'verification': v, 'sta
         self.assertEqual(result['findings'][0]['verification_status'], 'CONFIRMED')
         self.assertEqual(result['results'][0]['status_code'], 200)
         self.assertEqual(len(result['findings'][0]['evidence']['requests']), 5)
+
+    def test_harness_sequence_accounts_for_reset_before_state_read(self):
+        script = self.sequenced_httpx_script()
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        verification = receipt['parsed_result']['verification']
+        self.assertEqual(verification['setup'][0]['sequence'], 1)
+        self.assertEqual(verification['before']['sequence'], 2)
+        self.assertEqual(receipt['contract_validation']['status'], 'valid')
+        self.assertIsNone(trace_error(self.finding(receipt), receipt))
+
+    def test_harness_sequence_accounts_for_multiple_resets(self):
+        script = self.sequenced_httpx_script(multiple_resets=True)
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        verification = receipt['parsed_result']['verification']
+        self.assertEqual([item['sequence'] for item in verification['setup']], [1, 5])
+        self.assertEqual([event['sequence'] for event in receipt['trace']], list(range(1, 9)))
+        self.assertEqual(receipt['contract_validation']['status'], 'valid')
+
+    def test_complete_supported_invariant_passes_output_gate(self):
+        receipt = asyncio.run(execute(self.sequenced_httpx_script(), self.reports,
+                                      root=self.root, cwd=self.run))
+        self.assertEqual(validate_probe_output(receipt, enforce_contract=True)['status'], 'valid')
+
+    def test_missing_invariant_is_explicit_contract_error(self):
+        script = self.sequenced_httpx_script(include_invariant=False)
+        self.assertIn('requires a supported executable invariant', preflight_script_contract(script))
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        validation = receipt['contract_validation']
+        self.assertEqual(validation['category'], 'evidence_contract_error')
+        self.assertIn('requires a supported executable invariant', validation['error'])
+        report = normalize_report(reconcile(
+            {'findings': [self.finding(receipt)]}, self.reports, self.root))
+        self.assertEqual(report['summary']['process_errors'], 0)
+        self.assertEqual(report['summary']['evidence_contract_errors'], 1)
+        self.assertEqual(report['summary']['trace_mismatches'], 0)
+        self.assertEqual(report['results'][0]['outcome'], 'NEEDS_REVIEW')
+
+    def test_unsupported_rule_stays_reviewable_without_invented_invariant(self):
+        script = self.sequenced_httpx_script(predicate='unsupported_business_rule',
+                                             include_invariant=False)
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        self.assertEqual(receipt['contract_validation']['status'], 'reviewable')
+        normalized = normalize_report(reconcile(
+            {'findings': [self.finding(receipt)]}, self.reports, self.root))
+        self.assertEqual(normalized['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertIn('current verifier cannot express',
+                      normalized['findings'][0]['verification_reason'])
+
+    def test_new_contract_keeps_strict_signed_sequence_matching(self):
+        receipt = asyncio.run(execute(self.sequenced_httpx_script(), self.reports,
+                                      root=self.root, cwd=self.run))
+        receipt['parsed_result']['verification']['before']['request']['url'] += '?fabricated=1'
+        validation = validate_probe_output(receipt, enforce_contract=True)
+        self.assertEqual(validation['category'], 'evidence_contract_error')
+        self.assertIn('does not match its signed transport event', validation['error'])
+
+    def test_new_contract_rejects_out_of_order_capture_sequences(self):
+        receipt = self.run_script()
+        receipt['parsed_result']['verification']['actions'].reverse()
+        validation = validate_probe_output(receipt, enforce_contract=True)
+        self.assertEqual(validation['category'], 'evidence_contract_error')
+        self.assertIn('unique and increasing', validation['error'])
+
+    def test_new_contract_requires_response_root_invariant_paths(self):
+        receipt = asyncio.run(execute(self.sequenced_httpx_script(), self.reports,
+                                      root=self.root, cwd=self.run))
+        verification = receipt['parsed_result']['verification']
+        verification['after']['response'] = {'order': verification['after']['response']}
+        receipt['trace'][-1]['response'] = deepcopy(verification['after']['response'])
+        validation = validate_probe_output(receipt, enforce_contract=True)
+        self.assertEqual(validation['category'], 'evidence_contract_error')
+        self.assertIn('full AFTER response root', validation['error'])
 
     def test_execution_summary_ignores_stale_agent_counts(self):
         self.planned_receipts(7, 7)

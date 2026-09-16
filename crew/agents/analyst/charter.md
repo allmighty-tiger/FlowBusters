@@ -154,6 +154,13 @@ Read and write only within `flows/{flow-name}/`.
 - Every observed-rule fact has an exact source run, raw artifact, typed
   provenance, fact ID, and resolvable JSON pointer. API facts and inference are
   never labelled as observed UI.
+- Treat each fact type, provenance type, and artifact as one inseparable tuple:
+  `explicit_ui_text` + `explicit_visible_ui_text` + `demo.json`;
+  `ui_element_transition` + `observed_ui_affordance` + `demo.json`;
+  `api_field_transition` + `api_state_fact` + `recording.har`. Never mix values
+  between tuples. A button visible at one sampled step is `explicit_ui_text`,
+  not an `observed_ui_affordance`; the latter requires an exact supported
+  before/after transition. The `artifact` field is mandatory on every fact.
 - An empty `observed_ui_rules` is allowed only after successful semantic capture
   and requires `semantic_ui_capture.no_relevant_rules_reason`.
 - Preserves every co-visible state-changing action pair in
