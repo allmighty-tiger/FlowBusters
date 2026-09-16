@@ -39,6 +39,16 @@ then checks violation.observed agrees. Cite the UI/user/specification business
 rule independently; a numerical comparison alone does not establish a rule.
 Other generic invariant types remain NEEDS_REVIEW until implemented.
 
+For `rule.source: "observed_ui"`, use the structured rule reference from
+`crew/skills/analyze-har/OBSERVED_UI_RULES.md`: schema version, exact source run,
+`state_map.json`, rule ID, and fact IDs. At least one selected fact must resolve
+to raw semantic UI evidence in `demo.json`. Free-form state-map references,
+API-state facts alone, and agent inference are unverified and cannot confirm a
+positive violation. User and specification rules retain their explicit textual
+reference forms. Missing rule provenance never overrides a complete negative
+execution: when the backend-evaluated invariant is not violated, the result is
+NOT_REPRODUCED.
+
 Preserve before/actions/after, rule, predicate and violation.description.
 Backend also retains the pre-existing predicate verifier: provenance alone
 cannot confirm an unsupported or invalid business rule.

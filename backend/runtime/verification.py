@@ -50,6 +50,36 @@ def _is_auth_finding(record):
 def load_report(path):
     """Join executor artifacts by stable ID, never by order or title."""
     data = json.loads(path.read_text(encoding="utf-8"))
+    # execute_run preserves the pre-execution report beside the working report.
+    # A previous normalized write may contain only the findings that survived an
+    # older presentation filter, so restore missing draft records in memory. The
+    # current report wins for records it still contains and no artifact is
+    # rewritten.
+    current_findings = [finding for finding in data.get('findings', [])
+                        if isinstance(finding, dict)]
+    current_by_id = {finding.get('id'): finding for finding in current_findings
+                     if finding.get('id')}
+    for draft_path in sorted(path.parent.glob('agent-draft-*.json'),
+                             key=lambda item: item.stat().st_mtime, reverse=True):
+        try:
+            draft = json.loads(draft_path.read_text(encoding='utf-8'))
+            draft_findings = draft.get('findings')
+            if not isinstance(draft_findings, list):
+                continue
+            merged, seen = [], set()
+            for finding in draft_findings:
+                if not isinstance(finding, dict):
+                    continue
+                identifier = finding.get('id')
+                merged.append(current_by_id.get(identifier, deepcopy(finding)))
+                if identifier:
+                    seen.add(identifier)
+            merged.extend(finding for finding in current_findings
+                          if not finding.get('id') or finding.get('id') not in seen)
+            data['findings'] = merged
+            break
+        except (OSError, ValueError, TypeError):
+            continue
     setup_paths = [value.strip() for value in
                    os.environ.get('SETUP_PATHS', '/api/demo/reset').split(',')
                    if value.strip()]
@@ -63,9 +93,14 @@ def load_report(path):
         except (OSError, ValueError, TypeError):
             pass
         break
-    if setup_paths and isinstance(data.get('findings'), list):
-        data['findings'] = [finding for finding in data['findings']
-                            if not _mentions_setup_path(finding, setup_paths)]
+    data['_setup_paths'] = setup_paths
+    run_dir = path.parent.parent.parent if path.parent.parent.name == 'reports' else path.parent
+    candidates_path = run_dir / 'flows' / path.parent.name / 'cross_flow_candidates.json'
+    try:
+        candidates = json.loads(candidates_path.read_text(encoding='utf-8'))
+        data['_cross_flow_candidates'] = candidates.get('candidates', [])
+    except (OSError, ValueError, TypeError, AttributeError):
+        data['_cross_flow_candidates'] = []
     findings = data.setdefault('findings', [])
     artifacts = {}
     for artifact in sorted((path.parent / 'evidence').glob('*.json')):
@@ -106,15 +141,25 @@ def load_report(path):
     return normalize_report(reconcile(data, path.parent, root))
 
 
-def _mentions_setup_path(finding, setup_paths):
-    """True when a finding's claim depends on an explicitly excluded fixture path."""
+def _is_setup_path_centered(finding, setup_paths):
+    """True only when the claimed security behavior is the configured fixture.
+
+    Setup calls commonly bracket real probes, so their presence in evidence is
+    not enough to exclude a finding. The claim title or tested URL must identify
+    the setup endpoint itself as the scenario under test.
+    """
     if not isinstance(finding, dict):
         return False
-    evidence = finding.get('evidence')
-    evidence_summary = evidence.get('summary', '') if isinstance(evidence, dict) else evidence
-    claim = ' '.join(str(finding.get(key) or '') for key in ('title', 'url_tested'))
-    claim += ' ' + str(evidence_summary or '')
-    return any(path in claim for path in setup_paths)
+    claim = ' '.join(str(finding.get(key) or '') for key in ('title', 'url_tested')).lower()
+    for path in setup_paths:
+        normalized = str(path).strip().lower()
+        segments = [part for part in normalized.strip('/').split('/') if part]
+        aliases = {normalized, normalized.strip('/'), normalized.strip('/').replace('/', '-')}
+        if len(segments) >= 2:
+            aliases.add('-'.join(segments[-2:]))
+        if any(alias and alias in claim for alias in aliases):
+            return True
+    return False
 
 
 _TOKEN_KEYS = ('token', 'access_token', 'session_token', 'session', 'jwt', 'auth_token')
@@ -291,7 +336,7 @@ def classify(record, linked_results=()):
             return 'NOT_EXECUTED', reason
         return 'NEEDS_REVIEW', 'Not-executed status lacks a missing precondition.'
     if isinstance(v, dict) and v.get('predicate') == 'business_rule_must_hold':
-        return _classify_business_rule(v)
+        return _classify_business_rule(record, v)
     if not isinstance(v, dict):
         outcome = str(record.get('original_outcome') or record.get('outcome') or '').upper()
         if outcome in ('ERROR', 'CHECK_ERROR'):
@@ -336,7 +381,7 @@ def classify(record, linked_results=()):
     return 'NOT_REPRODUCED', 'The item remained present in the captured post-action state.'
 
 
-def _classify_business_rule(verification):
+def _classify_business_rule(record, verification):
     """Validate a generic state-transition probe without relying on HTTP status.
 
     The probe must cite a rule observed in the UI/specification, capture complete
@@ -373,11 +418,20 @@ def _classify_business_rule(verification):
     if not violation['observed']:
         return 'NOT_REPRODUCED', description
     rule = verification.get('rule')
-    if (not isinstance(rule, dict)
-            or rule.get('source') not in ('user', 'specification', 'observed_ui')
-            or not str(rule.get('reference') or '').strip()):
-        return 'NEEDS_REVIEW', 'The business rule needs a user, specification, or observed-UI reference.'
-    return 'CONFIRMED', description
+    if not isinstance(rule, dict):
+        return 'NEEDS_REVIEW', 'The business rule needs verified provenance.'
+    source = rule.get('source')
+    if source in ('user', 'specification') and str(rule.get('reference') or '').strip():
+        return 'CONFIRMED', description
+    if source == 'observed_ui':
+        if record.get('_rule_provenance_valid') is True:
+            return 'CONFIRMED', description
+        detail = str(record.get('_rule_provenance_error') or '').strip()
+        reason = 'Observed-UI rule provenance did not validate against immutable source artifacts.'
+        return 'NEEDS_REVIEW', reason + (f' {detail}' if detail else '')
+    if source in ('api_state', 'agent_inference'):
+        return 'NEEDS_REVIEW', 'API state and agent inference cannot serve as observed-UI business-rule provenance.'
+    return 'NEEDS_REVIEW', 'The business rule needs a user, specification, or validated observed-UI reference.'
 
 
 def _resource_path(value):
@@ -400,9 +454,11 @@ def _resource_path(value):
 
 
 def _dedup_key(finding):
-    """A key identifying the same underlying bug across sources, or None if the
-    finding can't be grouped (no CWE / no resolvable resource). Same primary CWE
-    AND same target resource => same violation."""
+    """Identify an equivalent executed chain and invariant.
+
+    CWE, resource, or similar prose is never sufficient: separate request bodies,
+    action ordering, or evaluated invariants represent distinct checks.
+    """
     cwes = finding.get('cwe')
     if not isinstance(cwes, list) or not cwes:
         return None
@@ -413,16 +469,34 @@ def _dedup_key(finding):
         resource = _resource_path(finding.get('url_tested'))
     if not resource:
         return None
-    return (cwes[0], resource)
+    verification = finding.get('verification')
+    if not isinstance(verification, dict):
+        return None
+    actions = verification.get('actions')
+    if not isinstance(actions, list):
+        actions = [verification.get('action')] if isinstance(verification.get('action'), dict) else []
+    if not actions or not isinstance(verification.get('invariant'), dict):
+        return None
+    action_chain = []
+    for capture in actions:
+        if not isinstance(capture, dict) or not isinstance(capture.get('request'), dict):
+            return None
+        request = capture['request']
+        action_chain.append((
+            str(request.get('method') or '').upper(),
+            _resource_path(request.get('url')) or str(request.get('url') or ''),
+            json.dumps(request.get('body'), sort_keys=True, separators=(',', ':'), default=str),
+        ))
+    invariant = json.dumps(verification['invariant'], sort_keys=True,
+                           separators=(',', ':'), default=str)
+    return (cwes[0], resource, tuple(action_chain), invariant)
 
 
 _DUP_RANK = {'CONFIRMED': 4, 'NEEDS_REVIEW': 3, 'NOT_REPRODUCED': 2, 'NOT_EXECUTED': 1, 'CHECK_ERROR': 0}
 
 
 def _collapse_duplicate_findings(findings):
-    """Collapse findings that describe the same violation (same primary CWE +
-    same resource), keeping the strongest verdict and folding the rest into its
-    `deduplicated_from` list. Findings that can't be keyed are always kept."""
+    """Collapse only equivalent executed action chains and invariants."""
     groups = {}
     for f in findings:
         k = _dedup_key(f)
@@ -442,6 +516,10 @@ def _collapse_duplicate_findings(findings):
 def normalize_report(report):
     """Return a copy; preserve raw artifacts and supplied IDs."""
     data = deepcopy(report)
+    execution_summary = data.pop('_execution_summary', None)
+    setup_paths = data.pop('_setup_paths', [])
+    partial_coverage = data.pop('_partial_coverage', [])
+    data.pop('_cross_flow_candidates', None)
     results = data.get('results') or []
     findings = data.get('findings')
     if not isinstance(findings, list):
@@ -475,13 +553,16 @@ def normalize_report(report):
                 'responses': [c.get('response', {}) for c in captures],
             }
             finding['actual_behavior'] = finding['verification_reason']
-    # Collapse multi-source duplicates of the same violation before counting, so the
-    # findings list and summary reflect distinct bugs, not repeated reports of one.
-    findings = _collapse_duplicate_findings(findings)
-    finding_by_id = {finding.get('id'): finding for finding in findings if finding.get('id')}
+    excluded_findings = [finding for finding in findings
+                         if _is_setup_path_centered(finding, setup_paths)]
+    security_findings = [finding for finding in findings if finding not in excluded_findings]
+    # Collapse only equivalent primary checks before counting security findings.
+    findings = _collapse_duplicate_findings(security_findings)
+    all_finding_by_id = {finding.get('id'): finding for finding in [*findings, *excluded_findings]
+                         if finding.get('id')}
     for result in results:
         result.setdefault('original_outcome', result.get('outcome'))
-        linked_finding = finding_by_id.get(result.get('finding_id'))
+        linked_finding = all_finding_by_id.get(result.get('finding_id'))
         original = str(result.get('original_outcome') or '').upper()
         if (linked_finding and original == 'CONFIRMED'
                 and linked_finding.get('verification_status') == 'CONFIRMED'):
@@ -489,9 +570,58 @@ def normalize_report(report):
             result['verification_reason'] = linked_finding.get('verification_reason')
         else:
             result['outcome'], result['verification_reason'] = classify(result)
+        if linked_finding in excluded_findings:
+            result['presentation_status'] = 'EXCLUDED_SETUP_PATH'
+            result['presentation_reason'] = ('Excluded setup-path scenario: the central tested behavior '
+                                             'is authorized fixture setup, not application attack surface.')
     counts = {s: sum(f['verification_status'] == s for f in findings) for s in ('CONFIRMED', 'NEEDS_REVIEW', 'NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR')}
+    excluded_setup = [{
+        'id': finding.get('id'),
+        'title': finding.get('title'),
+        'script': finding.get('script'),
+        'execution_id': finding.get('execution_id'),
+        'status': 'EXCLUDED_SETUP_PATH',
+        'reason': ('Excluded setup-path scenario: /api/demo/reset is authorized fixture setup, '
+                   'not application attack surface.'),
+    } for finding in excluded_findings]
     data['findings'], data['results'] = findings, results
-    data['summary'] = {**(data.get('summary') or {}), 'reported_findings': len(findings),
+    data['partial_coverage'] = partial_coverage
+    data['excluded_setup_executions'] = excluded_setup
+    deduplicated_ids = {
+        identifier for finding in findings for identifier in finding.get('deduplicated_from', [])
+        if identifier
+    }
+    controls_held = sum(result.get('outcome') == 'NOT_REPRODUCED' for result in results)
+    visible_control_executions = {
+        finding.get('execution_id') for finding in findings
+        if finding.get('verification_status') == 'NOT_REPRODUCED'
+        and finding.get('execution_id')
+    }
+    unrepresented_controls = sum(
+        result.get('outcome') == 'NOT_REPRODUCED'
+        and result.get('execution_id') not in visible_control_executions
+        for result in results)
+    # Some agent drafts already collapse findings before backend loading and
+    # preserve only deduplicated_from IDs, not a finding_id on the corresponding
+    # result row. Count only the overlap supported by both facts: an explicit
+    # deduplication ID and a completed negative execution not represented by a
+    # visible control finding. Do not guess which ID maps to which script.
+    deduplicated_results = min(len(deduplicated_ids), unrepresented_controls)
+    if not isinstance(execution_summary, dict) or execution_summary.get('derived') is not True:
+        # normalize_report is also used by isolated unit-level callers. Never
+        # reuse agent summary values; absent a receipt reconciliation, expose
+        # only the normalized rows available to this trusted caller.
+        execution_summary = {
+            'planned_executions': 0,
+            'execution_attempts': len(results),
+            'completed_executions': 0,
+            'pending_execution': 0,
+            'missing_receipts': 0,
+            'execution_errors': sum(result.get('outcome') == 'CHECK_ERROR' for result in results),
+            'trace_mismatches': 0,
+            'untrusted_receipts': 0,
+        }
+    data['summary'] = {'reported_findings': len(findings), 'finding_count': len(findings),
         'bugs_found': counts['CONFIRMED'], 'confirmed': counts['CONFIRMED'],
         'critical_findings': sum(f['verification_status'] == 'CONFIRMED'
                                  and str(f.get('severity') or '').lower() == 'critical'
@@ -501,8 +631,23 @@ def normalize_report(report):
                                            for f in findings),
         'needs_review': counts['NEEDS_REVIEW'], 'not_reproduced': counts['NOT_REPRODUCED'],
         'not_executed': counts['NOT_EXECUTED'] + sum(r['outcome'] == 'NOT_EXECUTED' and r.get('finding_id') not in {f['id'] for f in findings} for r in results),
-        'rejected': sum(r['outcome'] == 'NOT_REPRODUCED' for r in results),
-        'errors': sum(r['outcome'] == 'CHECK_ERROR' and r.get('finding_id') not in {f['id'] for f in findings} for r in results) + counts['CHECK_ERROR']}
+        'rejected': controls_held, 'controls_held': controls_held,
+        'deduplicated_findings': len(deduplicated_ids),
+        'deduplicated_execution_results': deduplicated_results,
+        'deduplicated_primary_chains': len(deduplicated_ids),
+        'partial_coverage': len(partial_coverage),
+        'excluded_setup_executions': len(excluded_setup),
+        'unlinked_execution_results': sum(not result.get('finding_id') for result in results),
+        'execution_result_counts': {
+            status.lower(): sum(result.get('outcome') == status for result in results)
+            for status in ('CONFIRMED', 'NEEDS_REVIEW', 'NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR')
+        },
+        'errors': sum(r['outcome'] == 'CHECK_ERROR' and r.get('finding_id') not in {f['id'] for f in findings} for r in results) + counts['CHECK_ERROR'],
+        **{key: execution_summary.get(key, 0) for key in (
+            'planned_executions', 'execution_attempts', 'completed_executions',
+            'pending_execution', 'missing_receipts', 'execution_errors',
+            'trace_mismatches', 'untrusted_receipts')},
+    }
     data['verification_schema_version'] = 2
     return data
 

@@ -75,6 +75,8 @@ Read and write only within `flows/{flow-name}/`.
 - `flows/{flow-name}/state_map.json` with this exact schema:
   ```json
   {
+    "schema_version": 2,
+    "observed_ui_rules_schema_version": 1,
     "target_url": "https://...",
     "flow_name": "...",
     "setup_paths": ["/api/demo/reset"],
@@ -104,15 +106,13 @@ Read and write only within `flows/{flow-name}/`.
         "headers": { "Authorization": "Bearer ..." }
       }
     ],
-    "observed_ui_rules": [
-      {
-        "text": "One coupon per order",
-        "ui_step": 2,
-        "url": "https://.../checkout",
-        "related_transition": "apply_coupon",
-        "security_relevance": "Server must reject coupon replay even if the disabled UI is bypassed"
-      }
-    ],
+    "semantic_ui_capture": {
+      "status": "succeeded",
+      "artifact": "demo.json",
+      "ui_state_count": 4,
+      "no_relevant_rules_reason": "No security-relevant rule was visible in the sampled semantic states"
+    },
+    "observed_ui_rules": [],
     "conflicting_action_pairs": [
       {
         "ui_step": 5,
@@ -136,15 +136,26 @@ Read and write only within `flows/{flow-name}/`.
   }
   ```
   - `"inferred"` is `true` for endpoints that were NOT observed as a request in the HAR but were inferred from a resource shape in a response (see Process step 8). Saboteur treats inferred endpoints as first-class targets — a delete on an untested child resource is often exactly the class of business-logic flaw a happy-path demo misses.
+  - If an inferred action is included in `transitions`, set `response_status` to
+    `null`; never invent an HTTP result. Set `ui_context.before_step` and
+    `after_step` to the same existing semantic UI step that supports the
+    inference. For an observed transition, `response_status` is an integer and
+    `before_step` must be earlier than `after_step`.
 
 ## Verification Gate
 
-- `flows/{flow-name}/state_map.json` exists and is valid JSON
+- Read `crew/skills/analyze-har/OBSERVED_UI_RULES.md` and follow its v2 state-map
+  and v1 observed-rule contract exactly.
+- `flows/{flow-name}/state_map.json` exists, is valid JSON, has
+  `schema_version: 2` and `observed_ui_rules_schema_version: 1`
 - Contains at least 1 transition
 - Contains at least 1 role with auth credentials
 - Contains at least 1 critical endpoint
-- Preserves every security-relevant visible rule in `observed_ui_rules`; use an
-  empty array only when the timeline truly contains none
+- Every observed-rule fact has an exact source run, raw artifact, typed
+  provenance, fact ID, and resolvable JSON pointer. API facts and inference are
+  never labelled as observed UI.
+- An empty `observed_ui_rules` is allowed only after successful semantic capture
+  and requires `semantic_ui_capture.no_relevant_rules_reason`.
 - Preserves every co-visible state-changing action pair in
   `conflicting_action_pairs`; use an empty array only when no such state exists
 - Report: "✅ Phase 2 ANALYZE complete. Flow {flow-name}. {N} transitions, {M} roles, {K} critical endpoints identified."

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
@@ -30,12 +30,19 @@ class Phase(str, Enum):
     FAILED = "failed"
 
 
+class RunMode(str, Enum):
+    RECORDED_FLOW = "RECORDED_FLOW"
+    CROSS_FLOW = "CROSS_FLOW"
+
+
 @dataclass
 class ProgressEvent:
     phase: Phase
     message: str
     done: bool = False
     error: Optional[str] = None
+    run_mode: RunMode = RunMode.RECORDED_FLOW
+    technical_detail: Optional[str] = None
 
 
 # ── Thin Wrapper ───────────────────────────────────────────────────────────────
@@ -61,6 +68,10 @@ async def run_flowbusters(
     from backend.runtime.crew_runner import CrewConfig, run_crew
 
     cb = progress_cb or _noop_progress
+    run_mode = RunMode.CROSS_FLOW if cross_flow_inputs is not None else RunMode.RECORDED_FLOW
+
+    def mode_cb(event: ProgressEvent):
+        cb(replace(event, run_mode=run_mode))
 
     base = Path(__file__).parent.parent.parent.resolve()
     mcp_env = os.environ.get("MCP_CONFIG_PATH", "./mcp.json")
@@ -89,7 +100,7 @@ async def run_flowbusters(
         cross_flow_inputs=cross_flow_inputs,
     )
 
-    result = await run_crew(config, cb)
+    result = await run_crew(config, mode_cb)
 
     # Build findings for V1-compatible return
     findings_path = Path(run_dir) / "runs" / flow_name / "reports" / "findings.json"

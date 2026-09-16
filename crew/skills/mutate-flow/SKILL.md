@@ -59,6 +59,10 @@ Read `flows/{flow-name}/state_map.json` and extract:
 For each observed UI rule, ask whether the server rejects the same action when
 the UI is bypassed. If `observed_ui_rules` is non-empty, generate at least one
 mutation that explicitly violates one of those rules.
+Read `crew/skills/analyze-har/OBSERVED_UI_RULES.md`; copy its structured rule
+reference (`source_run`, `artifact`, `rule_id`, and relevant `fact_ids`) into
+verification. Never replace it with a prose path or classify an API-only fact
+or agent inference as observed UI.
 For every conflicting action pair, generate one STATE_INTERLEAVING script that
 tests A→B, B→A, and a safe concurrent A/B race from equivalent clean states,
 then re-reads the complete resource to verify the invariant.

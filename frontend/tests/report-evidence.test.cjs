@@ -72,19 +72,67 @@ test('confirmed invariant is primary and renders operands, result, limit, and co
   assert.ok(html.includes('refund.status</code><strong>none → pending → completed'));
 });
 
-test('summary identifies held results represented by a deduplicated finding', () => {
+test('summary keeps not-reproduced findings separate from execution attempts', () => {
   const held = { ...finding, id: 'F-002', verification_status: 'NOT_REPRODUCED', deduplicated_from: ['F-003'] };
   const heldCancel = { ...finding, id: 'F-004', title: 'Cancel then refund may double-pay', verification_status: 'NOT_REPRODUCED', verification_reason: 'The refund request was rejected and total returned stayed within the allowed maximum.', execution_trace: [capture('POST', '/api/demo/reset'), capture('GET', '/api/order'), capture('POST', '/api/order/cancel'), { ...capture('POST', '/api/order/refund/request'), status_code: 409 }, capture('GET', '/api/order')] };
   const held2 = { ...finding, id: 'F-005', verification_status: 'NOT_REPRODUCED' };
   const results = ['one', 'two', 'three', 'four'].map(script => ({ script, mutation_type: 'STATE_INTERLEAVING', outcome: 'NOT_REPRODUCED', status_code: 409, url_tested: '/api/order', response_snippet: null, error_message: null }));
   const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [northstarFinding, held, heldCancel, held2], results, summary: { errors: 0 } }, remediation: null }));
-  assert.ok(html.includes('4</strong><span>Controls held'));
-  assert.ok(html.includes('3 scenarios + 1 deduplicated'));
-  assert.ok(html.includes('0</strong><span>Needs review'));
-  assert.ok(html.includes('Controls validated'));
+  assert.ok(html.includes('3</strong><span>Not-reproduced findings'));
+  assert.ok(html.includes('Deduplicated primary chains: <strong>1'));
+  assert.ok(html.includes('0</strong><span>Findings needing review'));
+  assert.ok(html.includes('Not reproduced'));
   assert.ok(html.includes('F-003'));
   assert.ok(html.includes('Order cancellation followed by refund request — control held.'));
   assert.ok(!html.includes('may double-pay</h3>'));
+});
+
+test('backend-derived summary separates findings, attempts, and deduplicated results', () => {
+  const held = { ...finding, id: 'F-001', verification_status: 'NOT_REPRODUCED', deduplicated_from: ['F-002', 'F-003'] };
+  const reviews = [4, 5, 6, 7].map(id => ({ ...finding, id: `F-00${id}`, verification_status: 'NEEDS_REVIEW' }));
+  const results = [
+    ...['one', 'two', 'three'].map(script => ({ script, mutation_type: 'STATE_INTERLEAVING', outcome: 'NOT_REPRODUCED', status_code: 409, url_tested: '/api/order', response_snippet: null, error_message: null })),
+    ...['four', 'five', 'six', 'seven'].map(script => ({ script, mutation_type: 'STATE_INTERLEAVING', outcome: 'NEEDS_REVIEW', status_code: 200, url_tested: '/api/order', response_snippet: null, error_message: null })),
+  ];
+  const summary = { errors: 0, finding_count: 5, controls_held: 3,
+    deduplicated_execution_results: 2, planned_executions: 7,
+    execution_attempts: 7, completed_executions: 7, pending_execution: 0,
+    execution_errors: 0, trace_mismatches: 0 };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [held, ...reviews], results, summary }, remediation: null }));
+  assert.ok(html.includes('Finding verdicts: <strong>5</strong> normalized findings'));
+  assert.ok(html.includes('1</strong><span>Not-reproduced findings'));
+  assert.ok(html.includes('Deduplicated primary chains: <strong>2'));
+  for (const pair of ['Planned</dt><dd>7', 'Attempts</dt><dd>7', 'Completed</dt><dd>7', 'Pending</dt><dd>0', 'Errors</dt><dd>0', 'Trace mismatches</dt><dd>0']) assert.ok(html.includes(pair), pair);
+  assert.ok(html.includes('Probe execution log <span>7 attempts'));
+  assert.ok(!html.includes('Pending</dt><dd>7'));
+});
+
+test('atomic model renders findings, partial coverage, setup exclusion, and all receipts separately', () => {
+  const held = [2, 4, 5, 6].map(id => ({ ...finding, id: `F-00${id}`, verification_status: 'NOT_REPRODUCED' }));
+  const reviewFinding = { ...finding, id: 'F-001', verification_status: 'NEEDS_REVIEW' };
+  const results = [
+    { script: '01.py', execution_id: 'e1', mutation_type: 'STATE_INTERLEAVING', outcome: 'NEEDS_REVIEW', status_code: 200, url_tested: '/api/order', response_snippet: null, error_message: null },
+    { script: '02.py', execution_id: 'e2', mutation_type: 'STATE_INTERLEAVING', outcome: 'NOT_REPRODUCED', status_code: 409, url_tested: '/api/order', response_snippet: null, error_message: null },
+    { script: '03.py', execution_id: 'e3', mutation_type: 'REPLAY_ATTACK', outcome: 'NEEDS_REVIEW', presentation_status: 'EXCLUDED_SETUP_PATH', presentation_reason: 'Excluded setup-path scenario: fixture setup.', status_code: 200, url_tested: '/api/demo/reset', response_snippet: null, error_message: null },
+    ...[4, 5, 6].map(id => ({ script: `0${id}.py`, execution_id: `e${id}`, mutation_type: 'DATA_TAMPER', outcome: 'NOT_REPRODUCED', status_code: 200, url_tested: '/api/order', response_snippet: null, error_message: null })),
+  ];
+  const report = {
+    findings: [reviewFinding, ...held], results,
+    partial_coverage: [
+      { id: 'F-002:cancel', title: 'Cancel after price adjustment', status: 'PARTIAL_COVERAGE', reason: 'Missing independent invariant.', source_finding_id: 'F-002', candidate_id: 'XF-002', execution_id: 'e2' },
+      { id: 'F-004:refund', title: 'Refund amount override', status: 'PARTIAL_COVERAGE', reason: 'Missing independent invariant.', source_finding_id: 'F-004', candidate_id: 'XF-004', execution_id: 'e4' },
+    ],
+    excluded_setup_executions: [{ id: 'F-003', script: '03.py', execution_id: 'e3', status: 'EXCLUDED_SETUP_PATH', reason: '/api/demo/reset is authorized fixture setup.' }],
+    summary: { errors: 0, finding_count: 5, planned_executions: 6, execution_attempts: 6, completed_executions: 6, pending_execution: 0, execution_errors: 0, trace_mismatches: 0, deduplicated_primary_chains: 0, execution_result_counts: { needs_review: 2, not_reproduced: 4, confirmed: 0, check_error: 0 } },
+  };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  assert.ok(html.includes('Finding verdicts: <strong>5</strong> normalized findings'));
+  assert.ok(html.includes('Partial coverage'));
+  assert.ok(html.includes('2 supplementary scenarios'));
+  assert.ok(html.includes('Excluded setup-path scenarios'));
+  assert.ok(html.includes('Primary execution results: <strong>2</strong> need review, <strong>4</strong> not reproduced'));
+  assert.ok(html.includes('Probe execution log <span>6 attempts'));
+  assert.equal((html.match(/Excluded setup-path scenario/g) || []).length >= 2, true);
 });
 
 test('held control hides absent roles and speculative active remediation', () => {

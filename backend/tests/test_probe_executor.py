@@ -91,6 +91,19 @@ print(json.dumps({'mutation_type': 'STATE_INTERLEAVING', 'verification': v, 'sta
                 'triggered_by': receipt.get('triggered_by'),
                 'execution_id': receipt['execution_id'], 'verification': deepcopy(receipt['parsed_result']['verification'])}
 
+    def planned_receipts(self, total, executed, *, complete=True):
+        template = self.script(complete).read_text(encoding='utf-8')
+        directory = self.run / 'mutations' / 'sample'
+        directory.mkdir(parents=True, exist_ok=True)
+        receipts = []
+        for index in range(total):
+            script = directory / f'{index + 1:02d}_planned.py'
+            script.write_text(template, encoding='utf-8')
+            if index < executed:
+                receipts.append(asyncio.run(execute(
+                    script, self.reports, root=self.root, cwd=self.run)))
+        return receipts
+
     def test_actual_complete_chain_confirmed_and_raw_preserved(self):
         receipt = self.run_script()
         self.assertEqual(receipt['exit_code'], 0)
@@ -105,6 +118,59 @@ print(json.dumps({'mutation_type': 'STATE_INTERLEAVING', 'verification': v, 'sta
         self.assertEqual(result['results'][0]['status_code'], 200)
         self.assertEqual(len(result['findings'][0]['evidence']['requests']), 5)
 
+    def test_execution_summary_ignores_stale_agent_counts(self):
+        self.planned_receipts(7, 7)
+        report_path = self.reports / 'findings.json'
+        report_path.write_text(json.dumps({
+            'findings': [],
+            'summary': {'pending_execution': 7, 'completed_executions': 0,
+                        'confirmed': 999, 'controls_held': 999},
+        }), encoding='utf-8')
+        summary = load_report(report_path)['summary']
+        self.assertEqual(summary['planned_executions'], 7)
+        self.assertEqual(summary['execution_attempts'], 7)
+        self.assertEqual(summary['completed_executions'], 7)
+        self.assertEqual(summary['pending_execution'], 0)
+        self.assertEqual(summary['missing_receipts'], 0)
+        self.assertEqual(summary['confirmed'], 0)
+
+    def test_partial_and_untrusted_receipts_remain_pending(self):
+        receipts = self.planned_receipts(7, 3)
+        report_path = self.reports / 'findings.json'
+        report_path.write_text(json.dumps({'findings': [], 'summary': {
+            'pending_execution': 0}}), encoding='utf-8')
+        summary = load_report(report_path)['summary']
+        self.assertEqual((summary['completed_executions'], summary['pending_execution']), (3, 4))
+
+        # Add a fourth signed receipt, then invalidate its immutable contents.
+        fourth_script = self.run / 'mutations' / 'sample' / '04_planned.py'
+        fourth = asyncio.run(execute(fourth_script, self.reports, root=self.root, cwd=self.run))
+        receipt_path = self.reports / 'executions' / f"{fourth['execution_id']}.json"
+        receipt_path.write_text(receipt_path.read_text(encoding='utf-8').replace(
+            'diagnostic output', 'tampered output'), encoding='utf-8')
+        summary = load_report(report_path)['summary']
+        self.assertEqual(summary['completed_executions'], 3)
+        self.assertEqual(summary['pending_execution'], 4)
+        self.assertEqual(summary['untrusted_receipts'], 1)
+
+    def test_deduplication_preserves_execution_attempt_counts(self):
+        receipts = self.planned_receipts(2, 2, complete=False)
+        findings = []
+        for index, receipt in enumerate(receipts, 1):
+            finding = self.finding(receipt)
+            finding.update({'id': f'F-{index:03d}', 'cwe': ['CWE-841'],
+                            'url_tested': self.url + '/api/order'})
+            findings.append(finding)
+        report_path = self.reports / 'findings.json'
+        report_path.write_text(json.dumps({'findings': findings}), encoding='utf-8')
+        report = load_report(report_path)
+        self.assertEqual(len(report['findings']), 1)
+        self.assertEqual(report['summary']['finding_count'], 1)
+        self.assertEqual(report['summary']['execution_attempts'], 2)
+        self.assertEqual(report['summary']['completed_executions'], 2)
+        self.assertEqual(report['summary']['controls_held'], 2)
+        self.assertEqual(report['summary']['deduplicated_execution_results'], 1)
+
     def test_missing_complete_cannot_be_invented_by_report(self):
         receipt = self.run_script(False)
         finding = self.finding(receipt)
@@ -116,6 +182,104 @@ print(json.dumps({'mutation_type': 'STATE_INTERLEAVING', 'verification': v, 'sta
         result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
         self.assertEqual(result['findings'][0]['verification_status'], 'NEEDS_REVIEW')
         self.assertNotIn('/api/order/refund/complete', json.dumps(result['findings'][0]['execution_trace']))
+
+    def test_report_cannot_spoof_observed_ui_provenance(self):
+        script = self.script()
+        code = script.read_text(encoding='utf-8').replace(
+            "{'source': 'specification', 'reference': 'Reimbursement must not exceed original payment'}",
+            "{'source': 'observed_ui', 'reference': 'legacy prose', 'validated': True}")
+        script.write_text(code, encoding='utf-8')
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        finding = self.finding(receipt)
+        finding['validated'] = True
+        finding['_rule_provenance_valid'] = True
+        result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
+        self.assertIsNone(result['findings'][0]['_provenance_error'])
+        self.assertEqual(result['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertFalse(result['findings'][0]['_rule_provenance_valid'])
+
+    def test_negative_signed_execution_ignores_missing_rule_provenance(self):
+        script = self.script(False)
+        code = script.read_text(encoding='utf-8').replace(
+            "{'source': 'specification', 'reference': 'Reimbursement must not exceed original payment'}",
+            "{'source': 'observed_ui', 'reference': 'legacy prose'}")
+        script.write_text(code, encoding='utf-8')
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        finding = self.finding(receipt)
+        result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
+        self.assertEqual(result['findings'][0]['verification_status'], 'NOT_REPRODUCED',
+                         result['findings'][0].get('verification_reason'))
+
+    def test_authenticated_receipt_replaces_stale_not_executed_draft(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        draft_verification = {
+            'predicate': 'business_rule_must_hold',
+            'rule': {'source': 'agent_inference', 'reference': 'draft only'},
+            'invariant': deepcopy(receipt['parsed_result']['verification']['invariant']),
+            'execution': {'status': 'NOT_EXECUTED', 'missing_precondition': 'backend pending'},
+        }
+        finding['verification'] = deepcopy(draft_verification)
+        finding['execution'] = deepcopy(draft_verification['execution'])
+        result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
+        normalized = result['findings'][0]
+        self.assertEqual(normalized['verification_status'], 'CONFIRMED')
+        self.assertEqual(normalized['agent_draft_verification'], draft_verification)
+        self.assertEqual(normalized['agent_draft_execution']['status'], 'NOT_EXECUTED')
+        self.assertIn('before', normalized['verification'])
+        self.assertNotIn('execution', normalized)
+
+    def test_post_execution_contradiction_is_not_replaced_by_receipt(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        finding['verification']['actions'][0]['request']['body'] = {'invented': True}
+        result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
+        normalized = result['findings'][0]
+        self.assertEqual(normalized['verification_status'], 'NEEDS_REVIEW')
+        self.assertEqual(normalized['_provenance_error'],
+                         'Finding verification differs from raw script output')
+
+    def test_declared_supplement_without_invariant_is_partial_coverage(self):
+        script = self.script(False)
+        source = script.read_text(encoding='utf-8')
+        source = source.replace(
+            "print('diagnostic output')",
+            "v['supplementary_scenarios'] = {'cancel_after_price_adjustment': "
+            "{'before': before, 'actions': actions, 'after': after}}\nprint('diagnostic output')")
+        source = source.replace(
+            "{'source': 'specification', 'reference': 'Reimbursement must not exceed original payment'}",
+            "{'source': 'agent_inference', 'reference': 'cross_flow_candidates.json XF-002'}")
+        script.write_text(source, encoding='utf-8')
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        finding = self.finding(receipt)
+        finding['cwe'] = ['CWE-841']
+        report = reconcile({
+            'findings': [finding],
+            '_cross_flow_candidates': [{
+                'id': 'XF-002',
+                'before_action_after': {'actions': [
+                    'Sub-scenario A: refund then cancel',
+                    'Sub-scenario B (separate reset): adjustment then cancel',
+                ]},
+            }],
+        }, self.reports, self.root)
+        normalized = normalize_report(report)
+        self.assertEqual(len(normalized['findings']), 1)
+        self.assertEqual(normalized['summary']['partial_coverage'], 1)
+        self.assertEqual(normalized['partial_coverage'][0]['status'], 'PARTIAL_COVERAGE')
+        self.assertIn('independent invariant', normalized['partial_coverage'][0]['reason'])
+
+    def test_setup_path_probe_is_visible_but_not_a_security_finding(self):
+        receipt = self.run_script(False)
+        finding = self.finding(receipt)
+        finding['title'] = 'Replay through demo-reset fixture'
+        report = {'findings': [finding], '_setup_paths': ['/api/demo/reset']}
+        normalized = normalize_report(reconcile(report, self.reports, self.root))
+        self.assertEqual(normalized['findings'], [])
+        self.assertEqual(len(normalized['excluded_setup_executions']), 1)
+        self.assertEqual(len(normalized['results']), 1)
+        self.assertEqual(normalized['results'][0]['presentation_status'],
+                         'EXCLUDED_SETUP_PATH')
 
     def test_fabricated_stdout_does_not_override_transport(self):
         receipt = self.run_script(False)

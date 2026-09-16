@@ -85,6 +85,12 @@ For each state-changing request, extract:
 }
 ```
 
+This shape describes an observed request. An unexecuted inferred action may be
+included only with `"inferred": true`, `"response_status": null`, and equal
+`ui_context.before_step`/`after_step` values pointing to the one sampled UI
+state that supports the inference. Never invent a response status or an
+after-state for an inferred action.
+
 ### 5. Extract Authentication Credentials
 
 Scan all request headers for auth patterns:
@@ -134,20 +140,20 @@ For each critical endpoint, assess which mutation types apply:
 Output `flows/{flow-name}/state_map.json`:
 ```json
 {
+  "schema_version": 2,
+  "observed_ui_rules_schema_version": 1,
   "target_url": "https://example.com/login",
   "flow_name": "{flow-name}",
   "recorded_at": "2024-01-15T10:30:00Z",
   "transitions": [...],
   "roles": [...],
-    "observed_ui_rules": [
-      {
-        "text": "One coupon per order",
-        "ui_step": 2,
-        "url": "https://example.com/checkout",
-        "related_transition": "apply_coupon",
-        "security_relevance": "Server must reject replay when UI control is disabled"
-      }
-    ],
+    "semantic_ui_capture": {
+      "status": "succeeded",
+      "artifact": "demo.json",
+      "ui_state_count": 4,
+      "no_relevant_rules_reason": "No security-relevant rule was visible in the sampled semantic states"
+    },
+    "observed_ui_rules": [],
     "critical_endpoints": [
     {
       "url": "https://api.example.com/orders/approve",
@@ -161,13 +167,17 @@ Output `flows/{flow-name}/state_map.json`:
 
 ### 10. Verify Output
 
+- Read and satisfy `crew/skills/analyze-har/OBSERVED_UI_RULES.md`. The backend
+  rejects new state maps whose raw pointers, steps, elements, HAR indexes,
+  values, provenance types, or schema versions do not validate.
 - Validate JSON structure
 - Confirm `flows/{flow-name}/state_map.json` exists
 - Confirm at least 1 transition exists
 - Confirm at least 1 role with credentials exists
 - Confirm at least 1 critical endpoint identified
-- Confirm `observed_ui_rules` exists (it may be empty only when no relevant
-  constraint or lifecycle state is visible)
+- Confirm `observed_ui_rules` follows version 1. It may be empty only when
+  semantic UI capture succeeded, its state count matches `demo.json`, and a
+  `no_relevant_rules_reason` is recorded.
 
 ## Important Notes
 
@@ -178,3 +188,6 @@ Output `flows/{flow-name}/state_map.json`:
 - **Cross-reference with demo.json** — use UI state order and semantic deltas to
   establish dependencies, and preserve visible rules for mutation design
 - **Flow isolation:** Read and write only inside `flows/{flow-name}/` for the active flow.
+- **Keep provenance types distinct:** visible text, UI affordance transitions,
+  API response fields, and agent inference are separate claims. Never promote
+  API JSON or inferred server policy to an observed UI fact.

@@ -18,7 +18,7 @@ class VerificationTests(unittest.TestCase):
     def business_rule(self, observed=True):
         return {'verification': {
             'predicate': 'business_rule_must_hold',
-            'rule': {'source': 'observed_ui', 'reference': 'UI step 5: cancel and complete visible together'},
+            'rule': {'source': 'specification', 'reference': 'Returns must not exceed the original payment'},
             'before': {'sequence': 1, 'status_code': 200, 'complete': True,
                        'request': {'method': 'GET'}, 'response': {'refund': 'pending'}},
             'actions': [
@@ -90,7 +90,23 @@ class VerificationTests(unittest.TestCase):
         record['verification']['rule'] = {'source': 'agent', 'reference': ''}
         status, reason = classify(record)
         self.assertEqual(status, 'NEEDS_REVIEW')
-        self.assertIn('user, specification, or observed-UI', reason)
+        self.assertIn('user, specification, or validated observed-UI', reason)
+
+    def test_positive_business_invariant_rejects_free_form_observed_ui(self):
+        record = self.business_rule(True)
+        record['verification']['rule'] = {
+            'source': 'observed_ui',
+            'reference': 'price-adjustment/state_map.json observed_ui_rules[2]',
+        }
+        status, reason = classify(record)
+        self.assertEqual(status, 'NEEDS_REVIEW')
+        self.assertIn('did not validate', reason)
+
+    def test_validated_observed_ui_can_confirm_positive_invariant(self):
+        record = self.business_rule(True)
+        record['verification']['rule'] = {'source': 'observed_ui', 'provenance': {}}
+        record['_rule_provenance_valid'] = True
+        self.assertEqual(classify(record)[0], 'CONFIRMED')
 
     def test_incomplete_negative_evidence_does_not_bypass_validation(self):
         record = self.business_rule(False)
@@ -148,32 +164,29 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(by_id['F-001']['verification_status'], 'NEEDS_REVIEW')
         self.assertEqual(by_id['F-003']['verification_status'], 'CONFIRMED')
 
-    def test_same_violation_from_multiple_sources_collapses(self):
-        # Regression: the state-lock bug reported by the crew's mutation script,
-        # its verified-delete stub, and the deterministic probe must collapse to
-        # the single strongest (the CONFIRMED probe finding); a different CWE
-        # (the auth bypass) must survive as its own finding.
-        conf = example()['verification']
-        for snap in (conf['before'], conf['action'], conf['after']):
-            snap['resource_id'] = '/api/dashboard/1'
+    def test_only_equivalent_action_chains_and_invariants_collapse(self):
+        verification = self.business_rule()['verification']
+        verification['invariant'] = {
+            'operator': 'sum_lte', 'terms': [['refund'], ['cancellation']],
+            'limit': ['originalAmount'],
+        }
+        duplicate = deepcopy(verification)
+        different_chain = deepcopy(verification)
+        different_chain['actions'][0]['request']['body'] = {'amount': 9999}
         findings = [
             {'id': 'F-001', 'source': 'MUTATION_SCRIPT', 'cwe': ['CWE-841'],
-             'url_tested': 'http://h/api/dashboard/1/parts/3', 'verification': 'CONFIRMED'},
-            {'id': 'F-003', 'source': 'STATE_LOCK_PROBE', 'cwe': ['CWE-841', 'CWE-670'],
-             'url_tested': 'http://h/api/dashboard/1/parts/1', 'verification': conf},
-            {'id': 'F-DEL', 'source': 'VERIFIED_DELETE', 'cwe': ['CWE-841'],
-             'url_tested': 'http://h/api/dashboard/1/parts/3',
-             'verification': {'predicate': 'approved_item_must_remain', 'rule': {'source': 'agent', 'reference': 'x'}}},
-            {'id': 'F-002', 'source': 'MUTATION_SCRIPT', 'cwe': ['CWE-287', 'CWE-300'],
-             'url_tested': 'http://h/api/login', 'verification': 'CONFIRMED'},
+             'url_tested': 'http://h/api/order', 'verification': verification},
+            {'id': 'F-002', 'source': 'MUTATION_SCRIPT', 'cwe': ['CWE-841'],
+             'url_tested': 'http://h/api/order', 'verification': duplicate},
+            {'id': 'F-003', 'source': 'MUTATION_SCRIPT', 'cwe': ['CWE-841'],
+             'url_tested': 'http://h/api/order', 'verification': different_chain},
         ]
-        n = normalize_report({'findings': findings, 'results': []})
-        ids = sorted(f['id'] for f in n['findings'])
-        self.assertEqual(ids, ['F-002', 'F-003'], 'three state-lock reports + one auth bug -> two distinct findings')
-        kept = {f['id']: f for f in n['findings']}
-        self.assertEqual(kept['F-003']['verification_status'], 'CONFIRMED')
-        self.assertEqual(sorted(kept['F-003'].get('deduplicated_from', [])), ['F-001', 'F-DEL'])
-        self.assertEqual(n['summary']['reported_findings'], 2)
+        normalized = normalize_report({'findings': findings, 'results': []})
+        self.assertEqual(len(normalized['findings']), 2)
+        kept = next(f for f in normalized['findings'] if f.get('deduplicated_from'))
+        self.assertEqual(kept['deduplicated_from'], ['F-002'])
+        self.assertIn('F-003', [f['id'] for f in normalized['findings']])
+        self.assertEqual(normalized['summary']['deduplicated_primary_chains'], 1)
 
     def test_deterministic_finding_not_clobbered_by_llm_evidence(self):
         # Regression: a STATE_LOCK_PROBE finding whose ID matched an LLM crew
@@ -207,7 +220,7 @@ class VerificationTests(unittest.TestCase):
         self.assertNotIn('execution', probe[0], 'crew NOT_EXECUTED stub must not overwrite probe')
         self.assertEqual(probe[0]['verification']['after']['item_ids'], [2])
 
-    def test_load_report_excludes_configured_setup_path_findings(self):
+    def test_load_report_exposes_configured_setup_path_findings_separately(self):
         import json
         import tempfile
         from pathlib import Path
@@ -229,5 +242,7 @@ class VerificationTests(unittest.TestCase):
             with patch.dict('os.environ', {'SETUP_PATHS': ''}):
                 out = load_report(path)
         self.assertEqual([finding['id'] for finding in out['findings']], ['F-REAL'])
+        self.assertEqual([item['id'] for item in out['excluded_setup_executions']],
+                         ['F-SETUP'])
 
 if __name__ == '__main__': unittest.main()

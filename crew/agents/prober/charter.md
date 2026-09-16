@@ -88,7 +88,7 @@ Read scripts from `mutations/{flow-name}/` and write reports to `reports/{flow-n
         "evidence": "exact request(s) + response(s) that prove the finding",
         "verification": {
           "predicate": "business_rule_must_hold",
-          "rule": {"source": "observed_ui", "reference": "UI step and exact visible rule"},
+          "rule": {"source": "observed_ui", "provenance": {"schema_version": 1, "source_run": "source-flow", "artifact": "state_map.json", "rule_id": "UIR-001", "fact_ids": ["UIR-001-F1"]}},
           "before": {"sequence": 1, "status_code": 200, "complete": true, "request": {}, "response": {}},
           "actions": [{"sequence": 2, "request": {}, "response": {}}],
           "after": {"sequence": 3, "status_code": 200, "complete": true, "request": {}, "response": {}},

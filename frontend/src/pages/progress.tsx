@@ -1,13 +1,31 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const STEPS = [
+const RECORDED_STEPS = [
   { key: 'record', label: 'Record', detail: 'Capturing the workflow' },
   { key: 'analyze', label: 'Analyze', detail: 'Mapping state & endpoints' },
   { key: 'mutate', label: 'Mutate', detail: 'Generating attack scripts' },
   { key: 'probe', label: 'Probe', detail: 'Running adversarial tests' },
   { key: 'report', label: 'Report', detail: 'Compiling findings' },
 ];
+
+const CROSS_FLOW_STEPS = [
+  { key: 'record', label: 'Source flows', detail: 'Loading selected flow evidence' },
+  { key: 'analyze', label: 'Application model', detail: 'Authenticating evidence and mapping state' },
+  { key: 'mutate', label: 'Conflict scenarios', detail: 'Identifying cross-flow interactions' },
+  { key: 'probe', label: 'Probe execution', detail: 'Running backend-owned executable probes' },
+  { key: 'report', label: 'Verification', detail: 'Verifying signed evidence and final verdicts' },
+];
+
+type RunMode = 'RECORDED_FLOW' | 'CROSS_FLOW';
+type ProgressMessage = {
+  phase: string;
+  message: string;
+  done: boolean;
+  error?: string | null;
+  run_mode: RunMode;
+  technical_detail?: string | null;
+};
 
 type StepStatus = 'pending' | 'active' | 'done' | 'error';
 
@@ -27,10 +45,11 @@ const PHASE_TO_STEP: Record<string, string> = {
 export default function ProgressPage() {
   const navigate = useNavigate();
   const [progress, setProgress] = useState<ProgressState>(
-    Object.fromEntries(STEPS.map(s => [s.key, 'pending' as StepStatus]))
+    Object.fromEntries(RECORDED_STEPS.map(s => [s.key, 'pending' as StepStatus]))
   );
   const [error, setError] = useState<string | null>(null);
-  const [rawMessages, setRawMessages] = useState<string[]>([]);
+  const [events, setEvents] = useState<ProgressMessage[]>([]);
+  const [runMode, setRunMode] = useState<RunMode>('RECORDED_FLOW');
   const [isComplete, setIsComplete] = useState(false);
   const [recordingDone, setRecordingDone] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -44,9 +63,12 @@ export default function ProgressPage() {
 
     es.addEventListener('progress', (e: MessageEvent) => {
       try {
-        const data = JSON.parse(e.data);
+        const data = JSON.parse(e.data) as ProgressMessage;
         const msg = data.message || '';
-        setRawMessages(prev => [...prev, msg]);
+        const eventMode: RunMode = data.run_mode === 'CROSS_FLOW' ? 'CROSS_FLOW' : 'RECORDED_FLOW';
+        const eventSteps = eventMode === 'CROSS_FLOW' ? CROSS_FLOW_STEPS : RECORDED_STEPS;
+        setRunMode(eventMode);
+        setEvents(prev => [...prev, { ...data, message: msg, run_mode: eventMode }]);
 
         const phase = data.phase;
         const isDone = data.done;
@@ -56,16 +78,16 @@ export default function ProgressPage() {
           const stepKey = PHASE_TO_STEP[phase];
 
           if (phase === 'complete') {
-            STEPS.forEach(s => { next[s.key] = 'done'; });
+            eventSteps.forEach(s => { next[s.key] = 'done'; });
             setIsComplete(true);
           } else if (phase === 'failed') {
-            STEPS.forEach(s => {
+            eventSteps.forEach(s => {
               if (next[s.key] === 'active') next[s.key] = 'error';
             });
             setError(data.error || 'Assessment failed');
             setIsComplete(true);
           } else if (stepKey) {
-            const idx = STEPS.findIndex(s => s.key === stepKey);
+            const idx = eventSteps.findIndex(s => s.key === stepKey);
             // Mark earlier steps done once a later phase begins (i < idx). The
             // current step (i === idx) becomes 'active' or 'done' per isDone —
             // but a step that's ALREADY 'done' must never regress back to
@@ -74,7 +96,7 @@ export default function ProgressPage() {
             // step (e.g. Probe done when findings.json lands) completes that
             // step itself too, not just the ones before it.
             for (let i = 0; i <= idx; i++) {
-              const s = STEPS[i];
+              const s = eventSteps[i];
               if (!s || next[s.key] === 'error') continue;
               if (i < idx) {
                 next[s.key] = 'done';
@@ -88,7 +110,7 @@ export default function ProgressPage() {
             // its files — e.g. Analyze done (state_map.json) → Mutate goes active
             // immediately, instead of waiting for the whole mutations/ dir to land.
             if (isDone) {
-              const nxt = STEPS[idx + 1];
+              const nxt = eventSteps[idx + 1];
               if (nxt && next[nxt.key] === 'pending') next[nxt.key] = 'active';
             }
           }
@@ -111,12 +133,16 @@ export default function ProgressPage() {
     return () => { es.close(); };
   }, []);
 
-  const recordingActive = progress['record'] === 'active' && !recordingDone;
+  const steps = runMode === 'CROSS_FLOW' ? CROSS_FLOW_STEPS : RECORDED_STEPS;
+  const recordingActive = runMode === 'RECORDED_FLOW' && progress['record'] === 'active' && !recordingDone;
+  const latestEvent = events[events.length - 1];
 
   return (
     <div>
       <div style={{ marginBottom: '2.5rem' }}>
-        <h1 style={{ fontSize: '1.4rem', margin: 0, fontWeight: 600, color: '#e2e8f0' }}>⚔️ Assessment</h1>
+        <h1 style={{ fontSize: '1.4rem', margin: 0, fontWeight: 600, color: '#e2e8f0' }}>
+          ⚔️ {runMode === 'CROSS_FLOW' ? 'Cross-flow assessment' : 'Assessment'}
+        </h1>
         {flowName && (
           <p style={{ color: '#64748b', marginBottom: 0, fontSize: '0.9rem' }}>
             Flow: <span style={{ color: '#94a3b8' }}>{flowName}</span>
@@ -125,9 +151,9 @@ export default function ProgressPage() {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {STEPS.map((step, i) => {
+        {steps.map((step, i) => {
           const status: StepStatus = progress[step.key] ?? 'pending';
-          const isLast = i === STEPS.length - 1;
+          const isLast = i === steps.length - 1;
           return (
             <div key={step.key} style={{ display: 'flex', gap: '1rem' }}>
               {/* indicator + connector */}
@@ -164,6 +190,19 @@ export default function ProgressPage() {
           );
         })}
       </div>
+
+      {latestEvent && (
+        <div
+          aria-live="polite"
+          style={{
+            marginTop: '1.75rem', background: '#101827', border: '1px solid #26344a',
+            borderRadius: 8, padding: '0.9rem 1rem', color: '#dbe5f1',
+            fontSize: '0.92rem', lineHeight: 1.5,
+          }}
+        >
+          {latestEvent.message}
+        </div>
+      )}
 
       {recordingActive && (
         <div style={{
@@ -203,7 +242,7 @@ export default function ProgressPage() {
         </div>
       )}
 
-      {recordingDone && (
+      {runMode === 'RECORDED_FLOW' && recordingDone && (
         <p style={{ marginTop: '2rem', color: '#64748b', fontSize: '0.9rem' }}>
           Recording finished.
         </p>
@@ -231,10 +270,10 @@ export default function ProgressPage() {
         </button>
       )}
 
-      {rawMessages.length > 0 && (
+      {events.length > 0 && (
         <details style={{ marginTop: '2.5rem' }}>
           <summary style={{ cursor: 'pointer', color: '#e6c15a', fontSize: '0.95rem', fontWeight: 700 }}>
-            Event log ({rawMessages.length})
+            Technical details ({events.length})
           </summary>
           <pre style={{
             background: '#0b0b14', padding: '1rem', borderRadius: 6,
@@ -242,7 +281,10 @@ export default function ProgressPage() {
             marginTop: '0.75rem', color: '#e2e8f0', whiteSpace: 'pre-wrap',
             border: '1px solid #1e293b',
           }}>
-            {rawMessages.map((m, i) => `${i + 1}. ${m}`).join('\n')}
+            {events.map((event, i) => {
+              const detail = event.technical_detail ? `\n   ${event.technical_detail}` : '';
+              return `${i + 1}. [${event.run_mode}] ${event.message}${detail}`;
+            }).join('\n')}
           </pre>
         </details>
       )}
@@ -258,10 +300,8 @@ function Indicator({ status }: { status: StepStatus }) {
   };
   if (status === 'done') {
     return (
-      <div style={{ ...base, background: '#16a34a', color: 'white' }}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
+      <div role="img" aria-label="Complete" style={{ ...base, background: '#16a34a', color: 'white', fontSize: '0.8rem', fontWeight: 800 }}>
+        <span aria-hidden="true">✓</span>
       </div>
     );
   }

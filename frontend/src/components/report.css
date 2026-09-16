@@ -84,6 +84,15 @@
 .report-comparison h4, .report-guidance h4, .finding-body > h4 { margin: 20px 0 7px; color: var(--report-gold); font-size: 14px; }
 .report-comparison p { margin: 0; color: #d2d1dc; }
 .report-summary { margin: 0 0 20px; color: #dedde5; white-space: pre-wrap; }
+.report-count-context { margin: -8px 0 20px; color: var(--report-muted); font-size: 15px; }
+.report-execution-summary { margin: 0 0 28px; padding: 20px 22px; border: 1px solid #34384d; border-radius: 14px; background: rgba(19, 21, 31, .72); }
+.report-execution-summary > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.report-execution-summary h3 { margin: 0; font-size: 20px; }
+.report-execution-summary dl { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; margin: 16px 0 0; }
+.report-execution-summary dl div { padding: 12px; border-radius: 10px; background: rgba(255,255,255,.035); }
+.report-execution-summary dt { color: var(--report-muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.report-execution-summary dd { margin: 5px 0 0; color: var(--report-text); font-size: 22px; font-weight: 750; }
+.report-execution-summary > p { margin: 15px 0 0; color: var(--report-muted); line-height: 1.55; }
 .report-guidance { border-top: 1px solid var(--report-line); margin-top: 22px; }
 
 .report-notice { border: 1px solid #67582e; border-left: 3px solid var(--report-gold); border-radius: 8px; padding: 12px 15px; color: #eadcae; background: rgba(240, 201, 91, .07); }
@@ -167,6 +176,7 @@
 .fb-report-page button:focus-visible, .fb-report summary:focus-visible { outline: 3px solid #ffe9a8; outline-offset: 4px; }
 
 @media (max-width: 760px) {
+  .report-execution-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .report-overview { grid-template-columns: 1fr; }
   .report-risk-label { justify-self: start; }
   .report-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

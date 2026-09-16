@@ -218,6 +218,8 @@ async def stream_progress():
                     "message": event.message,
                     "done": event.done,
                     "error": event.error,
+                    "run_mode": event.run_mode.value,
+                    "technical_detail": event.technical_detail,
                 })
                 yield f"event: progress\ndata: {data}\n\n"
 
@@ -311,18 +313,18 @@ async def list_reports():
 
         summary = data.get("summary", {}) or {}
         results = data.get("results", []) or []
-        # New schema: findings[] is the vulnerability list (may include
-        # non-script findings like the auth check). Old schema: count results.
+        # Keep finding and execution cardinalities separate. load_report has
+        # already replaced agent summary values with backend-derived counts.
         findings = data.get("findings")
         if isinstance(findings, list):
-            bugs_found = len(findings)
+            finding_count = summary.get("finding_count", len(findings))
             critical = len([f for f in findings if isinstance(f, dict) and f.get("severity") == "Critical"])
         else:
             # Legacy schema: script results + free-form additional_observations
             # (the detail page counts both, so keep the index consistent).
-            bugs_found = summary.get("bugs_found", 0)
+            finding_count = summary.get("finding_count", summary.get("reported_findings", 0))
             obs = data.get("additional_observations") or []
-            bugs_found += len(obs)
+            finding_count += len(obs)
             critical = len([o for o in obs if isinstance(o, dict) and o.get("severity") == "Critical"])
         # mtime as a stable, sortable "when" that needs no extra metadata
         try:
@@ -337,14 +339,20 @@ async def list_reports():
             "target_url": data.get("target_url", ""),
             "run_timestamp": data.get("run_timestamp", ""),
             "modified": modified,
-            "bugs_found": bugs_found,
+            "bugs_found": finding_count,  # legacy API alias
+            "finding_count": finding_count,
             "confirmed": summary.get("confirmed", 0),
             "needs_review": summary.get("needs_review", 0),
             "not_executed": summary.get("not_executed", 0),
             "critical_findings": critical,
             "rejected": summary.get("rejected", 0),
             "errors": summary.get("errors", 0),
-            "total_scripts": data.get("total_scripts", len(results)),
+            "total_scripts": summary.get("planned_executions", data.get("total_scripts", len(results))),
+            "execution_attempts": summary.get("execution_attempts", len(results)),
+            "completed_executions": summary.get("completed_executions", 0),
+            "pending_execution": summary.get("pending_execution", 0),
+            "execution_errors": summary.get("execution_errors", 0),
+            "deduplicated_execution_results": summary.get("deduplicated_execution_results", 0),
         })
 
     # Most recently modified first

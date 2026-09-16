@@ -10,6 +10,9 @@ export interface ScriptResult {
   error_message: string | null;
   verification_reason?: string;
   finding_id?: string | null;
+  execution_id?: string;
+  presentation_status?: string;
+  presentation_reason?: string;
   execution?: { status: string; missing_precondition?: string; next_step?: string };
 }
 
@@ -51,6 +54,14 @@ interface ResolvedInvariant { operator: string; terms: string[][]; limit: string
 interface InvariantView { operands: { label: string; value: number; path: string }[]; total: number; maximum: number; maximumLabel: string; statement: string; }
 interface RemediationView { cwe: string; severity: string; endpoints: string[]; issue: string; evidence: string; fixes: string[]; }
 interface TraceView { label: string; role: string; summary: string; capture: Capture; }
+interface PartialCoverage {
+  id: string; title: string; source_finding_id?: string; candidate_id?: string;
+  execution_id?: string; script?: string; status: 'PARTIAL_COVERAGE'; reason: string;
+}
+interface ExcludedSetupExecution {
+  id?: string; title?: string; script?: string; execution_id?: string;
+  status: 'EXCLUDED_SETUP_PATH'; reason: string;
+}
 
 export function evidenceCaptures(finding: Finding): Capture[] {
   // A backend trace, even an empty one, takes precedence over agent claims.
@@ -78,6 +89,8 @@ export interface FindingsReport {
   total_scripts: number;
   findings?: Finding[];
   results: ScriptResult[];
+  partial_coverage?: PartialCoverage[];
+  excluded_setup_executions?: ExcludedSetupExecution[];
   summary: {
     bugs_found: number;
     critical_findings?: number;
@@ -85,6 +98,22 @@ export interface FindingsReport {
     errors: number;
     not_executed?: number;
     potential_critical_findings?: number;
+    finding_count?: number;
+    planned_executions?: number;
+    execution_attempts?: number;
+    completed_executions?: number;
+    pending_execution?: number;
+    missing_receipts?: number;
+    execution_errors?: number;
+    trace_mismatches?: number;
+    controls_held?: number;
+    not_reproduced?: number;
+    deduplicated_execution_results?: number;
+    deduplicated_primary_chains?: number;
+    partial_coverage?: number;
+    excluded_setup_executions?: number;
+    unlinked_execution_results?: number;
+    execution_result_counts?: Record<string, number>;
   };
   additional_observations?: LegacyObservation[];
 }
@@ -251,10 +280,18 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
   const coverage = findings.filter(f => ['NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR'].includes(f.verification_status || ''));
   const notExecuted = report.summary.not_executed ?? findings.filter(f => f.verification_status === 'NOT_EXECUTED').length;
   const errors = Math.max(report.summary.errors, report.results.filter(r => (r.outcome === 'ERROR' || r.outcome === 'CHECK_ERROR')).length);
-  const heldChecks = report.results.filter(r => r.outcome === 'NOT_REPRODUCED' || r.outcome === 'REJECTED').length;
   const visibleHeld = coverage.filter(f => f.verification_status === 'NOT_REPRODUCED').length;
-  const deduplicatedHeld = Math.max(0, heldChecks - visibleHeld);
+  const findingCount = report.summary.finding_count ?? findings.length;
+  const executionAttempts = report.summary.execution_attempts ?? report.results.length;
+  const plannedExecutions = report.summary.planned_executions ?? report.total_scripts ?? executionAttempts;
+  const completedExecutions = report.summary.completed_executions ?? executionAttempts;
+  const pendingExecutions = report.summary.pending_execution ?? Math.max(0, plannedExecutions - completedExecutions);
+  const executionErrors = report.summary.execution_errors ?? errors;
+  const traceMismatches = report.summary.trace_mismatches ?? 0;
   const deduplicatedIds = findings.flatMap(f => f.deduplicated_from || []);
+  const partialCoverage = report.partial_coverage || [];
+  const excludedSetup = report.excluded_setup_executions || [];
+  const executionResultCounts = report.summary.execution_result_counts || {};
   const statusLabel: Record<string, string> = {
     CONFIRMED: 'Confirmed vulnerability', NEEDS_REVIEW: 'Needs review',
     NOT_REPRODUCED: 'Not reproduced', NOT_EXECUTED: 'Not executed', CHECK_ERROR: 'Check error',
@@ -316,10 +353,24 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       <span className="report-risk-label">{confirmed.some(f => f.severity?.toLowerCase() === 'critical') ? 'Critical action' : confirmed.length ? 'Action required' : review.length ? 'Review required' : 'No confirmed issues'}</span>
     </section>
     <div className="report-metrics" aria-label="Assessment summary">
-      {[[confirmed.length, 'Confirmed', 'confirmed', ''], [review.length, 'Needs review', 'review', ''], [heldChecks, 'Controls held', 'held', deduplicatedHeld ? `${visibleHeld} scenarios + ${deduplicatedHeld} deduplicated` : ''], [notExecuted + errors, 'Coverage gaps', 'gap', '']].map(([value, label, tone, detail]) =>
+      {[[confirmed.length, 'Confirmed findings', 'confirmed', ''], [review.length, 'Findings needing review', 'review', ''], [visibleHeld, 'Not-reproduced findings', 'held', 'security findings'], [notExecuted + errors, 'Finding coverage gaps', 'gap', '']].map(([value, label, tone, detail]) =>
         <div className={`report-metric metric-${tone}`} key={label}><strong>{value}</strong><span>{label}</span>{detail && <small>{detail}</small>}</div>)}
     </div>
-    {(notExecuted > 0 || errors > 0) && <p className="report-notice" role="status">Coverage is incomplete: {notExecuted} not executed, {errors} execution errors. These are unknown results, not a clean bill of health.</p>}
+    <p className="report-count-context">Finding verdicts: <strong>{findingCount}</strong> normalized findings after deduplication.</p>
+    <section className="report-execution-summary" aria-label="Execution summary">
+      <div><p className="report-eyebrow">Backend-derived</p><h3>Execution attempts</h3></div>
+      <dl>
+        <div><dt>Planned</dt><dd>{plannedExecutions}</dd></div>
+        <div><dt>Attempts</dt><dd>{executionAttempts}</dd></div>
+        <div><dt>Completed</dt><dd>{completedExecutions}</dd></div>
+        <div><dt>Pending</dt><dd>{pendingExecutions}</dd></div>
+        <div><dt>Errors</dt><dd>{executionErrors}</dd></div>
+        <div><dt>Trace mismatches</dt><dd>{traceMismatches}</dd></div>
+      </dl>
+      <p>Primary execution results: <strong>{executionResultCounts.needs_review || 0}</strong> need review, <strong>{executionResultCounts.not_reproduced || 0}</strong> not reproduced, <strong>{executionResultCounts.confirmed || 0}</strong> confirmed, and <strong>{executionResultCounts.check_error || 0}</strong> check errors.</p>
+      <p>Deduplicated primary chains: <strong>{report.summary.deduplicated_primary_chains ?? deduplicatedIds.length}</strong>. All {executionAttempts} authenticated attempts remain listed below.</p>
+    </section>
+    {(notExecuted > 0 || errors > 0 || pendingExecutions > 0 || executionErrors > 0) && <p className="report-notice" role="status">Coverage is incomplete: {notExecuted} not executed findings, {pendingExecutions} pending executions, {executionErrors} execution errors. These are unknown results, not a clean bill of health.</p>}
 
     <section className="report-section">
       <div className="report-section-heading"><div><p className="report-eyebrow">Evidence-backed</p><h2>Confirmed vulnerabilities</h2></div><span>{confirmed.length}</span></div>
@@ -333,15 +384,26 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
     </section>}
 
     {coverage.length > 0 && <section className="report-section">
-      <div className="report-section-heading"><div><p className="report-eyebrow">Coverage</p><h2>Controls validated</h2></div><span>{coverage.length}{deduplicatedHeld ? ` + ${deduplicatedHeld} deduplicated` : ''}</span></div>
-      {!!deduplicatedIds.length && <p className="report-section-copy">Deduplicated checks represented below: {deduplicatedIds.join(', ')}. Every execution remains visible in the probe execution log.</p>}
+      <div className="report-section-heading"><div><p className="report-eyebrow">Security findings</p><h2>Not reproduced</h2></div><span>{visibleHeld}</span></div>
+      {!!deduplicatedIds.length && <p className="report-section-copy">Deduplicated equivalent primary chains: {deduplicatedIds.join(', ')}. Every execution attempt remains visible in the probe execution log.</p>}
       {coverage.map(renderFinding)}
     </section>}
 
-    <details className="report-appendix"><summary>Probe execution log <span>{report.results.length} attempts</span></summary>
+    {partialCoverage.length > 0 && <section className="report-section report-partial-coverage">
+      <div className="report-section-heading"><div><p className="report-eyebrow">Non-verdict evidence</p><h2>Partial coverage</h2></div><span>{partialCoverage.length} supplementary scenarios</span></div>
+      <p className="report-section-copy">These traces support analysis but lack an independently evaluated invariant and therefore are not security findings or execution verdicts.</p>
+      {partialCoverage.map(item => <article className="report-guidance" key={item.id}><h3>{item.title}</h3><p>{item.reason}</p><p className="report-muted">Candidate: {item.candidate_id || 'not recorded'} · Primary finding: {item.source_finding_id || 'not recorded'} · Execution: {item.execution_id || 'not recorded'}</p></article>)}
+    </section>}
+
+    {excludedSetup.length > 0 && <section className="report-section report-excluded-setup">
+      <div className="report-section-heading"><div><p className="report-eyebrow">Fixture execution</p><h2>Excluded setup-path scenarios</h2></div><span>{excludedSetup.length}</span></div>
+      {excludedSetup.map(item => <article className="report-guidance" key={item.execution_id || item.id}><h3>Excluded setup-path scenario</h3><p>{item.reason}</p><p className="report-muted">{item.script} · Execution: {item.execution_id}</p></article>)}
+    </section>}
+
+    <details className="report-appendix"><summary>Probe execution log <span>{executionAttempts} attempts</span></summary>
       <p className="report-muted">Individual checks are supporting evidence, not additional vulnerabilities.</p>
       {report.results.length === 0 && <p>No execution records available.</p>}
-      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={i} open={result.outcome === 'NOT_EXECUTED'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</div></details>)}</div>
+      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={result.execution_id || i} open={result.outcome === 'NOT_EXECUTED'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.presentation_status === 'EXCLUDED_SETUP_PATH' ? 'Excluded setup-path scenario' : result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.presentation_reason && <p><strong>{result.presentation_reason}</strong></p>}{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</div></details>)}</div>
     </details>
   </section>;
 }

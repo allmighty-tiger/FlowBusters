@@ -38,6 +38,11 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
    Read `setup_paths` and never target, fuzz, race, or report those endpoints.
    They may be called only to establish a clean test precondition, and must not
    count as an action in the alleged vulnerability.
+   Only rules with schema version 1 and exact structured facts are eligible as
+   observed-UI provenance. Preserve `source_run`, `artifact`, `rule_id`, and
+   selected `fact_ids` in the script's verification rule. A string path into a
+   state map is not provenance. An API fact or agent inference alone may guide
+   a probe but may not be labelled observed UI.
 4. **Attack brainstorm (do this BEFORE writing any scripts):** for each critical endpoint, enumerate every state-changing field in its request body and think through ALL of these questions — write your shortlist of attack vectors to chat before generating scripts:
    - Which rules appear only in UI context? Prefer a direct API probe that violates
      each high-impact rule. At least one generated mutation MUST target an observed

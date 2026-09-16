@@ -42,7 +42,10 @@ Supported predicates include `approved_item_must_remain` and the generic
 `business_rule_must_hold` state-transition contract.
 
 For `business_rule_must_hold`, provide:
-- `rule`: `{source: user | specification | observed_ui, reference: exact rule or UI step}`
+- `rule`: user/specification rules use an explicit `reference`; observed UI uses
+  `{source: observed_ui, provenance: {schema_version: 1, source_run, artifact:
+  state_map.json, rule_id, fact_ids}}` and must include a validated raw UI fact.
+  API state and agent inference are separate non-confirming provenance types.
 - complete `before` and `after` state reads with `sequence`, `status_code: 200`,
   `complete: true`, and captured `request`/`response`
 - non-empty `actions`, each with increasing `sequence` and captured

@@ -10,7 +10,10 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+import time
 import uuid
+
+from backend.runtime.ui_provenance import UIProvenanceError, validate_rule_reference
 
 
 def canonical(value):
@@ -248,26 +251,156 @@ def trace_error(record, receipt):
     return None
 
 
+def _is_stale_unexecuted_draft(verification):
+    """Recognize a pre-execution plan without accepting claimed captures."""
+    if not isinstance(verification, dict):
+        return False
+    execution = verification.get('execution')
+    if not isinstance(execution, dict) or execution.get('status') != 'NOT_EXECUTED':
+        return False
+    return not any(key in verification for key in ('before', 'action', 'actions', 'after'))
+
+
+def _candidate_declares_separate_scenarios(candidate):
+    actions = ((candidate.get('before_action_after') or {}).get('actions')
+               if isinstance(candidate, dict) else None)
+    if not isinstance(actions, list):
+        return False
+    text = ' '.join(str(action).lower() for action in actions)
+    return 'sub-scenario' in text or 'separate reset' in text
+
+
+def _partial_coverage_for(finding, candidates):
+    """Expose declared but non-atomic supplementary captures without verdicts."""
+    verification = finding.get('verification')
+    if not isinstance(verification, dict):
+        return []
+    rule = verification.get('rule') or {}
+    reference = str(rule.get('reference') or '') if isinstance(rule, dict) else ''
+    match = __import__('re').search(r'\bXF-\d+\b', reference)
+    candidate_id = match.group(0) if match else None
+    candidate = next((item for item in candidates
+                      if isinstance(item, dict) and item.get('id') == candidate_id), None)
+    scenarios = verification.get('supplementary_scenarios')
+    if not candidate or not _candidate_declares_separate_scenarios(candidate) or not isinstance(scenarios, dict):
+        return []
+    labels = {
+        'cancel_after_price_adjustment': 'Cancel after price adjustment',
+        'refund_amount_tamper': 'Refund amount override',
+    }
+    partial = []
+    for scenario_id, scenario in scenarios.items():
+        if not isinstance(scenario, dict):
+            missing = ['before/actions/after', 'invariant', 'violation']
+        else:
+            missing = []
+            if not (isinstance(scenario.get('before'), dict)
+                    and isinstance(scenario.get('actions'), list) and scenario['actions']
+                    and isinstance(scenario.get('after'), dict)):
+                missing.append('complete before/actions/after')
+            if not isinstance(scenario.get('invariant'), dict):
+                missing.append('independent invariant')
+            violation = scenario.get('violation')
+            if not isinstance(violation, dict) or type(violation.get('observed')) is not bool:
+                missing.append('independent violation result')
+        if not missing:
+            # A complete supplementary record must still be authenticated by an
+            # independently attributed trace before it can become a verdict.
+            continue
+        partial.append({
+            'id': f"{finding.get('id', 'finding')}:{scenario_id}",
+            'scenario_id': scenario_id,
+            'title': labels.get(scenario_id, str(scenario_id).replace('_', ' ').capitalize()),
+            'source_finding_id': finding.get('id'),
+            'candidate_id': candidate_id,
+            'execution_id': finding.get('execution_id'),
+            'script': finding.get('script'),
+            'status': 'PARTIAL_COVERAGE',
+            'reason': ('Captured supplementary trace is not an independent tested verdict; missing '
+                       + ', '.join(missing) + '.'),
+            'before': deepcopy(scenario.get('before')) if isinstance(scenario, dict) else None,
+            'actions': deepcopy(scenario.get('actions', [])) if isinstance(scenario, dict) else [],
+            'after': deepcopy(scenario.get('after')) if isinstance(scenario, dict) else None,
+        })
+    return partial
+
+
 def reconcile(data, report_dir, root):
     """Never trust report-provided provenance flags or reconstructed result rows."""
     receipts = load_receipts(report_dir, root)
+    report_dir = Path(report_dir).resolve()
+    run_dir = report_dir.parent.parent if report_dir.parent.name == 'reports' else report_dir.parent
+    flow = report_dir.name
+    planned = [
+        *(('MUTATION_SCRIPT', path.name) for path in sorted((run_dir / 'mutations' / flow).glob('*.py'))),
+        *(('VERIFICATION_PROBE', path.name) for path in sorted((run_dir / 'verification_probes' / flow).glob('*.py'))),
+    ]
+    terminal_receipts = {
+        identifier: receipt for identifier, receipt in receipts.items()
+        if isinstance(receipt.get('completed_at'), str) and receipt['completed_at'].strip()
+        and type(receipt.get('exit_code')) is int
+    }
+
+    def attach_rule_provenance(record):
+        record.pop('_rule_provenance_valid', None)
+        record.pop('_rule_provenance_error', None)
+        record.pop('_validated_rule_provenance', None)
+        verification = record.get('verification')
+        if (not isinstance(verification, dict)
+                or verification.get('predicate') != 'business_rule_must_hold'):
+            return
+        rule = verification.get('rule')
+        if not isinstance(rule, dict) or rule.get('source') != 'observed_ui':
+            return
+        try:
+            record['_validated_rule_provenance'] = validate_rule_reference(rule, run_dir, root=root)
+            record['_rule_provenance_valid'] = True
+        except UIProvenanceError as exc:
+            record['_rule_provenance_valid'] = False
+            record['_rule_provenance_error'] = str(exc)
+
     findings = data.get('findings') or []
     for finding in findings:
         finding.pop('_provenance_error', None)
+        finding.pop('deduplicated_from', None)
+        finding.pop('deduplicated_into', None)
         # Older cross-flow prompts used CROSS_FLOW for analytical origin. Bind
         # only when the backend has exactly one signed mutation receipt for the
         # named script; never guess between reruns or verification probes.
-        if not finding.get('execution_id') and finding.get('script') and finding.get('source') == 'CROSS_FLOW':
+        if not finding.get('execution_id') and finding.get('script'):
             candidates = [receipt for receipt in receipts.values()
                           if receipt.get('script') == finding['script']
-                          and receipt.get('source') == 'MUTATION_SCRIPT']
+                          and (receipt.get('source') == finding.get('source')
+                               or finding.get('source') == 'CROSS_FLOW'
+                               and receipt.get('source') == 'MUTATION_SCRIPT')]
             if len(candidates) == 1:
-                finding['analysis_source'] = 'CROSS_FLOW'
-                finding['source'] = 'MUTATION_SCRIPT'
+                if finding.get('source') == 'CROSS_FLOW':
+                    finding['analysis_source'] = 'CROSS_FLOW'
+                    finding['source'] = 'MUTATION_SCRIPT'
                 finding['execution_id'] = candidates[0]['execution_id']
         receipt = receipts.get(finding.get('execution_id'))
+        parsed_verification = ((receipt.get('parsed_result') or {}).get('verification')
+                               if receipt else None)
+        if isinstance(parsed_verification, dict) and (
+                not isinstance(finding.get('verification'), dict)
+                or _is_stale_unexecuted_draft(finding.get('verification'))):
+            if 'verification' in finding:
+                finding['agent_draft_verification'] = deepcopy(finding['verification'])
+            finding['verification'] = deepcopy(parsed_verification)
+        if (isinstance(parsed_verification, dict)
+                and isinstance(finding.get('execution'), dict)
+                and finding['execution'].get('status') == 'NOT_EXECUTED'):
+            finding['agent_draft_execution'] = deepcopy(finding.pop('execution'))
         finding['_provenance_error'] = trace_error(finding, receipt) if receipt else 'No authenticated execution receipt for this finding'
         finding['execution_trace'] = deepcopy(receipt.get('trace', [])) if receipt else []
+        attach_rule_provenance(finding)
+    partial_coverage = []
+    cross_flow_candidates = data.get('_cross_flow_candidates')
+    if not isinstance(cross_flow_candidates, list):
+        cross_flow_candidates = []
+    for finding in findings:
+        partial_coverage.extend(_partial_coverage_for(finding, cross_flow_candidates))
+    data['_partial_coverage'] = partial_coverage
     results = []
     for identifier, receipt in receipts.items():
         parsed = receipt.get('parsed_result') or {}
@@ -279,15 +412,66 @@ def reconcile(data, report_dir, root):
             'verification': deepcopy(parsed.get('verification')), 'parsed_result': deepcopy(parsed),
             'error_message': receipt.get('error') or ('Script execution failed' if receipt['exit_code'] else None)}
         row['_provenance_error'] = trace_error(row, receipt)
+        attach_rule_provenance(row)
         linked = [f for f in findings if f.get('execution_id') == identifier]
         if len(linked) == 1:
             row['finding_id'] = linked[0]['id']
         results.append(row)
+    terminal_plans = {
+        (receipt.get('source'), receipt.get('script'))
+        for receipt in terminal_receipts.values()
+    }
+    pending = sum(plan not in terminal_plans for plan in planned)
+    executor_failures = {
+        identifier for identifier, receipt in terminal_receipts.items()
+        if receipt.get('error') or receipt.get('exit_code') != 0
+    }
+    parse_failures = {
+        identifier for identifier, receipt in terminal_receipts.items()
+        if not isinstance(receipt.get('parsed_result'), dict)
+    }
+    # trace_error also evaluates supported business invariants. An unsupported
+    # predicate is a verdict/provenance limitation, not a transport trace
+    # mismatch and must not turn a completed authenticated execution into an
+    # execution error.
+    semantic_failures = {
+        'Business invariant has no supported executable predicate',
+        'Invariant paths cannot be evaluated against captured state',
+        'Claimed invariant result contradicts captured state',
+    }
+    trace_failures = {
+        row['execution_id'] for row in results
+        if row['execution_id'] in terminal_receipts
+        and row['execution_id'] not in executor_failures
+        and row['execution_id'] not in parse_failures
+        and row.get('_provenance_error')
+        and row['_provenance_error'] not in semantic_failures
+    }
+    raw_receipt_count = len(list((report_dir / 'executions').glob('*.json')))
+    data['_execution_summary'] = {
+        'derived': True,
+        'planned_executions': len(planned),
+        'execution_attempts': len(receipts),
+        'completed_executions': len(terminal_receipts),
+        'pending_execution': pending,
+        'missing_receipts': pending,
+        'execution_errors': len(executor_failures | parse_failures | trace_failures),
+        'trace_mismatches': len(trace_failures),
+        'untrusted_receipts': max(0, raw_receipt_count - len(receipts)),
+    }
     data['results'] = results
     return data
 
 
-async def execute_run(run_dir, flow, root, progress):
+def _readable_scenario_name(script):
+    words = Path(script).stem.replace('_', '-').split('-')
+    while words and words[0].isdigit():
+        words.pop(0)
+    label = ' '.join(word for word in words if word).strip() or Path(script).stem
+    return label[0].upper() + label[1:] if label else 'Unnamed scenario'
+
+
+async def execute_run(run_dir, flow, root, progress, execution_progress=None):
     run_dir = Path(run_dir)
     reports = run_dir / 'reports' / flow
     reports.mkdir(parents=True, exist_ok=True)
@@ -299,15 +483,54 @@ async def execute_run(run_dir, flow, root, progress):
     # Extra verification probes are separate programs/receipts, never relabelled mutations.
     extra = run_dir / 'verification_probes' / flow
     scripts += sorted(extra.glob('*.py'))
-    for script in scripts:
+    completed = 0
+    attempts = 0
+    errors = 0
+    total = len(scripts)
+    for index, script in enumerate(scripts, start=1):
         source = 'VERIFICATION_PROBE' if script.parent == extra else 'MUTATION_SCRIPT'
         matching = [f for f in draft.get('findings', []) if f.get('script') == script.name
                     and (f.get('source', 'MUTATION_SCRIPT') == source
                          or source == 'MUTATION_SCRIPT' and f.get('source') == 'CROSS_FLOW')]
         triggered_by = matching[0].get('triggered_by') if len(matching) == 1 else None
-        progress(f'Executing {script.name} with transport capture')
-        receipt = await execute(script, reports, root=root, cwd=run_dir, source=source, triggered_by=triggered_by)
+        scenario_name = _readable_scenario_name(script)
+        if execution_progress is not None:
+            execution_progress({
+                'stage': 'started',
+                'message': f'Executing probe {index}/{total}: {scenario_name}',
+                'technical_detail': f'Script: {script.name}',
+            })
+        else:
+            progress(f'Executing {script.name} with transport capture')
+        probe_started = time.monotonic()
+        attempts += 1
+        try:
+            receipt = await execute(
+                script, reports, root=root, cwd=run_dir, source=source,
+                triggered_by=triggered_by)
+        except Exception:
+            if execution_progress is not None:
+                execution_progress({
+                    'stage': 'failed',
+                    'message': (f'Probe {index}/{total} failed: {scenario_name} '
+                                f'({time.monotonic() - probe_started:.1f}s)'),
+                    'technical_detail': f'Script: {script.name}',
+                })
+            raise
+        completed += 1
         parsed = receipt.get('parsed_result') or {}
+        failed = (receipt.get('exit_code') != 0 or not isinstance(receipt.get('parsed_result'), dict)
+                  or bool(receipt.get('error')))
+        errors += int(failed)
+        if execution_progress is not None:
+            outcome = 'failed' if failed else 'completed'
+            execution_progress({
+                'stage': outcome,
+                'message': (f'Probe {index}/{total} {outcome}: {scenario_name} '
+                            f'({time.monotonic() - probe_started:.1f}s)'),
+                'technical_detail': (f'Script: {script.name}; '
+                                     f'execution_id: {receipt.get("execution_id", "missing")}'),
+            })
         if not matching and parsed.get('verification'):
             finding = {'id': f'EXEC-{receipt["execution_id"]}', 'title': parsed.get('title', script.stem),
                 'script': script.name, 'source': source, 'cwe': [], 'severity': 'Not assessed'}
@@ -323,6 +546,15 @@ async def execute_run(run_dir, flow, root, progress):
             if not finding.get('verification'):
                 finding['verification'] = deepcopy(parsed.get('verification'))
     findings_path.write_text(json.dumps(draft, indent=2), encoding='utf-8')
+    if execution_progress is not None:
+        attempt_noun = 'attempt' if attempts == 1 else 'attempts'
+        error_noun = 'error' if errors == 1 else 'errors'
+        execution_progress({
+            'stage': 'summary',
+            'message': (f'Execution complete: {completed}/{total} probes completed; '
+                        f'{attempts} execution {attempt_noun}; {errors} {error_noun}'),
+            'technical_detail': 'Counts derived from terminal backend execution receipts',
+        })
 
 
 async def execute_state_lock(run_dir, flow, root, target_url):
