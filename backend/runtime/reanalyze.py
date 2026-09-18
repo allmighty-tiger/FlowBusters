@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shutil
+from datetime import datetime
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -187,7 +188,7 @@ def validate_recording_source(root, source_run):
             'sha256': _sha256(path),
             'size': path.stat().st_size,
         }
-    return {
+    result = {
         'schema_version': 1,
         'source_run': source_run,
         'source_run_path': str(source.resolve()),
@@ -197,6 +198,31 @@ def validate_recording_source(root, source_run):
         'ui_state_count': len(ui_states),
         'artifacts': artifacts,
     }
+    # Reanalysis may inherit only a backend-authenticated source identity.
+    # Legacy source names, URLs and agent reports cannot create this field.
+    from backend.runtime.application_identity import validate_identity
+    identity = validate_identity(source, root)
+    if identity:
+        result['application_identity'] = {
+            key: identity[key] for key in ('application_id', 'identity_version', 'requirements_version', 'product')
+        }
+    return result
+
+
+def validated_recording_metadata(root, source_run):
+    """Read-only display metadata from a validated recorder artifact, not a draft."""
+    recording = validate_recording_source(root, source_run)
+    demo_path = Path(recording['source_run_path']) / recording['artifacts']['demo.json']['source_relative_path']
+    demo = _read_json(demo_path, 'demo.json')
+    timestamp = demo.get('timestamp_end')
+    _require(isinstance(timestamp, str), 'Recording end timestamp must be an ISO date')
+    try:
+        parsed = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+    except ValueError as exc:
+        raise ReanalysisError('Recording end timestamp must be an ISO date') from exc
+    _require(parsed.tzinfo is not None, 'Recording end timestamp must include a timezone')
+    return {'flow_name': source_run, 'target_url': recording['target_url'],
+            'run_timestamp': timestamp, 'source': 'validated_recording'}
 
 
 def validate_destination(root, source_run, destination_run):
@@ -320,6 +346,17 @@ def _parser():
     return parser
 
 
+def _configure_console_output():
+    """Keep progress Unicode from aborting the Windows CLI code path."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, 'reconfigure', None)
+        if callable(reconfigure):
+            try:
+                reconfigure(errors='backslashreplace')
+            except (OSError, ValueError):
+                pass
+
+
 async def _run(args):
     root = Path(args.artifacts_dir).resolve()
     inputs = validate_recording_source(root, args.source)
@@ -337,6 +374,7 @@ async def _run(args):
         anthropic_model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5'),
         progress_cb=progress,
         reanalysis_inputs=inputs,
+        application_identity=inputs.get('application_identity'),
     )
     if result.get('error'):
         print(result['error'], file=sys.stderr)
@@ -346,6 +384,7 @@ async def _run(args):
 
 
 def main(argv=None):
+    _configure_console_output()
     try:
         return asyncio.run(_run(_parser().parse_args(argv)))
     except (ReanalysisError, OSError, ValueError) as exc:

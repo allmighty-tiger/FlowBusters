@@ -6,13 +6,59 @@ const Module = require('node:module');
 const ts = require('typescript');
 const React = require('react');
 const { renderToStaticMarkup } = require('react-dom/server');
+const portalSource = fs.readFileSync(path.resolve(__dirname, '../src/pages/portal.tsx'), 'utf8');
 const filename = path.resolve(__dirname, '../src/components/ReportView.tsx');
 const loaded = new Module(filename, module);
 loaded.paths = module.paths;
 loaded._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
   compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2021 },
 }).outputText, filename);
-const { default: ReportView, evidenceCaptures, invariantFor, remediationFor } = loaded.exports;
+const { default: ReportView, ReportRunMeta, evidenceCaptures, invariantFor, remediationFor } = loaded.exports;
+
+test('invalid AI candidates are explicit unverified coverage, separate from backend probes', () => {
+  const report = { findings: [], results: [], summary: {}, validated_ai_candidates: 1,
+    unverified_candidates: [{ candidate_id: 'C2', message: 'Only one authenticated source' }] };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  assert.match(html, /AI candidate coverage/);
+  assert.match(html, /Unverified coverage/);
+  assert.match(html, /Backend coverage probes are independently planned/);
+  assert.match(html, /Only one authenticated source/);
+});
+
+test('recorded-flow portal does not request or persist an identity credential', () => {
+  assert.doesNotMatch(portalSource, /application_binding_token/);
+  assert.doesNotMatch(portalSource, /Application Binding Token/);
+  assert.doesNotMatch(portalSource, /applicationId/);
+});
+
+test('empty refund report explicitly says no probes or security checks, not a clear assessment', () => {
+  const report = { findings: [], results: [], summary: {
+    errors: 0, planned_executions: 0, execution_attempts: 0, completed_executions: 0,
+  } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  assert.ok(html.includes('0 probes generated / no security checks executed'));
+  assert.ok(html.includes('Not assessed'));
+  assert.ok(html.includes('no conclusion about vulnerabilities or held controls'));
+  assert.ok(!html.includes('No confirmed issues'));
+  assert.ok(!html.includes('No vulnerability was confirmed by the executed checks'));
+  assert.ok(!html.includes('has-clear'));
+});
+
+test('recording metadata supplies flow/date and missing date never renders Invalid Date', () => {
+  const report = { flow_name: 'agent draft', run_timestamp: 'invalid', recording_metadata: {
+    flow_name: 'refund', target_url: 'http://localhost:3000/',
+    run_timestamp: '2026-09-17T04:01:45Z', source: 'validated_recording',
+  } };
+  const html = renderToStaticMarkup(React.createElement(ReportRunMeta, { report }));
+  assert.ok(html.includes('Flow: refund'));
+  assert.ok(html.includes('Recording completed:'));
+  assert.ok(html.includes('2026'));
+  assert.ok(!html.includes('Invalid Date'));
+  const missing = renderToStaticMarkup(React.createElement(ReportRunMeta, { report: { normalized_run_id: 'refund' } }));
+  assert.ok(missing.includes('Flow: refund'));
+  assert.ok(missing.includes('Date unavailable'));
+  assert.ok(!missing.includes('Invalid Date'));
+});
 
 const capture = (method, endpoint) => ({ request: { method, url: `http://localhost:3000${endpoint}`, body: null }, response: { ok: true }, status_code: 200 });
 const finding = { id: 'F-1', title: 'Reimbursement overlap', source: 'MUTATION_SCRIPT', script: 'probe.py', cwe: [], evidence: {}, verification_status: 'NEEDS_REVIEW',
@@ -53,6 +99,52 @@ const northstarFinding = {
   })(),
 };
 
+test('two amount reproductions show one unique vulnerability and retain both results and origins', () => {
+  const a = { ...northstarFinding, id: 'A', execution_id: 'exec-a', probe_origin: 'AI_PROBE' };
+  const b = { ...northstarFinding, id: 'B', execution_id: 'exec-b', probe_origin: 'BACKEND_COVERAGE' };
+  const report = { findings: [a, b], results: [a, b].map(f => ({ script: f.id + '.py', execution_id: f.execution_id, outcome: 'CONFIRMED', probe_origin: f.probe_origin })),
+    vulnerabilities: [{ id: 'V-1', finding_ids: ['A', 'B'], execution_ids: ['exec-a', 'exec-b'], grouping_basis: 'Equivalent issue, distinct amounts' }],
+    summary: { errors: 0, unique_vulnerabilities: 1, finding_count: 2, completed_executions: 2, probe_origin_counts: { AI_PROBE: 1, BACKEND_COVERAGE: 1 } } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  assert.ok(html.includes('1 confirmed vulnerability requires action.'));
+  assert.equal((html.match(/aria-label="Unique vulnerability"/g) || []).length, 1);
+  assert.ok(html.includes('Additional reproductions of this vulnerability (1)'));
+  assert.ok(html.includes('exec-a') && html.includes('exec-b'));
+  assert.ok(html.includes('AI-generated probe') && html.includes('Backend coverage plan'));
+  assert.equal((html.match(/class="report-result"/g) || []).length, 2);
+});
+
+test('404 incomplete scenario is review coverage, never an observed held control or active fix', () => {
+  const f = { ...finding, coverage_status: 'INCOMPLETE_ACTION_CHAIN',
+    verification_reason: 'POST /api/order/refund (HTTP 404): required endpoint unavailable', probe_origin: 'AI_PROBE' };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [f], results: [],
+    summary: { errors: 0, coverage_gaps: 1, unique_vulnerabilities: 0 } }, remediation: 'Fix everything' }));
+  assert.ok(html.includes('Scenario not established'));
+  assert.ok(html.includes('HTTP 404'));
+  assert.ok(html.includes('<strong>1</strong> findings with incomplete scenario coverage'));
+  assert.ok(!html.includes('<h4>Control observed</h4>'));
+  assert.ok(!html.includes('<h4>Recommended remediation</h4>'));
+});
+
+test('retrospective cross-flow confirmation renders scope and replaces hypothetical remediation', () => {
+  const scoped = { ...northstarFinding, backend_requirement: {
+    id: 'NSM-ADJUSTMENT-REFUND-CAP-2026-09-16', product: 'Northstar Market',
+    statement: 'Price adjustment plus completed refund must not exceed originalAmount.',
+    asserted_on: '2026-09-16', allowed_run_ids: ['cross-flow-a0debc2fe38c'],
+    application_mode: 'retrospective_evidence_evaluation', assertion_context: 'Newly asserted after execution.',
+  } };
+  const markdown = '## F-001\n- **Issue:** If both counters independently add, the customer could be reimbursed.\n';
+  const view = remediationFor(scoped, markdown, invariantFor(scoped), 'cross-flow-a0debc2fe38c');
+  assert.ok(!view.issue.includes('If both'));
+  assert.ok(view.issue.includes('demonstrated'));
+  assert.ok(view.evidence.includes('$130'));
+  const html = renderToStaticMarkup(React.createElement(ReportView, {
+    report: { findings: [scoped], results: [], summary: { errors: 0 } }, remediation: markdown,
+  }));
+  for (const text of ['2026-09-16', 'Scoped run: cross-flow-a0debc2fe38c', '$130']) assert.ok(html.includes(text));
+  assert.ok(!html.includes('If both'));
+});
+
 test('confirmed invariant is primary and renders operands, result, limit, and complete trace', () => {
   const invariant = invariantFor(northstarFinding);
   assert.equal(invariant.total, 130);
@@ -88,6 +180,23 @@ test('backend-controlled requirement shows its assertion date and retrospective 
     'Northstar Market', 'Asserted 2026-09-16', 'retrospective evidence evaluation',
     'Scoped run: northstar-refund-v4-reanalysis',
     'did not exist as a recorded requirement before the run']) assert.ok(html.includes(text), text);
+});
+
+test('product requirement renders authenticated identity and requirement version, not run allowlist', () => {
+  const finding = { ...northstarFinding, backend_requirement: {
+    id: 'NSM-TOTAL-RETURN-CAP-2026-09-17', product: 'Northstar Market',
+    asserted_on: '2026-09-17', effective_from: '2026-09-17',
+    statement: 'order.totalReturned must not exceed order.originalAmount.',
+    requirements_version: '2026-09-17', application_mode: 'prospective_evaluation',
+    assertion_context: 'Owner asserted product rule independently of probe output.',
+    application_identity: { application_id: 'northstar-market', identity_version: '1' },
+  } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: {
+    findings: [finding], results: [], summary: { errors: 0 },
+  }, remediation: null }));
+  for (const text of ['NSM-TOTAL-RETURN-CAP-2026-09-17',
+    'Application: northstar-market', 'identity 1', 'requirements 2026-09-17']) assert.ok(html.includes(text), text);
+  assert.ok(!html.includes('Scoped run:'));
 });
 
 test('refund reanalysis uses accurate execution, pre-action, severity, and remediation labels', () => {

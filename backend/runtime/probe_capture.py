@@ -19,10 +19,15 @@ def main():
     lock = threading.Lock()
     counter = 0
 
-    def allowed(url):
+    def allowed(url, method):
         parsed = urlsplit(url)
         origins = scope.get('allowed_domains', [])
         authority = f'{parsed.scheme}://{parsed.netloc}'
+        catalog = scope.get('_endpoint_catalog')
+        if catalog is not None and not any(row['method'] == method.upper()
+                and row['origin'] == authority and row['path'] == (parsed.path or '/') for row in catalog):
+            raise ValueError('Endpoint selection error: request is absent from authenticated endpoint catalog: '
+                             + method + ' ' + str(url))
         if parsed.scheme not in ('http', 'https') or not any(
                 fnmatch.fnmatchcase(authority, str(pattern).removesuffix('/*').rstrip('/'))
                 or parsed.hostname == pattern for pattern in origins):
@@ -45,7 +50,7 @@ def main():
 
     def begin(method, url, payload):
         nonlocal counter
-        allowed(str(url))
+        allowed(str(url), method)
         with lock:
             counter += 1
             return {'sequence': counter, 'started_ns': time.monotonic_ns(),

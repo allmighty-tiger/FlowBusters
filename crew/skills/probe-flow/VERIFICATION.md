@@ -55,6 +55,12 @@ For `business_rule_must_hold`, provide:
   including any response envelope
 - `violation`: `{observed: boolean, description: concrete final-state evidence}`
 
+The probe itself computes `observed` from the captured AFTER body using the
+declared invariant and prints a JSON boolean. Never use `None`/`null` as a
+placeholder for backend computation. The backend recomputes the predicate from
+the signed trace only to verify agreement; it does not synthesize the script's
+required boolean.
+
 The harness-provided `response.extensions["flowbusters_sequence"]` value is
 authoritative. Include every setup response in `verification.setup`; setup
 requests consume sequence numbers but are not attack actions. Never use an

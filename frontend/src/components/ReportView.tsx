@@ -1,6 +1,7 @@
 
 // Raw per-script execution log entry
 export interface ScriptResult {
+  probe_origin?: string;
   script: string;
   mutation_type: string;
   outcome: string;
@@ -21,6 +22,8 @@ export interface ScriptResult {
 
 // A reported finding; confirmation requires independent evidence.
 export interface Finding {
+  probe_origin?: string;
+  coverage_status?: string;
   verification?: { before?: Capture; actions?: Capture[]; action?: Capture; after?: Capture; resolved_invariant?: ResolvedInvariant };
   execution_trace?: Capture[];
   execution_id?: string;
@@ -34,6 +37,8 @@ export interface Finding {
   backend_requirement?: {
     id: string; product: string; asserted_on: string; effective_from: string;
     statement: string; application_mode: string; assertion_context: string;
+    requirements_version?: string; retrospective?: boolean;
+    application_identity?: { application_id: string; identity_version: string };
     allowed_run_ids?: string[];
   };
   title: string;
@@ -49,6 +54,8 @@ export interface Finding {
   expected_behavior?: string;
   actual_behavior?: string;
   remediation?: string;
+  original_hypothesis?: string;
+  normalized_issue?: string;
 }
 
 interface Capture {
@@ -91,7 +98,9 @@ interface LegacyObservation {
 }
 
 export interface FindingsReport {
+  vulnerabilities?: { id: string; representative_finding_id: string; finding_ids: (string | undefined)[]; execution_ids: string[]; grouping_basis: string }[];
   normalized_run_id?: string;
+  recording_metadata?: { flow_name: string; target_url: string; run_timestamp: string; source: 'validated_recording' };
   run_timestamp: string;
   target_url: string;
   flow_name: string;
@@ -99,8 +108,13 @@ export interface FindingsReport {
   findings?: Finding[];
   results: ScriptResult[];
   partial_coverage?: PartialCoverage[];
+  validated_ai_candidates?: number;
+  unverified_candidates?: {candidate_id: string; message: string}[];
   excluded_setup_executions?: ExcludedSetupExecution[];
   summary: {
+    unique_vulnerabilities?: number;
+    coverage_gaps?: number;
+    probe_origin_counts?: Record<string, number>;
     bugs_found: number;
     critical_findings?: number;
     rejected: number;
@@ -130,6 +144,7 @@ export interface FindingsReport {
 }
 
 const SEVERITY_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3 };
+const originLabel = (origin?: string) => ({ AI_PROBE: 'AI-generated probe', BACKEND_COVERAGE: 'Backend coverage plan', LEGACY_COVERAGE_TEMPLATE: 'Legacy coverage template (author not recorded)', VERIFICATION_PROBE: 'Follow-up verification probe' }[origin || ''] || 'Generation origin not recorded');
 
 function normalizeFindings(report: FindingsReport): Finding[] {
   if (Array.isArray(report.findings)) {
@@ -291,15 +306,30 @@ export function remediationFor(finding: Finding, markdown: string | null, invari
     cwe: field('CWE') || finding.cwe?.join(', ') || 'Not recorded',
     severity: verified ? finding.severity || 'Not assessed' : field('Severity') || finding.severity || 'Not assessed',
     endpoints: [...new Set(verified ? executedEndpoints : recordedEndpoints)],
-    issue: verified ? `A signed ${executionKind} demonstrated that combined compensation exceeded the permitted order amount.` : field('Issue') || finding.title,
+    issue: finding.normalized_issue || (verified ? `A signed ${executionKind} demonstrated that combined compensation exceeded the permitted order amount.` : field('Issue') || finding.title),
     evidence: verified ? `${invariant.statement} Verified by execution ${finding.execution_id || 'receipt not shown'}.` : invariant?.statement || finding.verification_reason || 'No verified evidence summary available.',
     fixes: verified ? verifiedFixes : [...field('Fix').matchAll(/^\s*-\s+(.+)$/gm)].map(match => (match[1] || '').trim()).filter(Boolean),
   };
 }
 
+export function ReportRunMeta({ report }: { report: FindingsReport }) {
+  const metadata = report.recording_metadata;
+  const timestamp = metadata?.run_timestamp || report.run_timestamp;
+  const date = timestamp ? new Date(timestamp) : null;
+  return <div className="report-run-meta"><span>{metadata?.target_url || report.target_url}</span>
+    <span>Flow: {metadata?.flow_name || report.normalized_run_id || report.flow_name || 'Unknown'}</span>
+    <span>{metadata ? 'Recording completed: ' : 'Run: '}{date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : 'Date unavailable'}</span></div>;
+}
+
 export default function ReportView({ report, remediation }: { report: FindingsReport; remediation: string | null }) {
   const findings = normalizeFindings(report);
   const confirmed = findings.filter(f => f.verification_status === 'CONFIRMED');
+  const vulnerabilities = report.vulnerabilities || confirmed.map((finding, index) => ({
+    id: finding.id || `legacy-${index}`, representative_finding_id: finding.id,
+    finding_ids: [finding.id], execution_ids: finding.execution_id ? [finding.execution_id] : [], grouping_basis: '',
+  }));
+  const uniqueVulnerabilities = report.summary.unique_vulnerabilities ?? vulnerabilities.length;
+  const coverageGaps = report.summary.coverage_gaps || 0;
   const review = findings.filter(f => !f.verification_status || f.verification_status === 'NEEDS_REVIEW');
   const coverage = findings.filter(f => ['NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR'].includes(f.verification_status || ''));
   const notExecuted = report.summary.not_executed ?? findings.filter(f => f.verification_status === 'NOT_EXECUTED').length;
@@ -309,6 +339,7 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
   const executionAttempts = report.summary.execution_attempts ?? report.results.length;
   const plannedExecutions = report.summary.planned_executions ?? report.total_scripts ?? executionAttempts;
   const completedExecutions = report.summary.completed_executions ?? executionAttempts;
+  const noChecks = findings.length === 0 && executionAttempts === 0 && completedExecutions === 0;
   const pendingExecutions = report.summary.pending_execution ?? Math.max(0, plannedExecutions - completedExecutions);
   const executionErrors = report.summary.execution_errors ?? errors;
   const processErrors = report.summary.process_errors ?? errors;
@@ -319,7 +350,7 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
   const excludedSetup = report.excluded_setup_executions || [];
   const executionResultCounts = report.summary.execution_result_counts || {};
   const statusLabel: Record<string, string> = {
-    CONFIRMED: 'Confirmed vulnerability', NEEDS_REVIEW: 'Needs review',
+    CONFIRMED: 'Confirmed finding', NEEDS_REVIEW: 'Needs review',
     NOT_REPRODUCED: 'Not reproduced', NOT_EXECUTED: 'Not executed', CHECK_ERROR: 'Check error',
   };
   const renderFinding = (finding: Finding, index: number) => {
@@ -346,6 +377,7 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
         <h3>{displayTitle}</h3>
       </summary>
       <div className="finding-body">
+        <p className="report-muted">Generation: {originLabel(finding.probe_origin)}</p>
         {invariant && <section className={`report-invariant ${status === 'CONFIRMED' ? 'invariant-confirmed' : ''}`} aria-label="Verified invariant">
           <p className="report-eyebrow">Backend-evaluated invariant</p>
           <div className="invariant-equation">{invariant.operands.map((item, i) => <span className="invariant-part" key={item.path}>{i > 0 && <span className="invariant-operator">+</span>}<strong>{money(item.value)}</strong><small>{item.label}</small></span>)}<span className="invariant-operator">=</span><span className="invariant-total"><strong>{money(invariant.total)}</strong><small>{invariant.totalLabel}</small></span></div>
@@ -353,14 +385,15 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
         </section>}
         {(!invariant || status === 'NEEDS_REVIEW') && <p className="report-verdict"><strong>{status === 'NEEDS_REVIEW' ? 'Missing evidence' : 'Verification'}</strong><span>{finding.verification_reason || 'No supported state verification recorded.'}</span></p>}
         {finding.backend_requirement && <section className="report-expected"><h4>Backend-controlled requirement</h4><p><strong>{finding.backend_requirement.id}</strong> · {finding.backend_requirement.product}</p><p>{finding.backend_requirement.statement}</p>{!!finding.backend_requirement.allowed_run_ids?.length && <p className="report-muted">Scoped run: {finding.backend_requirement.allowed_run_ids.join(', ')}</p>}<p className="report-muted">Asserted {finding.backend_requirement.asserted_on}; applied as {finding.backend_requirement.application_mode.replaceAll('_', ' ')}. {finding.backend_requirement.assertion_context}</p></section>}
-        {status === 'NEEDS_REVIEW' && finding.title?.trim() && <section className="report-expected"><h4>Claim under review</h4><p>{finding.title}</p></section>}
+        {finding.backend_requirement?.application_identity && <p className="report-muted">Application: {finding.backend_requirement.application_identity.application_id} · identity {finding.backend_requirement.application_identity.identity_version} · requirements {finding.backend_requirement.requirements_version}</p>}
+        {status === 'NEEDS_REVIEW' && (finding.original_hypothesis || finding.title)?.trim() && <section className="report-expected"><h4>Claim under review</h4><p>{finding.original_hypothesis || finding.title}</p></section>}
         {finding.verification_status === 'NOT_EXECUTED' && <section className="report-guidance"><h4>Missing prerequisite</h4><p>{finding.execution?.missing_precondition || finding.verification_reason}</p><h4>Next step / manual test</h4><p>{finding.execution?.next_step || 'No specific next step recorded.'}</p></section>}
         {!!finding.deduplicated_from?.length && <p className="report-deduplicated">Also represents deduplicated check: {finding.deduplicated_from.join(', ')}</p>}
         {finding.url_tested && <p className="report-endpoint"><strong>Tested endpoint</strong><code>{finding.url_tested}</code></p>}
         <section className="report-expected"><h4>Expected invariant</h4><p>{finding.expected_behavior || (invariant ? `${invariant.operands.map(x => x.label).join(' + ')} must not exceed ${invariant.maximumLabel} (${money(invariant.maximum)}).` : 'No executable invariant was recorded.')}</p></section>
         {(transitions.totalReturned.length > 1 || transitions.refundStatus.length > 1) && <section className="report-transitions"><h4>State transition summary</h4>{transitions.totalReturned.length > 1 && <p><code>totalReturned</code><strong>{transitions.totalReturned.join(' → ')}</strong></p>}{transitions.refundStatus.length > 1 && <p><code>refund.status</code><strong>{transitions.refundStatus.join(' → ')}</strong></p>}</section>}
         {status === 'CONFIRMED' ? <section className="report-evidence trace-primary"><h4>Complete ordered request/action trace <span>{chain.length} steps</span></h4><p className="report-muted">Execution: {finding.execution_id}</p>{trace}<p className="report-muted">Source: {finding.source.replaceAll('_', ' ')}{finding.script ? ` · Script: ${finding.script}` : ''}</p></section> : <details className="report-evidence"><summary>Inspect ordered request/action trace ({chain.length})</summary>{trace}</details>}
-        {status === 'NOT_REPRODUCED' ? <section className="report-control-observed"><h4>Control observed</h4><p>{finding.verification_reason || 'The signed execution completed without violating the evaluated invariant.'}</p>{finding.title?.trim() && <details><summary>Original hypothesis</summary><p>{finding.title}</p>{remediationView.issue !== finding.title && <p>{remediationView.issue}</p>}</details>}</section> : <section className="report-remediation"><h4>Recommended remediation</h4><dl>
+        {finding.coverage_status ? <section className="report-guidance"><h4>Scenario not established</h4><p>{finding.verification_reason}</p><p>Resolve the required endpoint and rerun the complete chain before assessing this control.</p></section> : status === 'NOT_REPRODUCED' ? <section className="report-control-observed"><h4>Control observed</h4><p>{finding.verification_reason || 'The signed execution completed without violating the evaluated invariant.'}</p>{finding.title?.trim() && <details><summary>Original hypothesis</summary><p>{finding.title}</p>{remediationView.issue !== finding.title && <p>{remediationView.issue}</p>}</details>}</section> : <section className="report-remediation"><h4>Recommended remediation</h4><dl>
           <div><dt>CWE</dt><dd>{remediationView.cwe}</dd></div><div><dt>Severity</dt><dd>{remediationView.severity}</dd></div>
           <div><dt>Affected endpoints</dt><dd className="endpoint-chips">{remediationView.endpoints.length ? remediationView.endpoints.map(x => <code key={x}>{x}</code>) : 'Not recorded'}</dd></div>
           <div><dt>Issue</dt><dd>{remediationView.issue}</dd></div><div><dt>{status === 'CONFIRMED' ? 'Proven facts' : 'Evidence available'}</dt><dd>{remediationView.evidence}</dd></div>
@@ -369,22 +402,24 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       </div>
     </details>;
   };
-  const primaryMessage = confirmed.length
-    ? `${confirmed.length} confirmed ${confirmed.length === 1 ? 'vulnerability requires' : 'vulnerabilities require'} action.`
+  const primaryMessage = noChecks
+    ? (plannedExecutions === 0 ? '0 probes generated / no security checks executed' : 'No security checks executed')
+    : uniqueVulnerabilities
+    ? `${uniqueVulnerabilities} confirmed ${uniqueVulnerabilities === 1 ? 'vulnerability requires' : 'vulnerabilities require'} action.`
     : review.length
       ? `No vulnerability is confirmed yet. ${review.length} ${review.length === 1 ? 'item requires' : 'items require'} review.`
       : 'No vulnerability was confirmed by the executed checks.';
   return <section className="fb-report">
-    <section className={`report-overview ${confirmed.length ? 'has-confirmed' : review.length ? 'has-review' : 'has-clear'}`}>
+    <section className={`report-overview ${noChecks ? 'has-review' : confirmed.length ? 'has-confirmed' : review.length ? 'has-review' : 'has-clear'}`}>
       <div><p className="report-eyebrow">Assessment outcome</p><h2>{primaryMessage}</h2>
-        <p>Verdicts require captured state evidence. Severity alone is not confirmation.</p></div>
-      <span className="report-risk-label">{confirmed.some(f => f.severity?.toLowerCase() === 'critical') ? 'Critical action' : confirmed.length ? 'Action required' : review.length ? 'Review required' : 'No confirmed issues'}</span>
+        <p>{noChecks ? 'No executed security checks means no conclusion about vulnerabilities or held controls.' : 'Verdicts require captured state evidence. Severity alone is not confirmation.'}</p></div>
+      <span className="report-risk-label">{noChecks ? 'Not assessed' : confirmed.some(f => f.severity?.toLowerCase() === 'critical') ? 'Critical action' : confirmed.length ? 'Action required' : review.length ? 'Review required' : 'No confirmed issues'}</span>
     </section>
     <div className="report-metrics" aria-label="Assessment summary">
-      {[[confirmed.length, 'Confirmed findings', 'confirmed', ''], [review.length, 'Findings needing review', 'review', ''], [visibleHeld, 'Not-reproduced findings', 'held', 'security findings'], [notExecuted + errors, 'Finding coverage gaps', 'gap', '']].map(([value, label, tone, detail]) =>
+      {[[confirmed.length, 'Confirmed findings', 'confirmed', ''], [review.length, 'Findings needing review', 'review', ''], [visibleHeld, 'Not-reproduced findings', 'held', 'security findings'], [notExecuted + errors + coverageGaps, 'Finding coverage gaps', 'gap', '']].map(([value, label, tone, detail]) =>
         <div className={`report-metric metric-${tone}`} key={label}><strong>{value}</strong><span>{label}</span>{detail && <small>{detail}</small>}</div>)}
     </div>
-    <p className="report-count-context">Finding verdicts: <strong>{findingCount}</strong> normalized findings after deduplication.</p>
+    <p className="report-count-context">Finding verdicts: <strong>{findingCount}</strong> normalized findings after deduplication. <strong>{uniqueVulnerabilities}</strong> unique vulnerabilities from <strong>{confirmed.length}</strong> confirmed findings. <strong>{coverageGaps}</strong> findings with incomplete scenario coverage.</p>
     <section className="report-execution-summary" aria-label="Execution summary">
       <div><p className="report-eyebrow">Backend-derived</p><h3>Execution attempts</h3></div>
       <dl>
@@ -398,12 +433,20 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       </dl>
       <p>Primary execution results: <strong>{executionResultCounts.needs_review || 0}</strong> need review, <strong>{executionResultCounts.not_reproduced || 0}</strong> not reproduced, <strong>{executionResultCounts.confirmed || 0}</strong> confirmed, and <strong>{executionResultCounts.check_error || 0}</strong> check errors.</p>
       <p>Deduplicated primary chains: <strong>{report.summary.deduplicated_primary_chains ?? deduplicatedIds.length}</strong>. All {executionAttempts} authenticated attempts remain listed below.</p>
+      {report.summary.probe_origin_counts && <p>Probe generation: {Object.entries(report.summary.probe_origin_counts).filter(([, count]) => count > 0).map(([origin, count]) => `${originLabel(origin)}: ${count} execution results`).join('; ')}.</p>}
     </section>
     {(notExecuted > 0 || errors > 0 || pendingExecutions > 0 || executionErrors > 0) && <p className="report-notice" role="status">Coverage is incomplete: {notExecuted} not executed findings, {pendingExecutions} pending probes, {processErrors} process errors, {evidenceContractErrors} evidence-contract errors, and {traceMismatches} signed-trace mismatches. A terminal receipt with invalid evidence is not a successful check.</p>}
 
     <section className="report-section">
-      <div className="report-section-heading"><div><p className="report-eyebrow">Evidence-backed</p><h2>Confirmed vulnerabilities</h2></div><span>{confirmed.length}</span></div>
-      {confirmed.length ? confirmed.map(renderFinding) : <div className="report-empty"><strong>No confirmed vulnerabilities</strong><p>That means the current evidence did not cross the confirmation threshold—not that the target is secure.</p></div>}
+      <div className="report-section-heading"><div><p className="report-eyebrow">Evidence-backed</p><h2>Confirmed vulnerabilities</h2></div><span>{uniqueVulnerabilities}</span></div>
+      {vulnerabilities.length ? vulnerabilities.map(group => {
+        const members = confirmed.filter(f => group.finding_ids.includes(f.id));
+        return <section className="report-vulnerability-group" key={group.id} aria-label="Unique vulnerability">
+          <p className="report-count-context">{group.id}: {members.length} confirmed findings · {group.execution_ids.length} authenticated receipts.</p>
+          {members.slice(0, 1).map(renderFinding)}
+          {members.length > 1 && <details className="report-evidence"><summary>Additional reproductions of this vulnerability ({members.length - 1})</summary><p>{group.grouping_basis} Each payload and signed trace remains separately inspectable.</p>{members.slice(1).map(renderFinding)}</details>}
+        </section>;
+      }) : <div className="report-empty"><strong>No confirmed vulnerabilities</strong><p>That means the current evidence did not cross the confirmation threshold—not that the target is secure.</p></div>}
     </section>
 
     {review.length > 0 && <section className="report-section">
@@ -418,6 +461,11 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       {coverage.map(renderFinding)}
     </section>}
 
+    {report.validated_ai_candidates !== undefined && <section className="report-section">
+      <h2>AI candidate coverage</h2>
+      <p>{report.validated_ai_candidates} validated AI candidates. Backend coverage probes are independently planned and labelled in the execution log.</p>
+      {(report.unverified_candidates || []).map(c => <p key={c.candidate_id}>{c.candidate_id}: Unverified coverage — {c.message}</p>)}
+    </section>}
     {partialCoverage.length > 0 && <section className="report-section report-partial-coverage">
       <div className="report-section-heading"><div><p className="report-eyebrow">Non-verdict evidence</p><h2>Partial coverage</h2></div><span>{partialCoverage.length} supplementary scenarios</span></div>
       <p className="report-section-copy">These traces support analysis but lack an independently evaluated invariant and therefore are not security findings or execution verdicts.</p>
@@ -432,7 +480,7 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
     <details className="report-appendix"><summary>Probe execution log <span>{executionAttempts} attempts</span></summary>
       <p className="report-muted">Individual checks are supporting evidence, not additional vulnerabilities. A zero process exit does not make evidence valid.</p>
       {report.results.length === 0 && <p>No execution records available.</p>}
-      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={result.execution_id || i} open={result.outcome === 'NOT_EXECUTED' || result.evidence_validation_status === 'invalid'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.presentation_status === 'EXCLUDED_SETUP_PATH' ? 'Excluded setup-path scenario' : result.presentation_status === 'DEDUPLICATED_PRIMARY_CHAIN' ? `Deduplicated evidence for ${result.deduplicated_into}` : result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.evidence_validation_status === 'invalid' && <p className="report-notice"><strong>Evidence invalid:</strong> {result.evidence_error_category?.replaceAll('_', ' ') || 'contract or trace validation failed'}. This receipt is not a successful check.</p>}{result.presentation_reason && <p><strong>{result.presentation_reason}</strong></p>}{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</div></details>)}</div>
+      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={result.execution_id || i} open={result.outcome === 'NOT_EXECUTED' || result.evidence_validation_status === 'invalid'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.presentation_status === 'EXCLUDED_SETUP_PATH' ? 'Excluded setup-path scenario' : result.presentation_status === 'DEDUPLICATED_PRIMARY_CHAIN' ? `Deduplicated evidence for ${result.deduplicated_into}` : result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Generation: {originLabel(result.probe_origin)} · Execution: {result.execution_id || 'Not recorded'}</p><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.evidence_validation_status === 'invalid' && <p className="report-notice"><strong>Evidence invalid:</strong> {result.evidence_error_category?.replaceAll('_', ' ') || 'contract or trace validation failed'}. This receipt is not a successful check.</p>}{result.presentation_reason && <p><strong>{result.presentation_reason}</strong></p>}{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</div></details>)}</div>
     </details>
   </section>;
 }

@@ -85,10 +85,18 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
      sequence counter. Capture fixture setup and every repeated reset in
      `verification.setup`. Across setup and scenario captures, represent every
      HTTP request exactly once while keeping setup out of the attack actions.
+     Multiple scenarios use the single canonical
+     `verification.supplementary_scenarios` object, keyed by unique scenario
+     name. Never place a supplementary list beside `verification` at the
+     result root.
    - `business_rule_must_hold` MUST include the supported executable `sum_lte`
      invariant. If the rule cannot be expressed by a supported predicate, use
      `unsupported_business_rule` plus a concrete `unsupported_reason`; do not
      invent an invariant.
+   - Compute `sum_lte` from the actual captured AFTER response before printing
+     JSON. `violation.observed` MUST be the resulting boolean, never
+     `None`/`null`, a number, or a string. Backend recomputation verifies the
+     emitted boolean; it does not supply a missing value.
    - Invariant paths start at the full HTTP response root. Include envelope keys
      (for example `["order", "totalReturned"]`), and never rely on recursive
      field lookup or guessed array indexes.
@@ -117,7 +125,7 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
 - Every setup request and repeated reset is captured with its harness-assigned
   transport sequence; no script invents or locally renumbers sequences
 - Every `business_rule_must_hold` output contains a supported executable
-  invariant with response-root paths
+  invariant with response-root paths and a boolean `violation.observed`
 - Each script targets a different attack vector or endpoint
 - Report: "✅ Phase 3 MUTATE complete. Flow {flow-name}. {N} mutation scripts generated: {list of types}."
 
@@ -136,3 +144,36 @@ Read from `flows/{flow-name}/` and write all scripts to `mutations/{flow-name}/`
 - **NEVER** target production URLs unless explicitly confirmed by user
 - **ALWAYS** include timeouts on all network operations (30s max)
 - **ALWAYS** syntax-check with py_compile before declaring success
+# Scenario-local invariant calculation
+
+For every primary or supplementary invariant, resolve its terms and limit from
+that scenario's own final GET. Compute violation.observed from the exact declared
+comparison, not a different hypothesis or hard-coded threshold. For Northstar's
+totalReturned/originalAmount predicate, 100 > 100 is false; testing > 30 instead
+is a contract error. Never sum state across reset boundaries. A supplementary
+race without an independent invariant stays partial coverage. See
+crew/skills/probe-flow/EXECUTION.md for the full contract.
+
+## Monetary workflow coverage
+
+Use endpoint_catalog.json for exact method/origin/path selection. UI labels
+cannot supply missing routes. Preserve the complete documented workflow;
+refund request and refund completion are distinct actions. If no supported
+endpoint exists, report the missing prerequisite without guessing or executing
+an invented URL. A 404/405 means incomplete scenario coverage, not control held.
+Backend coverage scripts are stored separately in backend_coverage/ and must
+not be authored, copied or overwritten by agents. Their receipts retain distinct
+generation authority; AI-generated scripts remain under mutations/.
+
+For recorded monetary workflows, cover numeric request-body override as well as
+replay of the actual payout-completion action. A request that only creates a
+pending refund is not a payout test. Preserve prerequisite actions and finish
+every scenario with a fresh GET. For cross-flow, compose complete recorded
+workflows: adjustment -> refund request -> refund complete, not just pending.
+For Northstar's approved product bound use exactly terms
+[["order", "totalReturned"]], limit ["order", "originalAmount"]. Numeric body
+tampering followed by that predicate tests a payout bound, not the broader
+claim that arbitrary mass assignment was blocked. Do not infer a financial
+rule from UI actions. The backend independently resolves its product registry.
+Backend-owned versioned coverage probes may supplement agent discovery; do not
+overwrite or impersonate their 00_coverage_* scripts or claim their outcomes.

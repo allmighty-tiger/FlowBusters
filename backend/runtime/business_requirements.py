@@ -9,7 +9,6 @@ from datetime import date
 import json
 from pathlib import Path
 import re
-from urllib.parse import urlsplit
 
 
 REGISTRY_PATH = Path(__file__).with_name('business_requirements.json')
@@ -25,14 +24,6 @@ def _require(condition, message):
         raise BusinessRequirementError(message)
 
 
-def _origin(value):
-    parsed = urlsplit(str(value or ''))
-    _require(parsed.scheme in ('http', 'https') and parsed.hostname,
-             'Requirement target origin is invalid')
-    port = f':{parsed.port}' if parsed.port is not None else ''
-    return f'{parsed.scheme.lower()}://{parsed.hostname.lower()}{port}'
-
-
 def _path(value, label):
     _require(isinstance(value, list) and value
              and all(isinstance(part, str) and part for part in value),
@@ -45,8 +36,8 @@ def load_business_requirements(path=REGISTRY_PATH):
         data = json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError, TypeError) as exc:
         raise BusinessRequirementError(f'Cannot load backend requirement registry: {exc}') from exc
-    _require(isinstance(data, dict) and data.get('schema_version') == 1,
-             'Backend requirement registry schema_version must be 1')
+    _require(isinstance(data, dict) and data.get('schema_version') == 2,
+             'Backend requirement registry schema_version must be 2')
     rules = data.get('requirements')
     _require(isinstance(rules, list), 'Backend requirement registry needs requirements')
     normalized, identifiers = [], set()
@@ -70,30 +61,22 @@ def load_business_requirements(path=REGISTRY_PATH):
                 f'Backend requirement {identifier} needs ISO assertion/effective dates') from exc
         _require(effective >= asserted,
                  f'Backend requirement {identifier} cannot predate its assertion')
-        _require(rule.get('application_mode') == 'retrospective_evidence_evaluation',
-                 f'Backend requirement {identifier} needs explicit retrospective application mode')
-        origins = rule.get('target_origins')
-        _require(isinstance(origins, list) and origins,
-                 f'Backend requirement {identifier} needs target_origins')
-        origins = [_origin(origin) for origin in origins]
-        _require(len(origins) == len(set(origins)),
-                 f'Backend requirement {identifier} target_origins must be unique')
-        run_ids = rule.get('allowed_run_ids')
-        _require(isinstance(run_ids, list) and run_ids,
-                 f'Backend requirement {identifier} needs allowed_run_ids')
-        _require(all(isinstance(run_id, str) and RUN_ID_RE.fullmatch(run_id)
-                     for run_id in run_ids),
-                 f'Backend requirement {identifier} has an invalid allowed run id')
-        _require(len(run_ids) == len(set(run_ids)),
-                 f'Backend requirement {identifier} allowed_run_ids must be unique')
+        _require(isinstance(rule.get('application_id'), str) and rule['application_id'],
+                 f'Backend requirement {identifier} needs application_id')
+        versions = rule.get('identity_versions')
+        _require(isinstance(versions, list) and versions
+                 and all(isinstance(item, str) and item for item in versions),
+                 f'Backend requirement {identifier} needs identity_versions')
+        _require(isinstance(rule.get('requirements_version'), str)
+                 and rule['requirements_version'].strip(),
+                 f'Backend requirement {identifier} needs requirements_version')
         predicate = rule.get('predicate')
         _require(isinstance(predicate, dict) and predicate.get('operator') == 'sum_lte',
                  f'Backend requirement {identifier} needs a supported sum_lte predicate')
         terms = predicate.get('terms')
         _require(isinstance(terms, list) and terms,
                  f'Backend requirement {identifier} needs predicate terms')
-        normalized.append({**deepcopy(rule), 'target_origins': origins,
-                           'allowed_run_ids': list(run_ids),
+        normalized.append({**deepcopy(rule), 'identity_versions': list(versions),
                            'predicate': {'operator': 'sum_lte',
                                          'terms': [_path(term, 'term') for term in terms],
                                          'limit': _path(predicate.get('limit'), 'limit')}})
@@ -113,19 +96,31 @@ def trusted_report_run_id(report_path):
     return run_dir.name
 
 
-def apply_backend_requirements(report, trusted_run_id=None, registry_path=REGISTRY_PATH):
-    """Attach exact scoped matches; discard any agent-supplied trust flags."""
+def apply_backend_requirements(report, trusted_run_id=None, trusted_identity=None,
+                               registry_path=REGISTRY_PATH):
+    """Attach an exact product/version/predicate match, failing closed.
+
+    The canonical run id is only a path-integrity check. It is never rule scope
+    and cannot substitute for a backend-authenticated application identity.
+    """
     if not isinstance(report, dict):
         return report
     try:
         _require(isinstance(trusted_run_id, str) and RUN_ID_RE.fullmatch(trusted_run_id),
                  'A trusted report-path run id is required')
-        target_origin = _origin(report.get('target_url'))
+        _require(isinstance(trusted_identity, dict),
+                 'A backend-authenticated application identity is required')
+        app_id = trusted_identity.get('application_id')
+        identity_version = trusted_identity.get('identity_version')
+        requirements_version = trusted_identity.get('requirements_version')
+        _require(isinstance(app_id, str) and isinstance(identity_version, str)
+                 and isinstance(requirements_version, str),
+                 'Application identity fields are invalid')
         requirements = load_business_requirements(registry_path)
     except BusinessRequirementError:
         # Missing/invalid controlled configuration must fail closed: no finding
         # gains authority from report content.
-        target_origin, requirements = None, []
+        app_id, identity_version, requirements_version, requirements = None, None, None, []
     for collection in ('findings', 'results'):
         for record in report.get(collection, []) if isinstance(report.get(collection), list) else []:
             if not isinstance(record, dict):
@@ -135,10 +130,22 @@ def apply_backend_requirements(report, trusted_run_id=None, registry_path=REGIST
             verification = record.get('verification')
             invariant = verification.get('invariant') if isinstance(verification, dict) else None
             matches = [rule for rule in requirements
-                       if trusted_run_id in rule['allowed_run_ids']
-                       and target_origin in rule['target_origins']
+                       if app_id == rule['application_id']
+                       and identity_version in rule['identity_versions']
+                       and requirements_version == rule['requirements_version']
                        and invariant == rule['predicate']]
             if len(matches) == 1:
+                rule = deepcopy(matches[0])
+                evidence_date = str(report.get('run_timestamp') or '')[:10]
+                retrospective = bool(evidence_date and evidence_date < rule['asserted_on'])
+                rule['application_mode'] = ('retrospective_evidence_evaluation'
+                                            if retrospective else 'prospective_evaluation')
+                rule['retrospective'] = retrospective
+                rule['application_identity'] = {
+                    'application_id': app_id,
+                    'identity_version': identity_version,
+                    'requirements_version': requirements_version,
+                }
                 record['_backend_requirement_valid'] = True
-                record['backend_requirement'] = deepcopy(matches[0])
+                record['backend_requirement'] = rule
     return report

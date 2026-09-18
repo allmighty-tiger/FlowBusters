@@ -23,7 +23,9 @@ _FACT_PROVENANCE = {
 
 
 class UIProvenanceError(ValueError):
-    pass
+    def __init__(self, message, *, details=None):
+        super().__init__(message)
+        self.details = dict(details or {})
 
 
 def _require(condition, message):
@@ -131,9 +133,23 @@ def _validate_ui_text(fact, source_run, artifact_dir):
     _require(type(fact.get('step')) is int and fact['step'] > 0, 'UI text fact needs a positive step')
     _require(isinstance(fact.get('text'), str) and fact['text'].strip(), 'UI text fact needs exact text')
     pointer = fact.get('json_pointer')
+    parts = _tokens(pointer)
+    _require(len(parts) == 5 and parts[:2] == ['workflow_timeline', 'ui_states']
+             and parts[3] == 'elements'
+             and bool(re.fullmatch(r'0|[1-9][0-9]*', parts[4])),
+             'explicit_ui_text json_pointer must target '
+             '/workflow_timeline/ui_states/<state_index>/elements/<element_index>; '
+             'changes_from_previous is only for the corresponding UI transition')
     demo = _read_json(_artifact(artifact_dir, 'demo.json'))
     state, value = _state_for_pointer(demo, pointer, fact['step'], ['elements'])
-    _require(value == fact['text'], 'UI text differs from the pointed semantic element')
+    if value != fact['text']:
+        raise UIProvenanceError(
+            f'UI text differs from the pointed semantic element: {pointer} resolves to {value!r}; '
+            f'claimed {fact["text"]!r}', details={
+            'code': 'EXPLICIT_UI_TEXT_MISMATCH', 'artifact': 'demo.json',
+            'step': fact['step'], 'json_pointer': pointer,
+            'claimed_text': fact['text'], 'pointed_element': value,
+        })
     _require(state.get('elements', []).count(value) == 1, 'UI text fact is ambiguous in its state')
 
 
@@ -169,8 +185,9 @@ def _validate_ui_transition(fact, source_run, artifact_dir):
         found_role, found_name, _ = _semantic_element(value)
         _require((found_role, found_name) == (role, name),
                  'Pointed semantic element does not match the declared role/name')
-    _require(len(_matching_elements(before_state, role, name)) == 1,
-             'Before-state semantic element is missing or ambiguous')
+    if transition != 'appeared':
+        _require(len(_matching_elements(before_state, role, name)) == 1,
+                 'Before-state semantic element is missing or ambiguous')
     if transition == 'disappeared':
         _require(before_value == after_value, 'Disappeared-element pointers contradict each other')
         _require(len(_matching_elements(after_state, role, name)) == 0,
@@ -272,10 +289,14 @@ def validate_observed_ui_rule(rule, source_run, artifact_dir):
                 _validate_api_transition(fact, source_run, artifact_dir)
         except UIProvenanceError as exc:
             raise UIProvenanceError(
-                f'Observed UI rule {rule["id"]} fact {fact_label}: {exc}'
+                f'Observed UI rule {rule["id"]} fact {fact_label}: {exc}',
+                details={**exc.details, 'rule_id': rule['id'], 'fact_id': fact_label,
+                         'source_run': source_run},
             ) from exc
     _require(any(fact.get('type') in _UI_FACT_TYPES for fact in facts),
-             'An observed UI rule must contain at least one raw UI fact')
+             f'Observed UI rule {rule["id"]}: An observed UI rule must contain at least one raw UI fact '
+             '(explicit_ui_text or ui_element_transition from demo.json). API-only facts and '
+             'agent inference do not qualify; do not invent or attach unrelated UI evidence.')
     inference = rule.get('inference')
     _require(isinstance(inference, dict)
              and inference.get('provenance_type') == 'agent_inference'
@@ -451,10 +472,23 @@ def _verify_cross_flow_snapshot(run_dir, source_run, artifact_dir, root=None):
     state_map = _read_json(_state_map_artifact(artifact_dir))
     har = _read_json(_artifact(artifact_dir, 'recording.har'))
     demo = _read_json(_artifact(artifact_dir, 'demo.json'))
-    rules = normalize_observed_ui_rules(state_map, source_run, artifact_dir)
+    # The signed manifest stores the exact rule representation that was hashed
+    # by collect(). Historically that was the normalized view; current strict
+    # collection may store the schema-native validated view. Both must derive
+    # exactly from the immutable state map. Never normalize one side and then
+    # compare its digest with a hash made from the other representation.
+    validated_rules = validate_state_map(
+        state_map, artifact_dir, source_run, require_current=True)
+    normalized_rules = normalize_observed_ui_rules(
+        state_map, source_run, artifact_dir)
+    signed_rules = matches[0].get('observed_ui_rules')
+    _require(signed_rules == validated_rules or signed_rules == normalized_rules,
+             'Cross-flow manifest rule metadata differs from validated source rules')
     payload = {'run_id': source_run, 'state_map': state_map, 'har': har, 'demo': demo,
-               'observed_ui_rules': rules,
-               'observed_ui_provenance': matches[0].get('observed_ui_provenance')}
+                 'observed_ui_rules': signed_rules,
+                 'observed_ui_provenance': matches[0].get('observed_ui_provenance')}
+    if matches[0].get('application_identity'):
+        payload['application_identity'] = matches[0]['application_identity']
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
     _require(digest == matches[0].get('sha256'),
              'Cross-flow source artifacts differ from the backend snapshot manifest')

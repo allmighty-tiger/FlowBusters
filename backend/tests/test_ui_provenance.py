@@ -9,6 +9,7 @@ from pathlib import Path
 from backend.runtime.crew_runner import ArtifactWatcher
 from backend.runtime.ui_provenance import (
     UIProvenanceError,
+    _validate_ui_text,
     normalize_observed_ui_rules,
     resolve_json_pointer,
     validate_rule_reference,
@@ -122,6 +123,195 @@ class UIProvenanceTests(unittest.TestCase):
         self.assertEqual(fact['provenance_type'], 'api_state_fact')
         self.assertEqual((fact['before'], fact['after']), (True, False))
 
+    def test_cancel_uir_002_f2_text_must_reference_snapshot_not_delta(self):
+        # Exact fact/text/indexes from saved cancel UIR-002-F2. Only the
+        # relevant raw snapshot fields are reproduced; ignored runs are not
+        # test dependencies and the saved recording is never rewritten.
+        text = 'paragraph : This order has no actions requiring your attention.'
+        fact = {
+            'id': 'UIR-002-F2', 'type': 'explicit_ui_text',
+            'provenance_type': 'explicit_visible_ui_text',
+            'source_run': 'cancel', 'artifact': 'demo.json', 'step': 5,
+            'text': text,
+            'json_pointer': '/workflow_timeline/ui_states/4/changes_from_previous/appeared/8',
+        }
+        state = {'step': 5, 'elements': ['generic : filler'] * 65 + [text],
+                 'changes_from_previous': {'appeared': ['generic : filler'] * 8 + [text],
+                                           'disappeared': [text]}}
+        self.demo = {'workflow_timeline': {'ui_states': [
+            {'step': step, 'elements': []} for step in range(1, 5)
+        ] + [state]}}
+        self._write_artifacts()
+        original = deepcopy(fact)
+        with self.assertRaisesRegex(UIProvenanceError, 'explicit_ui_text json_pointer must target'):
+            _validate_ui_text(fact, 'cancel', self.artifacts)
+        self.assertEqual(fact, original)  # No automatic pointer repair.
+        for suffix in ('changes_from_previous/disappeared/0', 'elements',
+                       'elements/-1', 'elements/065', 'elements/65/child'):
+            with self.subTest(suffix=suffix):
+                fact['json_pointer'] = '/workflow_timeline/ui_states/4/' + suffix
+                with self.assertRaisesRegex(UIProvenanceError, 'explicit_ui_text json_pointer must target'):
+                    _validate_ui_text(fact, 'cancel', self.artifacts)
+        fact['json_pointer'] = '/workflow_timeline/ui_states/4/elements/65'
+        _validate_ui_text(fact, 'cancel', self.artifacts)
+        fact['step'] = 4
+        with self.assertRaisesRegex(UIProvenanceError, 'declared UI step'):
+            _validate_ui_text(fact, 'cancel', self.artifacts)
+        fact['step'] = 5
+        fact['json_pointer'] = '/workflow_timeline/ui_states/4/elements/64'
+        with self.assertRaisesRegex(UIProvenanceError, 'differs from the pointed'):
+            _validate_ui_text(fact, 'cancel', self.artifacts)
+        fact['json_pointer'] = '/workflow_timeline/ui_states/4/elements/65'
+        state['elements'].append(text)
+        self._write_artifacts()
+        with self.assertRaisesRegex(UIProvenanceError, 'ambiguous'):
+            _validate_ui_text(fact, 'cancel', self.artifacts)
+
+    def test_root_versions_do_not_replace_rule_schema_or_allow_aliases(self):
+        for defect in ('missing_version', 'wrong_version', 'rule_aliases', 'fact_aliases'):
+            with self.subTest(defect=defect):
+                data = deepcopy(self.state_map)
+                rule = data['observed_ui_rules'][0]
+                if defect == 'missing_version':
+                    rule.pop('schema_version')
+                elif defect == 'wrong_version':
+                    rule['schema_version'] = 2
+                elif defect == 'rule_aliases':
+                    rule['rule_id'] = rule.pop('id')
+                    rule['rule'] = rule.pop('statement')
+                else:
+                    fact = rule['facts'][0]
+                    fact['fact_id'] = fact.pop('id')
+                    fact['provenance'] = fact.pop('provenance_type')
+                with self.assertRaises(UIProvenanceError):
+                    validate_state_map(data, self.artifacts, 'price-adjustment')
+
+    def _cancel_price_text_fixture(self):
+        text = 'generic : Eligible'
+        button = 'button "Request price adjustment" [cursor=pointer]'
+        before, after = self.demo['workflow_timeline']['ui_states']
+        before['elements'] = [text, button]
+        after['elements'] = ['generic : Unavailable']
+        after['changes_from_previous']['disappeared'] = [text, button]
+        return text, button
+
+    def test_colon_text_cannot_be_invented_accessible_name(self):
+        self._cancel_price_text_fixture()
+        fact = self.rule['facts'][0]
+        fact['element'] = {'role': 'generic', 'name': 'Eligible'}
+        self._write_artifacts()
+        with self.assertRaisesRegex(UIProvenanceError,
+                                    'Pointed semantic element does not match the declared role/name'):
+            validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
+    def test_named_price_adjustment_button_disappearance_validates(self):
+        self._cancel_price_text_fixture()
+        fact = self.rule['facts'][0]
+        fact['element'] = {'role': 'button', 'name': 'Request price adjustment'}
+        fact['json_pointers'] = {
+            'before': '/workflow_timeline/ui_states/0/elements/1',
+            'after': '/workflow_timeline/ui_states/1/changes_from_previous/disappeared/1',
+        }
+        self._write_artifacts()
+        validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+        # A nearby text pointer cannot substitute for the named control.
+        fact['json_pointers']['before'] = '/workflow_timeline/ui_states/0/elements/0'
+        with self.assertRaisesRegex(UIProvenanceError, 'declared role/name'):
+            validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
+    def test_colon_text_is_valid_only_as_exact_static_text_fact(self):
+        text, _ = self._cancel_price_text_fixture()
+        self.rule['facts'][0] = {
+            'id': 'UIR-001-F1', 'type': 'explicit_ui_text',
+            'provenance_type': 'explicit_visible_ui_text',
+            'source_run': 'price-adjustment', 'artifact': 'demo.json',
+            'step': 2, 'text': text,
+            'json_pointer': '/workflow_timeline/ui_states/0/elements/0',
+        }
+        self._write_artifacts()
+        validated = validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+        self.assertEqual(validated[0]['facts'][0]['type'], 'explicit_ui_text')
+        self.rule['facts'][0]['text'] = 'Eligible'
+        with self.assertRaisesRegex(UIProvenanceError, 'UI text differs'):
+            validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
+    def _appearance_fixture(self):
+        button = 'button "Complete refund" [cursor=pointer]'
+        before, after = self.demo['workflow_timeline']['ui_states']
+        after['elements'] = [button]
+        after['changes_from_previous']['appeared'] = [button]
+        fact = self.rule['facts'][0]
+        fact.update(transition='appeared', element={'role': 'button', 'name': 'Complete refund'},
+                    json_pointers={'before': '/workflow_timeline/ui_states/0/elements',
+                                   'after': '/workflow_timeline/ui_states/1/changes_from_previous/appeared/0'})
+        return button, before, after
+
+    def test_appeared_element_absent_before_and_unique_after_validates(self):
+        self._appearance_fixture()
+        self._write_artifacts()
+        validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
+    def test_appearance_rejects_existing_duplicate_missing_and_wrong_pointer(self):
+        for defect in ('existing_before', 'duplicate_after', 'missing_after', 'duplicate_delta', 'wrong_pointer'):
+            with self.subTest(defect=defect):
+                button, before, after = self._appearance_fixture()
+                before['elements'] = [CANCEL]
+                if defect == 'existing_before':
+                    before['elements'].append(button)
+                elif defect == 'duplicate_after':
+                    after['elements'].append(button)
+                elif defect == 'missing_after':
+                    after['elements'] = []
+                elif defect == 'duplicate_delta':
+                    after['changes_from_previous']['appeared'].append(button)
+                else:
+                    self.rule['facts'][0]['json_pointers']['before'] += '/0'
+                self._write_artifacts()
+                with self.assertRaises(UIProvenanceError):
+                    validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
+    def test_enabled_disabled_requires_element_pointers_and_state_change(self):
+        before, after = self.demo['workflow_timeline']['ui_states']
+        for transition, states in [('became_enabled', (CANCEL + ' [disabled]', CANCEL)),
+                                   ('became_disabled', (CANCEL, CANCEL + ' [disabled]'))]:
+            with self.subTest(transition=transition):
+                before['elements'], after['elements'] = [states[0]], [states[1]]
+                fact = self.rule['facts'][0]
+                fact.update(transition=transition, json_pointers={
+                    'before': '/workflow_timeline/ui_states/0/elements/0',
+                    'after': '/workflow_timeline/ui_states/1/elements/0'})
+                self._write_artifacts()
+                validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+                after['elements'] = [states[0]]
+                self._write_artifacts()
+                with self.assertRaisesRegex(UIProvenanceError, 'Enabled/disabled transition contradicts'):
+                    validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+                after['elements'] = [states[1]]
+                after['changes_from_previous']['appeared'] = [states[1]]
+                fact['json_pointers']['after'] = '/workflow_timeline/ui_states/1/changes_from_previous/appeared/0'
+                self._write_artifacts()
+                with self.assertRaises(UIProvenanceError):
+                    validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
+    def test_unchanged_api_field_is_rejected_even_when_refund_changes(self):
+        for index, entry in enumerate(self.har['log']['entries']):
+            body = json.loads(entry['response']['content']['text'])
+            body['order']['priceProtection'] = {'status': 'eligible'}
+            body['order']['refund'] = {'status': ['none', 'pending'][index]}
+            entry['response']['content']['text'] = json.dumps(body)
+        fact = self.rule['facts'][1]
+        fact.update(id='UIR-001-F3', field_path=['order', 'priceProtection', 'status'],
+                    before='eligible', after='eligible')
+        self.rule['inference']['derived_from'] = ['UIR-001-F1', 'UIR-001-F3']
+        self._write_artifacts()
+        with self.assertRaisesRegex(UIProvenanceError,
+                                    'UIR-001-F3: API transition before and after values are identical'):
+            validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+        # A real change at the exact referenced path remains valid.
+        fact.update(field_path=['order', 'refund', 'status'], before='none', after='pending')
+        validated = validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+        self.assertEqual(validated[0]['facts'][1]['after'], 'pending')
+
     def test_fact_type_requires_its_exact_provenance_type(self):
         explicit_text = deepcopy(self.state_map)
         explicit_text['observed_ui_rules'][0]['facts'][0] = {
@@ -233,6 +423,54 @@ class UIProvenanceTests(unittest.TestCase):
         api_only['provenance']['fact_ids'] = ['UIR-001-F2']
         with self.assertRaisesRegex(UIProvenanceError, 'raw UI fact'):
             validate_rule_reference(api_only, self.root)
+
+    def test_api_only_cap_rule_fails_gate_even_alongside_valid_ui_rule(self):
+        # Reproduce cancel-order: the HAR facts are true, but do not constitute
+        # a UI-observed cap. A separate valid UI rule must not cover for it.
+        for index, entry in enumerate(self.har['log']['entries']):
+            body = json.loads(entry['response']['content']['text'])
+            body['order'].update(
+                totalReturned=[0, 100][index],
+                cancellation={'status': ['none', 'completed'][index]},
+            )
+            entry['response']['content']['text'] = json.dumps(body)
+        api_rule = deepcopy(self.rule)
+        api_rule.update(id='UIR-002', statement='Total returned must not exceed originalAmount')
+        api_rule['facts'] = []
+        for number, path, before, after in (
+                (1, ['order', 'totalReturned'], 0, 100),
+                (2, ['order', 'cancellation', 'status'], 'none', 'completed')):
+            fact = deepcopy(self.rule['facts'][1])
+            fact.update(id=f'UIR-002-F{number}', field_path=path, before=before, after=after)
+            api_rule['facts'].append(fact)
+        api_rule['inference']['derived_from'] = ['UIR-002-F1', 'UIR-002-F2']
+        api_rule['inference']['text'] = 'One payout of 100 suggests a cap worth testing.'
+        self.state_map['observed_ui_rules'].append(api_rule)
+        self._write_artifacts()
+        raw_before = {name: (self.artifacts / name).read_bytes()
+                      for name in ('demo.json', 'recording.har')}
+        watcher = ArtifactWatcher(self.root, 'price-adjustment')
+        with self.assertRaisesRegex(UIProvenanceError, 'Observed UI rule UIR-002:.*raw UI fact'):
+            watcher.check()
+        self.assertNotIn('state_map.json', watcher.found)
+
+        # Agent-authored trust claims and inference text cannot bypass the gate.
+        api_rule['validated'] = True
+        with self.assertRaisesRegex(UIProvenanceError, 'UIR-002:.*raw UI fact'):
+            validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
+        # Correction preserves the true UI rule and the original recordings.
+        self.state_map['observed_ui_rules'].pop()
+        self.state_map['critical_endpoints'][0]['why'] = (
+            'Agent inference (unverified): one reimbursement was observed; '
+            'a total compensation cap is a hypothesis to test, not a UI rule.')
+        (self.artifacts / 'state_map.json').write_text(
+            json.dumps(self.state_map), encoding='utf-8')
+        self.assertIn('state_map.json', {name for name, _ in watcher.check()})
+        self.assertEqual([rule['id'] for rule in validate_state_map(
+            self.state_map, self.artifacts, 'price-adjustment')], ['UIR-001'])
+        for name, content in raw_before.items():
+            self.assertEqual((self.artifacts / name).read_bytes(), content)
 
     def test_schema_incompatible_new_state_map_fails_artifact_gate(self):
         accepted = ArtifactWatcher(self.root, 'price-adjustment').check()
@@ -365,6 +603,26 @@ class UIProvenanceTests(unittest.TestCase):
         observed_without_status['transitions'][0]['response_status'] = None
         with self.assertRaisesRegex(UIProvenanceError, 'observed transition needs'):
             validate_state_map(observed_without_status, self.artifacts, 'price-adjustment')
+
+    def test_baseline_read_is_evidence_not_an_equal_step_transition(self):
+        baseline = deepcopy(self.state_map['transitions'][0])
+        baseline.update(name='get_order', method='GET', url='http://localhost:3000/api/order')
+        baseline['ui_context'].update(before_step=2, after_step=2)
+        invalid = deepcopy(self.state_map)
+        invalid['transitions'].insert(0, baseline)
+        with self.assertRaisesRegex(UIProvenanceError, 'ordered before/after steps'):
+            validate_state_map(invalid, self.artifacts, 'price-adjustment')
+        # The observed baseline cannot be passed off as an unexecuted inference.
+        baseline['inferred'] = True
+        with self.assertRaisesRegex(UIProvenanceError, 'must not claim an observed response_status'):
+            validate_state_map(invalid, self.artifacts, 'price-adjustment')
+        # Keep the baseline HAR response, but only the real POST in transitions.
+        self.assertEqual(len(self.har['log']['entries']), 2)
+        validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+        backwards = deepcopy(self.state_map)
+        backwards['transitions'][0]['ui_context'].update(before_step=4, after_step=2)
+        with self.assertRaisesRegex(UIProvenanceError, 'ordered before/after steps'):
+            validate_state_map(backwards, self.artifacts, 'price-adjustment')
 
     def test_legacy_state_map_remains_readable_but_unverified(self):
         legacy = {'observed_ui_rules': [{'text': 'Cancel order disappears'}]}

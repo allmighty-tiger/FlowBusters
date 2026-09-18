@@ -53,10 +53,18 @@ async def execute(script, report_dir, *, root, cwd, source='MUTATION_SCRIPT', tr
     started = stamp()
     with tempfile.TemporaryDirectory(prefix='fb-execution-') as temporary:
         trace = Path(temporary) / 'trace.jsonl'
+        from backend.runtime.endpoint_catalog import load_endpoint_catalog
+        catalog = load_endpoint_catalog(cwd, root)
+        scope_path = cwd / 'scope.json'
+        if catalog is not None:
+            scope = json.loads(scope_path.read_text(encoding='utf-8'))
+            scope['_endpoint_catalog'] = catalog['endpoints']
+            scope_path = Path(temporary) / 'execution-scope.json'
+            scope_path.write_text(json.dumps(scope), encoding='utf-8')
         # Execute the saved source snapshot; never rewrite the original script.
         snapshot = Path(temporary) / script.name
         snapshot.write_bytes(code)
-        command = [sys.executable, str(harness), str(snapshot), str(trace), str(cwd / 'scope.json'), str(script)]
+        command = [sys.executable, str(harness), str(snapshot), str(trace), str(scope_path), str(script)]
         process = await asyncio.create_subprocess_exec(*command, cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         failure = None
@@ -173,13 +181,45 @@ def preflight_script_contract(script):
         tree = ast.parse(Path(script).read_text(encoding='utf-8'), filename=str(script))
     except (OSError, SyntaxError, UnicodeError) as exc:
         return f'Probe contract preflight failed: {type(exc).__name__}: {exc}'
+    assignments = {}
+    functions = {}
+    for item in ast.walk(tree):
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            returns = [n.value for n in ast.walk(item) if isinstance(n, ast.Return)]
+            if len(returns) == 1:
+                functions[item.name] = returns[0]
+        if isinstance(item, ast.Assign):
+            for target in item.targets:
+                if isinstance(target, ast.Name):
+                    assignments.setdefault(target.id, []).append(item.value)
+
+    def dictionary_fields(value, seen=()):
+        # Shape resolution only: never evaluate script code or infer values.
+        if id(value) in seen:
+            return {}
+        seen = (*seen, id(value))
+        if isinstance(value, ast.Await):
+            return dictionary_fields(value.value, seen)
+        if isinstance(value, ast.Name) and len(assignments.get(value.id, [])) == 1:
+            return dictionary_fields(assignments[value.id][0], seen)
+        if isinstance(value, ast.Call) and isinstance(value.func, ast.Name):
+            return dictionary_fields(functions.get(value.func.id), seen)
+        fields = {}
+        if isinstance(value, ast.Dict):
+            for key, child in zip(value.keys, value.values):
+                if key is None:
+                    fields.update(dictionary_fields(child, seen))
+                elif isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    fields[key.value] = child
+        return fields
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Dict):
             continue
-        fields = {}
-        for key, value in zip(node.keys, node.values):
-            if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                fields[key.value] = value
+        fields = dictionary_fields(node)
+        if 'verification' in fields and 'supplementary_scenarios' in fields:
+            return ('Probe output contract error: supplementary_scenarios must be '
+                    'a named object inside verification, not a top-level result field')
         predicate = fields.get('predicate')
         if not isinstance(predicate, ast.Constant) or not isinstance(predicate.value, str):
             continue
@@ -187,6 +227,19 @@ def preflight_script_contract(script):
             return ('Probe output contract error: business_rule_must_hold requires '
                     'a supported executable invariant; use unsupported_business_rule '
                     'with unsupported_reason when no supported predicate applies')
+        if predicate.value == 'business_rule_must_hold':
+            violation = fields.get('violation')
+            if isinstance(violation, ast.Dict):
+                violation_fields = {}
+                for key, value in zip(violation.keys, violation.values):
+                    if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                        violation_fields[key.value] = value
+                observed = violation_fields.get('observed')
+                if (isinstance(observed, ast.Constant)
+                        and type(observed.value) is not bool):
+                    return ('Probe output contract error: literal violation.observed '
+                            f'must be boolean, not {type(observed.value).__name__}; '
+                            'compute it from the captured AFTER response before printing JSON')
         if predicate.value == 'unsupported_business_rule' and 'unsupported_reason' not in fields:
             return ('Probe output contract error: unsupported_business_rule requires '
                     'a concrete unsupported_reason')
@@ -214,6 +267,24 @@ def validate_probe_output(receipt, *, enforce_contract=False):
     if not isinstance(verification, dict):
         result.update(status='invalid', category='evidence_contract_error',
                       error='Probe output contract error: verification must be an object')
+        return result
+    if 'supplementary_scenarios' in parsed:
+        result.update(
+            status='invalid',
+            category='evidence_contract_error',
+            error=('Probe output contract error: supplementary_scenarios must be '
+                   'a named object inside verification, not a top-level result field'))
+        return result
+    supplementary = verification.get('supplementary_scenarios')
+    if (supplementary is not None
+            and (not isinstance(supplementary, dict)
+                 or any(not isinstance(scenario, dict)
+                        for scenario in supplementary.values()))):
+        result.update(
+            status='invalid',
+            category='evidence_contract_error',
+            error=('Probe output contract error: verification.supplementary_scenarios '
+                   'must be an object mapping unique scenario names to evidence objects'))
         return result
     predicate = verification.get('predicate')
     if predicate == 'business_rule_must_hold':
@@ -328,7 +399,7 @@ def validate_probe_output(receipt, *, enforce_contract=False):
               'url_tested': parsed.get('url_tested', parsed.get('url', ''))}
     error = trace_error(record, receipt)
     if error:
-        category = ('evidence_contract_error' if error in {
+        category = ('evidence_contract_error' if error.startswith('Claimed invariant result contradicts captured state') or error in {
             'Business invariant has no supported executable predicate',
             'Invariant paths cannot be evaluated against captured state',
             'Claimed invariant result contradicts captured state',
@@ -467,8 +538,15 @@ def trace_error(record, receipt):
             resolved_terms = [resolve_numeric_path(after['response'], path) for path in invariant['terms']]
             limit_value, resolved_limit = resolve_numeric_path(after['response'], invariant['limit'])
             violated = sum(value for value, _ in resolved_terms) > limit_value
-            if not invariant['terms'] or violated != verification.get('violation', {}).get('observed'):
-                return 'Claimed invariant result contradicts captured state'
+            if (not invariant['terms']
+                    or type(verification.get('violation', {}).get('observed')) is not bool
+                    or violated != verification.get('violation', {}).get('observed')):
+                return (f'Claimed invariant result contradicts captured state: scenario=primary; '
+                        f'AFTER sequence={after.get("sequence")}; '
+                        f'terms={invariant["terms"]} values={[value for value, _ in resolved_terms]}; '
+                        f'limit={invariant["limit"]} value={limit_value}; '
+                        f'claimed={verification.get("violation", {}).get("observed")!r}; '
+                        f'recomputed={violated!r}')
             verification['resolved_invariant'] = {
                 'operator': 'sum_lte',
                 'terms': [path for _, path in resolved_terms],
@@ -476,6 +554,19 @@ def trace_error(record, receipt):
             }
         except (TypeError, ValueError, KeyError):
             return 'Invariant paths cannot be evaluated against captured state'
+    # Supplementary evidence is not a separate verdict. If it declares an
+    # invariant, however, its result must match its own authenticated AFTER.
+    for name, scenario in (verification.get('supplementary_scenarios') or {}).items():
+        if not isinstance(scenario, dict) or 'invariant' not in scenario:
+            continue
+        isolated = deepcopy(scenario)
+        isolated['predicate'] = 'business_rule_must_hold'
+        isolated.pop('supplementary_scenarios', None)
+        scenario_receipt = {**receipt, 'parsed_result': {'verification': deepcopy(isolated)}}
+        scenario_record = {**record, 'verification': isolated, 'url_tested': ''}
+        error = trace_error(scenario_record, scenario_receipt)
+        if error:
+            return error.replace('scenario=primary;', f'scenario={name};') if 'scenario=primary;' in error else f'{error} (scenario={name})'
     return None
 
 
@@ -510,7 +601,10 @@ def _partial_coverage_for(finding, candidates):
     candidate = next((item for item in candidates
                       if isinstance(item, dict) and item.get('id') == candidate_id), None)
     scenarios = verification.get('supplementary_scenarios')
-    if not candidate or not _candidate_declares_separate_scenarios(candidate) or not isinstance(scenarios, dict):
+    # Authenticated supplementary captures are coverage data even when an old
+    # agent draft omitted a machine-readable candidate link.  Candidate text
+    # is never required to keep such non-verdict evidence visible.
+    if not isinstance(scenarios, dict):
         return []
     labels = {
         'cancel_after_price_adjustment': 'Cancel after price adjustment',
@@ -531,6 +625,10 @@ def _partial_coverage_for(finding, candidates):
             violation = scenario.get('violation')
             if not isinstance(violation, dict) or type(violation.get('observed')) is not bool:
                 missing.append('independent violation result')
+            from backend.runtime.verification import _endpoint_coverage_error
+            endpoint_error = _endpoint_coverage_error(scenario)
+            if endpoint_error:
+                missing.append('available required endpoints (' + endpoint_error + ')')
         if not missing:
             # A complete supplementary record must still be authenticated by an
             # independently attributed trace before it can become a verdict.
@@ -559,7 +657,20 @@ def reconcile(data, report_dir, root):
     report_dir = Path(report_dir).resolve()
     run_dir = report_dir.parent.parent if report_dir.parent.name == 'reports' else report_dir.parent
     flow = report_dir.name
+    from backend.runtime.candidate_correction import load_gate
+    gate = load_gate(run_dir, root)
+    data.pop('unverified_candidates', None)
+    data.pop('validated_ai_candidates', None)
+    if gate is not None:
+        data['unverified_candidates'] = gate['unverified_coverage']
+        data['validated_ai_candidates'] = len(gate['valid_candidate_ids'])
+        data['findings'] = [f for f in data.get('findings', [])
+                            if f.get('script') in gate['allowed_scripts']
+                            or any(receipt.get('source') == 'BACKEND_COVERAGE'
+                                   and receipt.get('script') == f.get('script')
+                                   for receipt in receipts.values())]
     planned = [
+        *(('BACKEND_COVERAGE', path.name) for path in sorted((run_dir / 'backend_coverage' / flow).glob('*.py'))),
         *(('MUTATION_SCRIPT', path.name) for path in sorted((run_dir / 'mutations' / flow).glob('*.py'))),
         *(('VERIFICATION_PROBE', path.name) for path in sorted((run_dir / 'verification_probes' / flow).glob('*.py'))),
     ]
@@ -568,6 +679,8 @@ def reconcile(data, report_dir, root):
         if isinstance(receipt.get('completed_at'), str) and receipt['completed_at'].strip()
         and type(receipt.get('exit_code')) is int
     }
+    if gate is not None:
+        planned = [p for p in planned if p[0] == 'BACKEND_COVERAGE' or p[1] in gate['allowed_scripts']]
 
     def attach_rule_provenance(record):
         record.pop('_rule_provenance_valid', None)
@@ -620,6 +733,8 @@ def reconcile(data, report_dir, root):
                 and finding['execution'].get('status') == 'NOT_EXECUTED'):
             finding['agent_draft_execution'] = deepcopy(finding.pop('execution'))
         finding['_provenance_error'] = receipt_evidence_error(finding, receipt)
+        from backend.runtime.coverage_plans import receipt_probe_origin
+        finding['probe_origin'] = receipt_probe_origin(receipt) if receipt else 'UNKNOWN'
         finding['execution_trace'] = deepcopy(receipt.get('trace', [])) if receipt else []
         attach_rule_provenance(finding)
     partial_coverage = []
@@ -640,6 +755,8 @@ def reconcile(data, report_dir, root):
             'status_code': parsed.get('status_code'), 'response_snippet': parsed.get('response_body_snippet'),
             'verification': deepcopy(parsed.get('verification')), 'parsed_result': deepcopy(parsed),
             'error_message': receipt.get('error') or ('Script execution failed' if receipt['exit_code'] else None)}
+        from backend.runtime.coverage_plans import receipt_probe_origin
+        row['probe_origin'] = receipt_probe_origin(receipt)
         validation = (validate_probe_output(receipt, enforce_contract=True)
                       if isinstance(receipt.get('contract_validation'), dict)
                       and receipt['contract_validation'].get('version') == PROBE_CONTRACT_VERSION
@@ -685,6 +802,7 @@ def reconcile(data, report_dir, root):
         and row['execution_id'] not in parse_failures
         and row['execution_id'] not in contract_failures
         and row.get('_provenance_error')
+        and not row['_provenance_error'].startswith('Claimed invariant result contradicts captured state')
         and row['_provenance_error'] not in semantic_failures
     }
     raw_receipt_count = len(list((report_dir / 'executions').glob('*.json')))
@@ -721,7 +839,13 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
     draft = json.loads(findings_path.read_text(encoding='utf-8')) if findings_path.exists() else {'findings': []}
     with (reports / f'agent-draft-{uuid.uuid4().hex}.json').open('x', encoding='utf-8') as stream:
         json.dump(draft, stream, indent=2)
-    scripts = sorted((run_dir / 'mutations' / flow).glob('*.py'))
+    backend_coverage = run_dir / 'backend_coverage' / flow
+    if list(backend_coverage.glob('*.py')):
+        from backend.runtime.coverage_plans import prepare_coverage_probes
+        authorized = set(prepare_coverage_probes(run_dir, flow, root))
+        if set(backend_coverage.glob('*.py')) != authorized:
+            raise ValueError('Unrecognized backend coverage script; generation authority cannot be established')
+    scripts = sorted(backend_coverage.glob('*.py')) + sorted((run_dir / 'mutations' / flow).glob('*.py'))
     # Extra verification probes are separate programs/receipts, never relabelled mutations.
     extra = run_dir / 'verification_probes' / flow
     scripts += sorted(extra.glob('*.py'))
@@ -731,14 +855,30 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
     contract_errors = 0
     trace_mismatches = 0
     total = len(scripts)
+    from backend.runtime.endpoint_catalog import load_endpoint_catalog, preflight_endpoints
+    endpoint_catalog = load_endpoint_catalog(run_dir, root)
+    from backend.runtime.candidate_correction import load_gate
+    gate = load_gate(run_dir, root)
+    if gate is not None:
+        scripts = [p for p in scripts if p.parent == backend_coverage or p.name in gate['allowed_scripts']]
+        total = len(scripts)
+    # Validate the entire finished plan before executing even the first probe.
+    for planned_script in scripts:
+        error = (preflight_script_contract(planned_script)
+                 or preflight_endpoints(planned_script, endpoint_catalog))
+        if error:
+            raise ValueError(f'Probe plan preflight failed: {planned_script.name}: {error}')
     for index, script in enumerate(scripts, start=1):
-        source = 'VERIFICATION_PROBE' if script.parent == extra else 'MUTATION_SCRIPT'
+        source = ('BACKEND_COVERAGE' if script.parent == backend_coverage else
+                  'VERIFICATION_PROBE' if script.parent == extra else 'MUTATION_SCRIPT')
         matching = [f for f in draft.get('findings', []) if f.get('script') == script.name
                     and (f.get('source', 'MUTATION_SCRIPT') == source
                          or source == 'MUTATION_SCRIPT' and f.get('source') == 'CROSS_FLOW')]
         triggered_by = matching[0].get('triggered_by') if len(matching) == 1 else None
         scenario_name = _readable_scenario_name(script)
         preflight_error = preflight_script_contract(script)
+        if not preflight_error:
+            preflight_error = preflight_endpoints(script, endpoint_catalog)
         if preflight_error:
             contract_errors += 1
             if execution_progress is not None:

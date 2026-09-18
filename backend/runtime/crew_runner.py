@@ -32,6 +32,7 @@ from backend.runtime.orchestrator import Phase, ProgressEvent
 from backend.runtime.verification import load_report
 from backend.runtime.recorder import record, RecordingError
 from backend.runtime.ui_provenance import UIProvenanceError, validate_state_map
+from backend.runtime.state_map_correction import correct_state_map, evidence_hashes
 
 logger = logging.getLogger("flowbusters.crew_runner")
 
@@ -57,6 +58,7 @@ class CrewConfig:
     auto_complete: bool = False  # auto-write marker file after browser opens
     cross_flow_inputs: dict | None = None
     reanalysis_inputs: dict | None = None
+    application_identity: dict | None = None
 
 
 # ── Working Directory Preparation ─────────────────────────────────────────────
@@ -144,6 +146,13 @@ def prepare_run_dir(config: CrewConfig, flow_name: str) -> Path:
     (base / "mutations" / flow_name).mkdir(parents=True, exist_ok=True)
     (base / "reports" / flow_name).mkdir(parents=True, exist_ok=True)
 
+    # Identity is backend-issued before any agent starts.  Agent output, the
+    # target URL, and the run name can never create or alter this binding.
+    if config.application_identity:
+        from backend.runtime.application_identity import issue_identity
+        issue_identity(base, Path(config.run_dir), config.target_url,
+                       config.application_identity)
+
     logger.info("Run directory prepared: %s", base)
     return base
 
@@ -179,6 +188,7 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
 
     deferred = ["agents/captain/charter.md", "routing.md",
                 "agents/analyst/charter.md", "skills/analyze-har/SKILL.md",
+                "skills/analyze-har/OBSERVED_UI_RULES.md",
                 "agents/saboteur/charter.md", "skills/mutate-flow/SKILL.md",
                 "agents/prober/charter.md", "skills/probe-flow/SKILL.md",
                 "skills/probe-flow/VERIFICATION.md"]
@@ -196,6 +206,12 @@ def build_system_prompt(run_dir: Path, flow_name: str) -> str:
         "observed_ui_affordance only for an exact supported before/after "
         "transition. Never mix values between rows. The artifact field is "
         "required on every fact and may not be inferred from its JSON pointer. "
+        "Check each rule independently: it must include a directly relevant "
+        "explicit_ui_text or ui_element_transition fact from demo.json. "
+        "API-only facts or inference cannot populate observed_ui_rules; omit "
+        "such rules and their references, never pad them with unrelated UI facts. "
+        "Useful API-based hypotheses may remain in critical_endpoints[].why "
+        "labelled Agent inference (unverified), not verified provenance. "
         "Re-read the completed file and verify every row before continuing.\n"
         "\nExecute mutation scripts with python3 <script_path>.py <target_url>, "
         "30-second timeout each. HTTP codes alone never establish a verdict. "
@@ -462,6 +478,10 @@ async def execute_validated_probes(run_dir, flow_name, root, progress,
                                    execution_progress=None):
     """The only runner entry used here: state-map validation precedes execution."""
     validate_final_state_map(run_dir, flow_name)
+    from backend.runtime.endpoint_catalog import prepare_endpoint_catalog
+    prepare_endpoint_catalog(run_dir, flow_name, root)
+    from backend.runtime.coverage_plans import prepare_coverage_probes
+    prepare_coverage_probes(run_dir, flow_name, root)
     from backend.runtime.probe_executor import execute_run
     return await execute_run(run_dir, flow_name, root, progress,
                              execution_progress=execution_progress)
@@ -607,6 +627,8 @@ async def run_crew(
     try:
         await prepare_recording_evidence(
             config, run_dir, mcp_config_arg, env, progress_cb)
+        from backend.runtime.endpoint_catalog import prepare_endpoint_catalog
+        prepare_endpoint_catalog(run_dir, flow_name, config.run_dir)
     except (RecordingError, OSError, ValueError, asyncio.TimeoutError) as exc:
         if cross_flow:
             message = f'Cross-flow source evidence failed: {exc}'
@@ -619,6 +641,7 @@ async def run_crew(
         return {'error': message, 'run_dir': str(run_dir), 'exit_code': -1,
                 'total_time': time.monotonic() - started_at, 'artifacts': {}}
     startup_mark('recording_validated')
+    recording_hashes = evidence_hashes(run_dir, flow_name)
     system_prompt = (run_dir / '_post_recording_instructions.md').read_text(encoding="utf-8")
     system_prompt += (
         '\nThe backend completed RECORD and closed its MCP session. '
@@ -639,6 +662,14 @@ async def run_crew(
             'Do not copy or reuse any source state map, draft, mutation, report, or receipt.\n')
     system_prompt += '''
 BACKEND EXECUTION CONTRACT (supersedes all earlier probing instructions):
+Read endpoint_catalog.json. Use its exact method/origin/path entries and complete
+workflow chains. This backend-authenticated inventory distinguishes recording
+observations from backend application contracts. A UI button label cannot supply
+a URL. Never shorten /refund/request to /refund or infer routes from button names.
+If a required endpoint is absent, leave the scenario NOT_EXECUTED with the missing
+endpoint precondition instead of guessing. Do not modify endpoint_catalog.json.
+Do not write backend_coverage/: those scripts are independently generated by the
+backend and appear separately from AI probes in the signed execution results.
 You prepare mutation scripts and a draft findings.json/remediation.md, then exit.
 Do NOT execute mutation scripts or send HTTP probes yourself. The backend runs
 every script once after your session ends, captures HTTPX/requests transport
@@ -737,7 +768,7 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
     # "View report" button appears at the end of the Report step instead of
     # waiting for the crew process to exit.
     completion_emitted = False
-    last_state_map_error: Optional[str] = None
+    pending_state_map_error = None
 
     # Auto-complete: in test mode, write the marker after a short delay
     # so the Recorder can finalize without human interaction.
@@ -787,25 +818,33 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
                 logger.debug("stderr: %s", text[:200])
 
     async def watch_artifacts():
-        nonlocal error_msg, auto_marker_written, browser_seen, window_dead_since, marker_announced, browser_closed_announced, completion_emitted, browser_force_closed, last_state_map_error
+        nonlocal error_msg, auto_marker_written, browser_seen, window_dead_since, marker_announced, browser_closed_announced, completion_emitted, browser_force_closed, pending_state_map_error
         while proc.returncode is None:
             try:
                 new_artifacts = watcher.check()
-            except (UIProvenanceError, ProbeContractError) as exc:
+            except UIProvenanceError as exc:
+                # No simultaneous writers: correction runs after this agent
+                # exits. Draft generation is not permission to execute probes.
                 new_artifacts = []
-                current_error = str(exc)
-                if current_error != last_state_map_error:
-                    last_state_map_error = current_error
-                    label = ("State map" if isinstance(exc, UIProvenanceError)
-                             else "Probe contract")
-                    phase = Phase.ANALYZE if isinstance(exc, UIProvenanceError) else Phase.MUTATE
-                    progress_cb(ProgressEvent(
-                        phase,
-                        f"{label} is not valid yet: {current_error}. Waiting for a corrected file.",
-                        done=False,
-                    ))
+                if pending_state_map_error != str(exc):
+                    pending_state_map_error = str(exc)
+                    progress_cb(ProgressEvent(Phase.ANALYZE,
+                        f'State map rejected: {exc}. Analyst correction queued after draft generation; probes blocked.',
+                        done=False))
+            except ProbeContractError as exc:
+                error_msg = f'Probe contract validation failed: {exc}'
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass  # The agent may have exited while the gate ran.
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+                return
             else:
-                last_state_map_error = None
+                pending_state_map_error = None
 
             # Announce once when the user's Finish marker lands: the browser is
             # being torn down and the crew moves on to analyze. Without this the
@@ -962,7 +1001,8 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
                 if "analyze" not in phase_timers:
                     phase_timers["analyze"] = time.time()
                 elif time.time() - phase_timers["analyze"] > config.phase_timeout:
-                    error_msg = "ANALYZE phase timeout exceeded"
+                    error_msg = (f'ANALYZE phase timeout exceeded; state map rejected: {pending_state_map_error}'
+                                 if pending_state_map_error else 'ANALYZE phase timeout exceeded')
                     progress_cb(ProgressEvent(
                         Phase.FAILED, error_msg, done=True, error=error_msg))
                     proc.terminate()
@@ -1002,6 +1042,7 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
     await asyncio.gather(read_stdout(), read_stderr(), watch_artifacts())
 
     # Process completed
+    await proc.wait()
     exit_code = proc.returncode
     total_time = time.time() - overall_start
 
@@ -1028,13 +1069,27 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
             error=error_msg,
         ))
 
+    # A fresh read-only Analyst call receives concrete validator feedback.
+    # This gate finishes before any backend-owned probe can be executed.
+    if not error_msg:
+        try:
+            await correct_state_map(config, run_dir, flow_name, env,
+                lambda message: progress_cb(ProgressEvent(Phase.ANALYZE, message, done=False)),
+                expected_hashes=recording_hashes,
+                deadline=time.monotonic() + max(0, config.overall_timeout - (time.time() - overall_start)))
+        except (UIProvenanceError, OSError, ValueError) as exc:
+            error_msg = f'State-map validation failed: {exc}'
+    total_time = time.time() - overall_start
+
     # Final artifact detection
     try:
-        final_new = watcher.check()
-    except UIProvenanceError as exc:
+        final_new = [] if error_msg else watcher.check()
+    except (UIProvenanceError, ProbeContractError) as exc:
         final_new = []
         if not error_msg:
-            error_msg = f"State-map validation failed: {exc}"
+            label = ('State-map validation' if isinstance(exc, UIProvenanceError)
+                     else 'Probe contract validation')
+            error_msg = f'{label} failed: {exc}'
             progress_cb(ProgressEvent(Phase.FAILED, error_msg, done=True, error=error_msg))
     for name, path in final_new:
         if cross_flow:
@@ -1062,9 +1117,9 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
         from backend.runtime.application_model import validate_cross_flow_candidates
         try:
             candidates_path = run_dir / 'flows' / flow_name / 'cross_flow_candidates.json'
-            candidates = json.loads(candidates_path.read_text(encoding='utf-8'))
-            validate_cross_flow_candidates(candidates, run_dir, root=config.run_dir)
-            candidate_count = len(candidates.get('candidates', []))
+            from backend.runtime.candidate_correction import correct_candidates
+            candidate_count = await correct_candidates(config, run_dir, flow_name, env,
+                lambda message: progress_cb(ProgressEvent(Phase.MUTATE, message, done=False)))
             progress_cb(ProgressEvent(
                 Phase.MUTATE,
                 f'Conflict hypotheses: {candidate_count} validated candidates',
@@ -1078,14 +1133,23 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
                 technical_detail='Candidate artifact: cross_flow_candidates.json',
             ))
 
-    # Optional deterministic business-logic coverage guarantee, OFF by default.
+    # Versioned coverage inputs run only after artifact validation; no preset verdicts.
     execution_summary_detail = None
     if not error_msg:
         try:
             execution_progress = None
+            validate_final_state_map(run_dir, flow_name)
+            from backend.runtime.coverage_plans import prepare_coverage_probes
+            prepare_coverage_probes(run_dir, flow_name, config.run_dir)
             if cross_flow:
                 script_count = len(list((run_dir / 'mutations' / flow_name).glob('*.py')))
                 script_count += len(list((run_dir / 'verification_probes' / flow_name).glob('*.py')))
+                script_count += len(list((run_dir / 'backend_coverage' / flow_name).glob('*.py')))
+                from backend.runtime.candidate_correction import load_gate
+                gate = load_gate(run_dir, config.run_dir)
+                if gate is not None:
+                    script_count = len(gate['allowed_scripts']) + len(list(
+                        (run_dir / 'backend_coverage' / flow_name).glob('*.py')))
                 progress_cb(ProgressEvent(
                     Phase.PROBE,
                     f'Preparing {script_count} executable probes',
@@ -1118,11 +1182,10 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
             error_msg = f'Backend probe execution failed: {exc}'
             progress_cb(ProgressEvent(Phase.FAILED, error_msg, done=True, error=error_msg))
 
-    # The default run stands entirely on the crew's own discovery — that's what
-    # the assessment is for, and it's what a demo of the tool should show. When
-    # you need the result guaranteed regardless of the LLM crew (e.g. you've hit
-    # the non-deterministic miss / mid-probe crash), set ALLOW_STATE_LOCK_PROBE
-    # to enable the backend's own probe: it runs after the crew has fully exited
+    # Separate opt-in state-lock coverage. Versioned financial coverage above
+    # supplements, rather than replaces, the crew's discovery. No coverage hook
+    # guarantees a verdict. ALLOW_STATE_LOCK_PROBE enables another backend probe
+    # after the crew has fully exited
     # (so it won't race the Prober) and, on a confirmed violation, authors/merges
     # the finding into reports/<flow>/findings.json. Running it BEFORE the "no
     # report produced" check also rescues a run that died mid-probe. Best-effort
@@ -1142,7 +1205,7 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
             logger.warning("state_lock_probe hook failed (non-fatal): %s", e)
     elif not error_msg:
         logger.info("state_lock_probe disabled (ALLOW_STATE_LOCK_PROBE not set) — "
-                    "relying on the crew's own detection")
+                    "using generated and applicable versioned coverage probes")
 
     if cross_flow and not error_msg and execution_summary_detail is not None:
         progress_cb(ProgressEvent(
@@ -1166,7 +1229,7 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
     # holding the recording wait, so the browser closed and the recording was
     # lost), mark it a failure instead of a misleading "complete".
     findings_path = run_dir / "reports" / flow_name / "findings.json"
-    if config.cross_flow_inputs is not None:
+    if not error_msg and config.cross_flow_inputs is not None:
         for artifact_name in ('application_state_map.json',):
             artifact_path = run_dir / 'flows' / flow_name / artifact_name
             try:
@@ -1179,7 +1242,7 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
                     Phase.FAILED, error_msg, done=True, error=error_msg,
                     technical_detail=f'Artifact: {artifact_name}',
                 ))
-    if findings_path.exists():
+    if not error_msg and findings_path.exists():
         try:
             normalized = load_report(findings_path)
             if cross_flow:
@@ -1290,6 +1353,9 @@ def _cross_flow_final_message(summary: dict, duration: float) -> str:
         f"{int(result_counts.get('not_reproduced', 0) or 0)} not reproduced. "
         f"Deduplicated primary chains: {deduplicated}."
     )
+    if 'unique_vulnerabilities' in summary:
+        message += (f" Unique vulnerabilities: {int(summary['unique_vulnerabilities'])}; "
+                    f"findings with incomplete scenario coverage: {int(summary.get('coverage_gaps', 0))}.")
     return f"{message} Total duration: {duration:.1f}s."
 
 

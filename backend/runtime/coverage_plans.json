@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "profiles": [{
+    "application_id": "northstar-market",
+    "identity_version": "2",
+    "requirements_version": "2026-09-17",
+    "requirement_id": "NSM-TOTAL-RETURN-CAP-2026-09-17",
+    "setup": "/api/demo/reset",
+    "state_read": "/api/order",
+    "workflows": {
+      "price": ["/api/order/price-adjustment"],
+      "refund": ["/api/order/refund/request", "/api/order/refund/complete"],
+      "cancel": ["/api/order/cancel"]
+    },
+    "scenarios": [
+      {"id": "price_amount_bound", "mode": "recorded", "requires": ["price"], "actions": [{"endpoint": "/api/order/price-adjustment", "body": {"adjustmentAmount": 130}}]},
+      {"id": "refund_completion_replay", "mode": "recorded", "requires": ["refund"], "actions": [{"endpoint": "/api/order/refund/request", "body": {}}, {"endpoint": "/api/order/refund/complete", "body": {}}, {"endpoint": "/api/order/refund/complete", "body": {}}]},
+      {"id": "cancel_amount_bound", "mode": "recorded", "requires": ["cancel"], "actions": [{"endpoint": "/api/order/cancel", "body": {"reimbursementAmount": 200}}]},
+      {"id": "price_then_completed_refund", "mode": "cross_flow", "requires": ["price", "refund"], "actions": [{"endpoint": "/api/order/price-adjustment", "body": {}}, {"endpoint": "/api/order/refund/request", "body": {}}, {"endpoint": "/api/order/refund/complete", "body": {}}]}
+    ]
+  }]
+}

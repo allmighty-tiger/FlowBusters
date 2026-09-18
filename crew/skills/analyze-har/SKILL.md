@@ -62,6 +62,13 @@ Correlate UI states to HAR entries by chronological order, URL and semantics.
 
 ### 4. Identify State-Changing Requests
 
+Do not copy every HAR request into `transitions`. An initial GET /api/order
+with only UI step 1 is baseline evidence, not a `1 -> 1` transition. Keep the
+request in the source HAR and reference its captured state where relevant.
+For an observed action use actual snapshots with `before_step < after_step`;
+never invent a later step or label the baseline request as inferred. Do not
+leave baseline-read names in action-transition `depends_on` arrays.
+
 Focus on requests that modify server state:
 - **Method filter:** POST, PUT, DELETE, PATCH (ignore GET, HEAD, OPTIONS)
 - **Body analysis:** Must have a request body (JSON or form-encoded)
@@ -178,12 +185,26 @@ Output `flows/{flow-name}/state_map.json`:
 - Confirm `observed_ui_rules` follows version 1. It may be empty only when
   semantic UI capture succeeded, its state count matches `demo.json`, and a
   `no_relevant_rules_reason` is recorded.
+- For EACH rule, require directly relevant raw UI evidence from `demo.json`
+  (`explicit_ui_text` or `ui_element_transition`). API facts may supplement it
+  but cannot be the only facts, and inference is not observed evidence. Omit
+  API-only rules and their IDs rather than padding them with unrelated UI text.
+  Keep useful API-based hypotheses in the relevant `critical_endpoints[].why`
+  labelled `Agent inference (unverified):`; this is not verified provenance.
 - Inspect every rule fact before writing the file. The only valid tuples are:
   `explicit_ui_text` + `explicit_visible_ui_text` + `demo.json`;
   `ui_element_transition` + `observed_ui_affordance` + `demo.json`;
   `api_field_transition` + `api_state_fact` + `recording.har`. Never mix tuple
   values. A button observed at one step is explicit UI text; it becomes a UI
   affordance transition only when exact before/after evidence supports one.
+  Never invent an accessible name from colon text: `generic : Eligible` has
+  no quoted name. Use the actual named button for an action transition, or
+  record the full text as `explicit_ui_text` at one step; text presence alone
+  does not prove disappearance or availability. Resolve pointers before emission.
+  For API transitions, resolve both HAR pointers and the exact field_path
+  first: identical values (for example "eligible" -> "eligible") are not a
+  transition. Omit that fact and remove its ID from inference.derived_from.
+  See OBSERVED_UI_RULES.md; the schema has no static API-field fact type.
   A JSON pointer does not replace the mandatory `artifact` field.
 
 ## Important Notes

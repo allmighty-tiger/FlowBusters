@@ -32,6 +32,8 @@ class ExecutionTests(unittest.TestCase):
                 self.send_response(200); self.send_header('Content-Type', 'application/json'); self.end_headers()
                 self.wfile.write(json.dumps(state).encode())
             def do_POST(self):
+                if self.path.endswith('/demo/reset'):
+                    state.update(priceAdjustment=0, completedRefund=0, totalReturned=0)
                 if self.path.endswith('price-adjustment'): state['priceAdjustment'] = 30
                 if self.path.endswith('refund/complete'): state['completedRefund'] = 100
                 state['totalReturned'] = state['priceAdjustment'] + state['completedRefund']
@@ -163,7 +165,9 @@ asyncio.run(probe())
         self.assertEqual(receipt['trace'][-1]['response']['totalReturned'], 130)
         report = reconcile({'findings': [self.finding(receipt)], 'results': [{'status_code': 999}]}, self.reports, self.root)
         result = normalize_report(report)
-        self.assertEqual(result['findings'][0]['verification_status'], 'CONFIRMED')
+        self.assertEqual(result['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertIn('not backend-authenticated rule authority',
+                      result['findings'][0]['verification_reason'])
         self.assertEqual(result['results'][0]['status_code'], 200)
         self.assertEqual(len(result['findings'][0]['evidence']['requests']), 5)
 
@@ -184,6 +188,80 @@ asyncio.run(probe())
         self.assertEqual([event['sequence'] for event in receipt['trace']], list(range(1, 9)))
         self.assertEqual(receipt['contract_validation']['status'], 'valid')
 
+    def test_each_scenario_invariant_uses_its_own_after_state(self):
+        script = self.sequenced_httpx_script(multiple_resets=True)
+        code = script.read_text(encoding='utf-8').replace(
+            "second_action = await call(client, 'POST', '/api/order/price-adjustment')",
+            "second_action = await call(client, 'POST', '/api/order/price-adjustment')\n        extra = await call(client, 'POST', '/api/order/refund/complete')").replace(
+                "'actions': [second_action]", "'actions': [second_action, extra]")
+        script.write_text(code, encoding='utf-8')
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        verification = receipt['parsed_result']['verification']
+        second = verification['supplementary_scenarios']['second']
+        second['invariant'] = deepcopy(verification['invariant'])
+        second['violation'] = {'observed': True, 'description': 'Second scenario only'}
+        self.assertEqual(verification['after']['response']['totalReturned'], 30)
+        self.assertEqual(second['after']['response']['totalReturned'], 130)
+        self.assertEqual(validate_probe_output(receipt, enforce_contract=True)['status'], 'valid')
+        second['violation']['observed'] = False
+        invalid = validate_probe_output(receipt, enforce_contract=True)
+        self.assertEqual(invalid['category'], 'evidence_contract_error')
+        self.assertIn('scenario=second', invalid['error'])
+        self.assertIn('AFTER sequence=9', invalid['error'])
+        self.assertIn('values=[30, 100]', invalid['error'])
+        self.assertIn('value=100', invalid['error'])
+        self.assertIn('recomputed=True', invalid['error'])
+        second.pop('invariant'); second.pop('violation')
+        verification['violation']['observed'] = True
+        invalid = validate_probe_output(receipt, enforce_contract=True)
+        self.assertIn('scenario=primary', invalid['error'])
+        self.assertIn('AFTER sequence=4', invalid['error'])
+        self.assertIn('recomputed=False', invalid['error'])
+
+    def test_multi_scenario_repeated_requests_account_for_every_sequence(self):
+        script = self.sequenced_httpx_script(multiple_resets=True)
+        receipt = asyncio.run(execute(script, self.reports, root=self.root, cwd=self.run))
+        verification = receipt['parsed_result']['verification']
+        primary = [
+            *verification['setup'], verification['before'],
+            *verification['actions'], verification['after'],
+        ]
+        second = verification['supplementary_scenarios']['second']
+        supplementary = [second['before'], *second['actions'], second['after']]
+        self.assertEqual(
+            sorted(capture['sequence'] for capture in [*primary, *supplementary]),
+            [event['sequence'] for event in receipt['trace']],
+        )
+        self.assertEqual(
+            validate_probe_output(receipt, enforce_contract=True)['status'], 'valid')
+
+        omitted = deepcopy(receipt)
+        omitted['parsed_result']['verification']['supplementary_scenarios']['second'][
+            'actions'] = []
+        validation = validate_probe_output(omitted, enforce_contract=True)
+        self.assertEqual(validation['category'], 'evidence_contract_error')
+        self.assertIn('signed transport sequences [7] are not represented', validation['error'])
+
+        misplaced = deepcopy(receipt)
+        moved = misplaced['parsed_result']['verification'].pop('supplementary_scenarios')
+        misplaced['parsed_result']['supplementary_scenarios'] = list(moved.values())
+        validation = validate_probe_output(misplaced, enforce_contract=True)
+        self.assertEqual(validation['category'], 'evidence_contract_error')
+        self.assertIn(
+            'inside verification, not a top-level result field',
+            validation['error'],
+        )
+
+    def test_top_level_supplementary_scenarios_fail_preflight(self):
+        script = self.run / 'top_level_supplementary.py'
+        script.write_text(
+            "result = {'verification': {}, 'supplementary_scenarios': []}\n",
+            encoding='utf-8')
+        self.assertIn(
+            'inside verification, not a top-level result field',
+            preflight_script_contract(script),
+        )
+
     def test_complete_supported_invariant_passes_output_gate(self):
         receipt = asyncio.run(execute(self.sequenced_httpx_script(), self.reports,
                                       root=self.root, cwd=self.run))
@@ -202,6 +280,30 @@ asyncio.run(probe())
         self.assertEqual(report['summary']['evidence_contract_errors'], 1)
         self.assertEqual(report['summary']['trace_mismatches'], 0)
         self.assertEqual(report['results'][0]['outcome'], 'NEEDS_REVIEW')
+
+    def test_scenario_helper_unpack_has_statically_visible_invariant(self):
+        script = self.run / 'helper.py'
+        code = '''
+async def scenario():
+    return {'invariant': {'operator': 'sum_lte', 'terms': [['order', 'totalReturned']],
+                          'limit': ['order', 'originalAmount']}, 'violation': {'observed': False}}
+async def probe():
+    primary = await scenario()
+    verification = {'predicate': 'business_rule_must_hold', **primary}
+'''
+        script.write_text(code, encoding='utf-8')
+        self.assertIsNone(preflight_script_contract(script))
+        script.write_text(code.replace("'invariant':", "'not_an_invariant':"), encoding='utf-8')
+        self.assertIn('requires a supported executable invariant', preflight_script_contract(script))
+
+    def test_literal_null_violation_is_rejected_before_execution(self):
+        script = self.sequenced_httpx_script()
+        code = script.read_text(encoding='utf-8').replace(
+            "'observed': False", "'observed': None")
+        script.write_text(code, encoding='utf-8')
+        error = preflight_script_contract(script)
+        self.assertIn('literal violation.observed must be boolean, not NoneType', error)
+        self.assertIn('captured AFTER response', error)
 
     def test_unsupported_rule_stays_reviewable_without_invented_invariant(self):
         script = self.sequenced_httpx_script(predicate='unsupported_business_rule',
@@ -344,7 +446,7 @@ asyncio.run(probe())
         finding['execution'] = deepcopy(draft_verification['execution'])
         result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
         normalized = result['findings'][0]
-        self.assertEqual(normalized['verification_status'], 'CONFIRMED')
+        self.assertEqual(normalized['verification_status'], 'NEEDS_REVIEW')
         self.assertEqual(normalized['agent_draft_verification'], draft_verification)
         self.assertEqual(normalized['agent_draft_execution']['status'], 'NOT_EXECUTED')
         self.assertIn('before', normalized['verification'])
@@ -509,7 +611,7 @@ asyncio.run(probe())
         self.assertEqual(finding['analysis_source'], 'CROSS_FLOW')
         self.assertTrue(finding['execution_id'])
         report = normalize_report(reconcile(saved, self.reports, self.root))
-        self.assertEqual(report['findings'][0]['verification_status'], 'CONFIRMED')
+        self.assertEqual(report['findings'][0]['verification_status'], 'NEEDS_REVIEW')
 
     def test_legacy_cross_flow_report_links_only_unique_signed_receipt(self):
         receipt = self.run_script()
@@ -519,7 +621,7 @@ asyncio.run(probe())
         report = normalize_report(reconcile({'findings': [legacy]}, self.reports, self.root))
         self.assertEqual(report['findings'][0]['execution_id'], receipt['execution_id'])
         self.assertEqual(report['findings'][0]['analysis_source'], 'CROSS_FLOW')
-        self.assertEqual(report['findings'][0]['verification_status'], 'CONFIRMED')
+        self.assertEqual(report['findings'][0]['verification_status'], 'NEEDS_REVIEW')
 
     def test_tampered_receipt_and_legacy_report_cannot_confirm(self):
         receipt = self.run_script()

@@ -63,9 +63,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="FlowBusters Portal", version="0.1.0", lifespan=lifespan)
 
+_DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+)
+
+
+def _configured_cors_origins() -> list[str]:
+    """Return configured origins with equivalent local-loopback aliases."""
+    configured = [
+        origin.strip()
+        for origin in os.environ.get(
+            "CORS_ORIGINS", ",".join(_DEFAULT_CORS_ORIGINS)
+        ).split(",")
+        if origin.strip()
+    ]
+    origins = list(configured)
+    for origin in configured:
+        if "://localhost:" in origin:
+            origins.append(origin.replace("://localhost:", "://127.0.0.1:", 1))
+        elif "://127.0.0.1:" in origin:
+            origins.append(origin.replace("://127.0.0.1:", "://localhost:", 1))
+    return list(dict.fromkeys(origins))
+
+
+_cors_origins = _configured_cors_origins()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -113,7 +140,8 @@ async def start_cross_flow(body: CrossFlowRequest):
         target_url=inputs['target_url'], flow_name=flow, run_dir=root,
         anthropic_api_key=os.environ.get('ANTHROPIC_API_KEY', ''),
         anthropic_model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5'),
-        progress_cb=_make_progress_cb(), cross_flow_inputs=inputs))
+        progress_cb=_make_progress_cb(), cross_flow_inputs=inputs,
+        application_identity=inputs.get('application_identity')))
     asyncio.ensure_future(_progress_writer())
     return {'status': 'started', 'flow_name': flow}
 
@@ -162,6 +190,9 @@ async def start_assessment(body: AssessmentRequest):
     if _active_run and not _active_run.done():
         return JSONResponse(status_code=409, content={"detail": "An assessment is already running"})
 
+    from backend.runtime.application_identity import discover_application_identity
+    trusted_application_identity = await discover_application_identity(body.target_url)
+
     _last_findings = None
     _last_remediation = None
     _last_flow_name = body.flow_name
@@ -181,6 +212,7 @@ async def start_assessment(body: AssessmentRequest):
             anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
             progress_cb=_make_progress_cb(),
             headless=False,
+            application_identity=trusted_application_identity,
         )
     )
 
@@ -342,6 +374,8 @@ async def list_reports():
             "bugs_found": finding_count,  # legacy API alias
             "finding_count": finding_count,
             "confirmed": summary.get("confirmed", 0),
+            "unique_vulnerabilities": summary.get("unique_vulnerabilities", 0),
+            "coverage_gaps": summary.get("coverage_gaps", 0),
             "needs_review": summary.get("needs_review", 0),
             "not_executed": summary.get("not_executed", 0),
             "critical_findings": critical,

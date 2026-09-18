@@ -38,6 +38,10 @@ Read and write only within `flows/{flow-name}/`.
    or evidence of a vulnerability.
 3. **Filter out static assets:** Ignore requests for CSS, JS, images, fonts, SVGs (by content-type or file extension)
 4. **Focus on state-changing requests:** POST, PUT, DELETE, PATCH with JSON request bodies
+   Initial GET/HEAD reads are baseline evidence, not entries in `transitions`.
+   Preserve their HAR references for state comparisons. Every observed action
+   transition needs real ordered UI steps (`before_step < after_step`). Do not
+   invent an after-step or mark an observed read as inferred to bypass this.
 5. For each relevant request, extract:
    - URL and method
    - Request headers (especially Authorization, Cookie, X-CSRF-Token)
@@ -144,6 +148,35 @@ Read and write only within `flows/{flow-name}/`.
 
 ## Verification Gate
 
+- Every `observed_ui_rules` item must have its OWN directly relevant
+  `explicit_ui_text` or `ui_element_transition` fact from `demo.json`.
+  API-only observations and inference do not qualify. A single recorded $100
+  reimbursement does not establish a universal compensation cap. Omit such
+  API-only rules and their rule/fact references; never attach unrelated UI
+  facts just to pass the gate. Useful hypotheses may remain in the relevant
+  `critical_endpoints[].why` as `Agent inference (unverified): ...`, not as
+  verified provenance. Preserve genuine UI-grounded rules in the same map.
+
+- Do not turn text after a colon into an accessible name: `generic : Eligible`
+  is not `generic "Eligible"`. UI transitions require an actual quoted
+  role/name representation. For action availability, reference the named
+  button (for example `button "Request price adjustment"`) and resolve its
+  exact before/after pointers. Text-only observations use `explicit_ui_text`
+  with the full raw element string and prove presence at one step only.
+
+- For `appeared`, point before to the full `elements` array (element absent)
+  and after to the exact `changes_from_previous/appeared` item (unique element).
+  For `became_enabled`/`became_disabled`, point BOTH sides to individual
+  `elements` items; never use a delta pointer. Verify unique role/name on both
+  sides and the actual `[disabled]` change.
+
+- Before emitting `api_field_transition`, resolve both HAR response pointers
+  and compare the exact field values and types. Emit only a genuine value
+  change; `"eligible" -> "eligible"` is unchanged, regardless of changes to
+  other fields or UI controls. Omit unchanged-field facts and their
+  `inference.derived_from` IDs; do not invent a static-fact schema or infer
+  server enforcement from an unchanged capability/status field.
+
 - Read `crew/skills/analyze-har/OBSERVED_UI_RULES.md` and follow its v2 state-map
   and v1 observed-rule contract exactly.
 - `flows/{flow-name}/state_map.json` exists, is valid JSON, has
@@ -154,6 +187,15 @@ Read and write only within `flows/{flow-name}/`.
 - Every observed-rule fact has an exact source run, raw artifact, typed
   provenance, fact ID, and resolvable JSON pointer. API facts and inference are
   never labelled as observed UI.
+- `explicit_ui_text` points only to one `ui_states/<state_index>/elements/<element_index>`
+  item, never to `changes_from_previous`. Use appeared/disappeared delta items
+  only for the corresponding `ui_element_transition`. Follow the exact
+  `UIR-002-F2` example in `OBSERVED_UI_RULES.md`; never guess or repair indexes
+  from text matches. A rejected map blocks probes. After the draft session
+  exits, the backend may send structured validator feedback to a dedicated
+  read-only Analyst correction session (at most two attempts). Follow the
+  bounded correction contract: preserve rules/facts and claims, return the
+  complete proposed map with correction notes, and never edit raw evidence.
 - Treat each fact type, provenance type, and artifact as one inseparable tuple:
   `explicit_ui_text` + `explicit_visible_ui_text` + `demo.json`;
   `ui_element_transition` + `observed_ui_affordance` + `demo.json`;
@@ -180,3 +222,13 @@ Read and write only within `flows/{flow-name}/`.
 - **NEVER** include full response bodies in state_map.json (strip them — metadata only)
 - **NEVER** send raw response bodies to the LLM
 - **ALWAYS** filter out static assets before analysis
+# Endpoint evidence
+
+Read backend-owned endpoint_catalog.json before proposing transitions. Exact
+method/origin/path entries come from validated recordings or a versioned backend
+application contract. Button names alone do not identify HTTP routes. Do not
+invent `/refund` from a “Request refund” label. If the catalog specifies a
+request/completion chain, retain both endpoints. Record unbound UI affordances
+as unresolved hypotheses without fabricating a URL or an observed transition.
+Backend contract endpoints are documented possibilities, not observed HAR facts.
+Never edit endpoint_catalog.json or backend_coverage/.

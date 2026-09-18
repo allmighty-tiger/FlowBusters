@@ -58,6 +58,7 @@ async def run_flowbusters(
     auto_complete: bool = False,
     cross_flow_inputs: dict | None = None,
     reanalysis_inputs: dict | None = None,
+    application_identity: dict | None = None,
 ) -> dict:
     """
     Execute the full FlowBusters pipeline via Claude Code crew subprocess.
@@ -100,6 +101,7 @@ async def run_flowbusters(
         auto_complete=auto_complete,
         cross_flow_inputs=cross_flow_inputs,
         reanalysis_inputs=reanalysis_inputs,
+        application_identity=application_identity,
     )
 
     result = await run_crew(config, mode_cb)

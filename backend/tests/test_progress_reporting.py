@@ -1,11 +1,13 @@
+import asyncio
 import tempfile
 import unittest
 import inspect
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from backend.runtime.crew_runner import (
     ArtifactWatcher,
+    CrewConfig,
     ProbeContractError,
     _cross_flow_artifact_events,
     _cross_flow_final_message,
@@ -13,9 +15,62 @@ from backend.runtime.crew_runner import (
 )
 from backend.runtime.orchestrator import Phase, ProgressEvent, RunMode, run_flowbusters
 from backend.runtime.probe_executor import execute_run
+from backend.runtime.ui_provenance import UIProvenanceError
 
 
 class RunModeProgressTests(unittest.IsolatedAsyncioTestCase):
+    async def test_rejected_probe_contract_stops_agent_without_false_correction_wait(self):
+        for defect in (
+            ProbeContractError('literal violation.observed must be boolean, not NoneType'),
+        ):
+            with self.subTest(defect=type(defect).__name__), tempfile.TemporaryDirectory() as folder:
+                run = Path(folder)
+                (run / '_post_recording_instructions.md').write_text('test contract', encoding='utf-8')
+                flow = run / 'flows' / 'test-flow'
+                flow.mkdir(parents=True)
+                for artifact in ('demo.json', 'recording.har'):
+                    (flow / artifact).write_text('{}', encoding='utf-8')
+                draft = run / 'reports' / 'test-flow' / 'findings.json'
+                draft.parent.mkdir(parents=True)
+                draft.write_text('{"findings": []}', encoding='utf-8')
+                original_draft = draft.read_bytes()
+                config = CrewConfig(
+                    target_url='http://localhost:3000', flow_name='test-flow', run_dir=folder,
+                    crew_dir=folder, mcp_config='test-mcp.json', claude_bin='unused', model='unused',
+                    api_key='', display='', phase_timeout=30, overall_timeout=60)
+                proc = MagicMock(pid=123, returncode=None)
+                proc.stdout, proc.stderr = asyncio.StreamReader(), asyncio.StreamReader()
+
+                def terminate():
+                    proc.returncode = -15
+                    proc.stdout.feed_eof()
+                    proc.stderr.feed_eof()
+
+                proc.terminate.side_effect = terminate
+                proc.wait = AsyncMock(return_value=-15)
+                events = []
+                with patch('backend.runtime.crew_runner.prepare_run_dir', return_value=run), \
+                     patch('backend.runtime.crew_runner.build_system_prompt', return_value='test'), \
+                     patch('backend.runtime.crew_runner.prepare_recording_evidence', new_callable=AsyncMock), \
+                     patch('backend.runtime.endpoint_catalog.prepare_endpoint_catalog'), \
+                     patch('backend.runtime.crew_runner.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=proc), \
+                     patch.object(ArtifactWatcher, 'check', side_effect=defect) as gate, \
+                     patch('backend.runtime.crew_runner.execute_validated_probes', new_callable=AsyncMock) as execute, \
+                     patch('backend.runtime.crew_runner.load_report') as report:
+                    result = await asyncio.wait_for(run_crew(config, events.append), timeout=2)
+                proc.terminate.assert_called_once()
+                self.assertEqual(proc.wait.await_count, 2)
+                gate.assert_called_once()
+                execute.assert_not_awaited()
+                report.assert_not_called()
+                self.assertEqual(draft.read_bytes(), original_draft)
+                self.assertIn(str(defect), result['error'])
+                failures = [event for event in events if event.phase == Phase.FAILED]
+                self.assertEqual(len(failures), 1)
+                self.assertIn(str(defect), failures[0].message)
+                self.assertFalse(any('Waiting for a corrected file' in event.message for event in events))
+                self.assertFalse(any(event.phase == Phase.COMPLETE for event in events))
+
     async def _capture_mode(self, cross_flow_inputs=None):
         events = []
 
@@ -165,6 +220,23 @@ class ProbeProgressTests(unittest.IsolatedAsyncioTestCase):
             (self.run / 'mutations' / 'cross-flow-test' / f'00{index}_broken.py').write_text(
                 broken, encoding='utf-8')
         with self.assertRaisesRegex(ProbeContractError, 'requires a supported executable invariant'):
+            ArtifactWatcher(self.run, 'cross-flow-test').check()
+
+    def test_artifact_gate_rejects_literal_null_violation_before_execution(self):
+        broken = (
+            "verification = {'predicate': 'business_rule_must_hold', "
+            "'invariant': {'operator': 'sum_lte', 'terms': [['order', 'totalReturned']], "
+            "'limit': ['order', 'originalAmount']}, "
+            "'violation': {'observed': None, 'description': 'backend will compute'}}\n"
+        )
+        for path in (self.run / 'mutations' / 'cross-flow-test').glob('*.py'):
+            path.write_text(broken, encoding='utf-8')
+        for index in (2, 3):
+            (self.run / 'mutations' / 'cross-flow-test' / f'00{index}_broken.py').write_text(
+                broken, encoding='utf-8')
+        with self.assertRaisesRegex(
+                ProbeContractError,
+                'literal violation.observed must be boolean, not NoneType'):
             ArtifactWatcher(self.run, 'cross-flow-test').check()
 
 

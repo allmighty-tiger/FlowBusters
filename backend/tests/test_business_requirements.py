@@ -1,123 +1,85 @@
 import unittest
 from copy import deepcopy
 
-from backend.runtime.business_requirements import (
-    apply_backend_requirements,
-    load_business_requirements,
-    trusted_report_run_id,
-)
+from backend.runtime.business_requirements import apply_backend_requirements, load_business_requirements, trusted_report_run_id
 from backend.runtime.verification import classify
 
-
-INVARIANT = {
-    'operator': 'sum_lte',
-    'terms': [
-        ['order', 'cancellation', 'reimbursementAmount'],
-        ['order', 'refund', 'completedAmount'],
-    ],
-    'limit': ['order', 'originalAmount'],
-}
-
+INVARIANT = {'operator': 'sum_lte', 'terms': [['order', 'totalReturned']], 'limit': ['order', 'originalAmount']}
+NORTHSTAR = {'application_id': 'northstar-market', 'identity_version': '1',
+             'requirements_version': '2026-09-17', 'product': 'Northstar Market'}
 
 def finding(observed=True):
-    state = {'order': {'originalAmount': 100, 'cancellation': {'reimbursementAmount': 100},
-                       'refund': {'completedAmount': 100}}}
-    return {
-        'title': 'Cancel then complete may reimburse twice',
-        'verification': {
-            'predicate': 'business_rule_must_hold',
-            'rule': {'source': 'observed_ui', 'provenance': {'agent_supplied': True}},
-            'before': {'sequence': 1, 'status_code': 200, 'complete': True,
-                       'request': {'method': 'GET'}, 'response': {'actual': deepcopy(state)}},
-            'actions': [{'sequence': 2, 'request': {'method': 'POST'},
-                         'response': {'actual': deepcopy(state)}}],
-            'after': {'sequence': 3, 'status_code': 200, 'complete': True,
-                      'request': {'method': 'GET'}, 'response': {'actual': deepcopy(state)}},
-            'invariant': deepcopy(INVARIANT),
-            'violation': {'observed': observed, 'description': 'agent prose'},
-        },
-        '_rule_provenance_valid': True,
-    }
-
+    state = {'order': {'originalAmount': 100, 'totalReturned': 130}}
+    return {'title': 'Combined return exceeds the order amount', 'severity': 'Critical',
+            'verification': {'predicate': 'business_rule_must_hold', 'rule': {'source': 'agent_inference'},
+                'before': {'sequence': 1, 'status_code': 200, 'complete': True, 'request': {'method': 'GET'}, 'response': {'actual': deepcopy(state)}},
+                'actions': [{'sequence': 2, 'status_code': 200, 'complete': True, 'request': {'method': 'POST'}, 'response': {'actual': deepcopy(state)}}],
+                'after': {'sequence': 3, 'status_code': 200, 'complete': True, 'request': {'method': 'GET'}, 'response': {'actual': deepcopy(state)}},
+                'invariant': deepcopy(INVARIANT), 'violation': {'observed': observed, 'description': '130 > 100'}}}
 
 class BusinessRequirementTests(unittest.TestCase):
-    def test_registry_records_new_retrospective_northstar_requirement(self):
-        rules = load_business_requirements()
-        rule = next(item for item in rules if item['id'] == 'NSM-RETURN-CAP-2026-09-16')
-        self.assertEqual(rule['asserted_on'], '2026-09-16')
-        self.assertEqual(rule['effective_from'], '2026-09-16')
-        self.assertEqual(rule['application_mode'], 'retrospective_evidence_evaluation')
-        self.assertEqual(rule['allowed_run_ids'], ['northstar-refund-v4-reanalysis'])
-        self.assertIn('does not claim that the requirement existed before that run',
-                      rule['assertion_context'])
+    def test_registry_records_product_versioned_requirement(self):
+        rule = load_business_requirements()[0]
+        self.assertEqual(rule['id'], 'NSM-TOTAL-RETURN-CAP-2026-09-17')
+        self.assertEqual(rule['application_id'], 'northstar-market')
+        self.assertEqual(rule['requirements_version'], '2026-09-17')
+        self.assertNotIn('allowed_run_ids', rule)
 
-    def test_exact_origin_and_predicate_attach_controlled_requirement(self):
-        record = finding()
-        result = finding()
-        result['finding_id'] = 'F-001'
-        report = {'target_url': 'http://localhost:3000/orders',
-                  'findings': [record], 'results': [result]}
-        apply_backend_requirements(report, trusted_run_id='northstar-refund-v4-reanalysis')
-        self.assertTrue(record['_backend_requirement_valid'])
-        self.assertEqual(record['backend_requirement']['id'], 'NSM-RETURN-CAP-2026-09-16')
-        self.assertTrue(result['_backend_requirement_valid'])
-        self.assertEqual(result['backend_requirement']['id'], 'NSM-RETURN-CAP-2026-09-16')
-        status, reason = classify(record)
-        self.assertEqual(status, 'CONFIRMED')
-        self.assertIn('asserted on 2026-09-16', reason)
-        self.assertIn('after northstar-refund-v4-reanalysis executed', reason)
-        self.assertIn('does not claim that the requirement existed before that run', reason)
-        self.assertIn('applied retrospectively', reason)
+    def test_multiple_runs_of_same_authenticated_application_match(self):
+        for run_id in ('northstar-a', 'northstar-cross-flow-b'):
+            record, result = finding(), finding()
+            report = {'run_timestamp': '2026-09-18T00:00:00Z', 'findings': [record], 'results': [result]}
+            apply_backend_requirements(report, trusted_run_id=run_id, trusted_identity=NORTHSTAR)
+            for item in (record, result):
+                self.assertEqual(classify(item)[0], 'CONFIRMED')
+                self.assertEqual(item['backend_requirement']['application_mode'], 'prospective_evaluation')
 
-    def test_different_predicate_does_not_match(self):
+    def test_other_application_on_same_origin_does_not_match(self):
         record = finding()
-        record['verification']['invariant']['terms'] = [['order', 'totalReturned']]
-        apply_backend_requirements({'target_url': 'http://localhost:3000',
-                                    'findings': [record], 'results': []},
-                                   trusted_run_id='northstar-refund-v4-reanalysis')
+        apply_backend_requirements({'target_url': 'http://localhost:3000', 'findings': [record], 'results': []},
+                                   trusted_run_id='other-run', trusted_identity={'application_id': 'other-app', 'identity_version': '1', 'requirements_version': '2026-09-17'})
         self.assertNotIn('backend_requirement', record)
         self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
 
-    def test_agent_cannot_supply_backend_requirement_flag(self):
-        record = finding()
-        record['_backend_requirement_valid'] = True
-        record['backend_requirement'] = {'id': 'FAKE'}
-        apply_backend_requirements({'target_url': 'http://other.test',
-                                    'run_id': 'northstar-refund-v4-reanalysis',
-                                    'findings': [record], 'results': []},
-                                   trusted_run_id='different-run')
+    def test_missing_or_agent_spoofed_identity_fails_closed(self):
+        for report in ({'findings': [finding()], 'results': []},
+                       {'application_identity': NORTHSTAR, 'validated': True, 'findings': [finding()], 'results': []}):
+            apply_backend_requirements(report, trusted_run_id='legacy-run')
+            self.assertNotIn('backend_requirement', report['findings'][0])
+
+    def test_exact_predicate_required(self):
+        record = finding(); record['verification']['invariant']['terms'] = [['order', 'refund', 'completedAmount']]
+        apply_backend_requirements({'findings': [record], 'results': []}, trusted_run_id='run', trusted_identity=NORTHSTAR)
+        self.assertNotIn('backend_requirement', record)
+
+    def test_wrong_requirements_version_fails_closed(self):
+        record = finding(); identity = dict(NORTHSTAR, requirements_version='2026-09-18')
+        apply_backend_requirements({'findings': [record], 'results': []},
+                                   trusted_run_id='run', trusted_identity=identity)
+        self.assertNotIn('backend_requirement', record)
+
+    def test_earlier_evidence_is_explicitly_retrospective(self):
+        record = finding(); report = {'run_timestamp': '2026-09-16T12:00:00Z', 'findings': [record], 'results': []}
+        apply_backend_requirements(report, trusted_run_id='migrated-run', trusted_identity=NORTHSTAR)
+        self.assertTrue(record['backend_requirement']['retrospective'])
+        self.assertEqual(record['backend_requirement']['application_mode'], 'retrospective_evidence_evaluation')
+
+    def test_agent_flag_is_removed(self):
+        record = finding(); record['_backend_requirement_valid'] = True; record['backend_requirement'] = {'id': 'FAKE'}
+        record['verification']['invariant']['limit'] = ['order', 'other']
+        apply_backend_requirements({'findings': [record], 'results': []}, trusted_run_id='run', trusted_identity=NORTHSTAR)
         self.assertNotIn('_backend_requirement_valid', record)
         self.assertNotIn('backend_requirement', record)
-        self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
 
-    def test_other_run_with_same_origin_and_invariant_is_not_allowed(self):
-        record = finding()
-        apply_backend_requirements({'target_url': 'http://localhost:3000',
-                                    'findings': [record], 'results': []},
-                                   trusted_run_id='different-run')
-        self.assertNotIn('backend_requirement', record)
-        self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
-
-    def test_missing_or_agent_spoofed_run_context_fails_closed(self):
-        for report in (
-                {'target_url': 'http://localhost:3000', 'findings': [finding()], 'results': []},
-                {'target_url': 'http://localhost:3000',
-                 'run_id': 'northstar-refund-v4-reanalysis',
-                 'validated': True, 'findings': [finding()], 'results': []}):
-            apply_backend_requirements(report)
-            self.assertNotIn('backend_requirement', report['findings'][0])
-            self.assertEqual(classify(report['findings'][0])[0], 'NEEDS_REVIEW')
+    def test_free_form_user_or_specification_reference_is_not_authority(self):
+        for source in ('user', 'specification'):
+            record = finding(); record['verification']['rule'] = {
+                'source': source, 'reference': 'agent-written link or sentence'}
+            self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
 
     def test_trusted_run_id_requires_canonical_matching_report_path(self):
-        canonical = ('runs/northstar-refund-v4-reanalysis/reports/'
-                     'northstar-refund-v4-reanalysis/findings.json')
-        substituted = ('runs/northstar-refund-v4-reanalysis/reports/'
-                       'different-run/findings.json')
-        self.assertEqual(trusted_report_run_id(canonical),
-                         'northstar-refund-v4-reanalysis')
-        self.assertIsNone(trusted_report_run_id(substituted))
-        self.assertIsNone(trusted_report_run_id('findings.json'))
-
+        self.assertEqual(trusted_report_run_id('runs/example/reports/example/findings.json'), 'example')
+        self.assertIsNone(trusted_report_run_id('runs/example/reports/other/findings.json'))
 
 if __name__ == '__main__':
     unittest.main()

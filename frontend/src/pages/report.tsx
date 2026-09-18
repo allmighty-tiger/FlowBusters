@@ -2,7 +2,7 @@ import '../components/report.css';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiGet } from '../services/api';
-import ReportView, { FindingsReport } from '../components/ReportView';
+import ReportView, { FindingsReport, ReportRunMeta } from '../components/ReportView';
 
 export default function ReportPage() {
   const navigate = useNavigate();
@@ -59,7 +59,7 @@ export default function ReportPage() {
         </button>
         <p className="report-eyebrow">FlowBusters / Security assessment</p>
         <h1>Assessment report</h1>
-        <div className="report-run-meta"><span>{report.target_url}</span><span>Flow: {report.flow_name}</span><span>{new Date(report.run_timestamp).toLocaleString()}</span></div>
+        <ReportRunMeta report={report} />
       </header>
 
       <ReportView report={report} remediation={remediation} />

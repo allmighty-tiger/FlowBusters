@@ -15,6 +15,16 @@ def example(status=200, removed=True):
 
 
 class VerificationTests(unittest.TestCase):
+    def authorize(self, record):
+        record['_backend_requirement_valid'] = True
+        record['backend_requirement'] = {
+            'id': 'TEST-RULE', 'product': 'Test application',
+            'asserted_on': '2026-09-17', 'requirements_version': 'test-v1',
+            'retrospective': False, 'assertion_context': 'Controlled test fixture.',
+            'application_identity': {'application_id': 'test-app', 'identity_version': '1'},
+        }
+        return record
+
     def business_rule(self, observed=True):
         return {'verification': {
             'predicate': 'business_rule_must_hold',
@@ -72,17 +82,16 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(old['findings'][0]['verification_status'],'NEEDS_REVIEW')
 
     def test_business_rule_with_complete_state_evidence(self):
-        positive_status, positive_reason = classify(self.business_rule())
+        positive_status, positive_reason = classify(self.authorize(self.business_rule()))
         negative_status, negative_reason = classify(self.business_rule(False))
         self.assertEqual(positive_status, 'CONFIRMED')
         self.assertEqual(negative_status, 'NOT_REPRODUCED')
-        self.assertEqual(positive_reason,
-                         'The captured final state violated the backend-evaluated invariant.')
+        self.assertIn('exact executable invariant', positive_reason)
         self.assertEqual(negative_reason,
                          'The captured final state did not violate the backend-evaluated invariant.')
 
     def test_agent_description_cannot_add_race_claim_to_normalized_verdict(self):
-        record = self.business_rule()
+        record = self.authorize(self.business_rule())
         record['verification']['violation']['description'] = (
             'Critical race condition was exploited concurrently.'
         )
@@ -179,12 +188,12 @@ class VerificationTests(unittest.TestCase):
                                    'original_outcome': 'REJECTED'})[0], 'NOT_REPRODUCED')
 
     def test_secondary_auth_cwe_does_not_override_business_verification(self):
-        record = self.business_rule()
+        record = self.authorize(self.business_rule())
         record['cwe'] = ['CWE-841', 'CWE-306']
         self.assertEqual(classify(record)[0], 'CONFIRMED')
 
     def test_summary_recomputes_critical_counts(self):
-        confirmed = self.business_rule()
+        confirmed = self.authorize(self.business_rule())
         confirmed.update({'id': 'F-1', 'severity': 'Critical'})
         review = {'id': 'F-2', 'severity': 'Critical'}
         report = normalize_report({'findings': [confirmed, review], 'results': [],
@@ -193,7 +202,7 @@ class VerificationTests(unittest.TestCase):
         self.assertEqual(report['summary']['potential_critical_findings'], 1)
 
     def test_confirmed_result_inherits_verified_linked_finding(self):
-        finding = self.business_rule()
+        finding = self.authorize(self.business_rule())
         finding.update({'id': 'F-1', 'severity': 'Critical'})
         report = normalize_report({'findings': [finding], 'results': [{
             'script': 'interleave.py', 'finding_id': 'F-1',
@@ -275,6 +284,9 @@ class VerificationTests(unittest.TestCase):
             finding('F-002', False, reverse_trace_a, 'all', ['CWE-841'], 'High'),
             finding('F-008', False, reverse_trace_b, 'last_only', ['CWE-841'], 'High'),
         ]
+        for record in records:
+            if record['verification']['violation']['observed']:
+                self.authorize(record)
         results = [{
             'script': record['script'], 'finding_id': record['id'],
             'outcome': 'CONFIRMED' if record['verification']['violation']['observed'] else 'NOT_REPRODUCED',

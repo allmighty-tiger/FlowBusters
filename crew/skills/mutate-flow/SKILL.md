@@ -15,9 +15,16 @@ every HTTPX response. Never maintain a parallel counter. Capture setup requests
 and every repeated reset in `verification.setup`; their sequences are part of
 the same signed transport trace even though they are not attack actions. The
 declared setup and scenario captures must account for every HTTP request once.
+`supplementary_scenarios` is a mapping keyed by stable scenario name inside
+`verification`; a top-level result list is invalid and cannot account for
+signed transport events.
 `business_rule_must_hold` requires a supported `sum_lte` invariant. If the rule
 cannot be represented by a supported predicate, emit
 `unsupported_business_rule` with `unsupported_reason` and keep it reviewable.
+For `sum_lte`, resolve the declared response-root paths from the actual AFTER
+response and print `violation.observed` as the resulting JSON boolean. Never
+leave it as `None`/`null` for the backend to fill in; backend recomputation only
+checks the emitted boolean against signed evidence.
 
 Generate adversarial Python scripts that probe business logic flaws by manipulating workflow state, replaying requests, swapping roles, and tampering with data extracted from the state map.
 
@@ -31,6 +38,12 @@ Generate adversarial Python scripts that probe business logic flaws by manipulat
 - The run may include an optional `--flow-name`; if omitted, use `default`
 
 ## Inputs
+
+- Backend-owned `endpoint_catalog.json`: use exact method/origin/path entries;
+  never derive a route by shortening a documented path or naming a UI button.
+  An unavailable required endpoint leaves a scenario NOT_EXECUTED, with the
+  missing prerequisite explained. Do not manufacture a route to get coverage.
+  Runtime 404/405 does not establish that a workflow control held.
 
 - Optional `flow-name` parameter
 - `flows/{flow-name}/state_map.json`
@@ -270,3 +283,16 @@ Name scripts with zero-padded index and descriptive slug inside `mutations/{flow
 - **Comments are mandatory** — each script must explain what vulnerability it's testing
 - **No production URLs** — only test against QA/staging environments
 - **Flow isolation:** Read from `flows/{flow-name}/` and write only to `mutations/{flow-name}/`.
+
+### Complete financial scenarios
+
+Include request-body amount overrides for recorded payout actions, and replay
+the actual completion endpoint for multi-step payouts. Preserve prerequisites
+and obtain a final GET after completion. A pending refund is not a completed
+payout. Cross-flow probes compose complete source chains, including terminal
+completion, without resetting between the combined actions. Reset only before
+each independent scenario, then capture its before GET and its own after GET.
+For an approved totalReturned/originalAmount requirement, test exactly those
+response-root paths. Report an amount-bound check, not an unrelated claim about
+mass-assignment prevention. Compute the boolean from that scenario's AFTER;
+never reuse a prior scenario's variables or compare against a different amount.
