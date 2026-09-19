@@ -11,7 +11,7 @@ __pycache__/
 /frontend/dist/
 
 # per-run artifacts (the current layout)
-runs/
+# runs/
 
 # browser tooling logs
 .playwright-mcp/

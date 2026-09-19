@@ -17,16 +17,36 @@ each of the two proposals has a maximum 300-second process deadline (also capped
 by phase_timeout). A unique legacy candidate name may be used as its diagnostic
 ID; this does not upgrade source provenance.
 
+**Deterministic candidate → script binding.** Before any retry, the backend
+recovers the exact endpoint paths each AI probe sends — `_script_endpoint_paths`
+reads both the leading `CONFIG = {...}` literal (the `render_probe` / coverage
+template puts its actions there, so the URLs are not otherwise resolvable) and
+any direct resolvable `httpx`/`requests` calls — and binds each candidate to the
+unique probe whose sent endpoints cover the candidate's cross-source action chain
+(the declared action paths, named `action_endpoints`, and the exact endpoints its
+per-source facts demonstrate). Binding is by verified action chain, never by a
+random basename or file order. A unique match is authoritative; a zero- or
+multi-way match is left **unverified with the precise reason** (ambiguous or no
+covering probe) instead of guessed. When a correction agent re-proposes, its
+script names are discarded and the deterministic binding is restored, so a
+renamed-script draft can never silently drop a candidate. `validate_candidate`
+also enforces that every declared action and every cited fact path is actually
+sent by a bound probe.
+
 At most two read-only Analyst proposals receive structured per-candidate errors
 and copied evidence. IDs, claims and action chains cannot change. The backend
-revalidates proposals, preserves correction audit records and signs the execution
-allowlist. Invalid hypotheses remain unverified candidate coverage, not findings;
-no valid candidates means "Cross-flow could not be checked" and no probes.
-Backend coverage plans remain independent from AI candidates and have separately
-labelled receipts. This is evidence-link validation, not proof of all inferred causality.
+revalidates proposals, preserves correction audit records (including
+`candidate_corrections/binding.json`) and signs the execution allowlist.
+Invalid, ambiguous, or uncorrectable hypotheses remain unverified candidate
+coverage (recorded in `candidate_gate.json.unverified_coverage` with their reason),
+not findings — the run is not aborted, and no fabricated second source or
+weakened signature is ever used to force a pass. Backend coverage plans remain
+independent from AI candidates and have separately labelled receipts. This is
+evidence-link validation, not proof of all inferred causality.
 
 Sources: [`candidate_correction.py`](../backend/runtime/candidate_correction.py)
-(`validate_candidate`, `propose`, `correct_candidates`, `load_gate`),
+(`_script_endpoint_paths`, `_candidate_action_endpoints`, `_bind_candidate_scripts`,
+`validate_candidate`, `propose`, `correct_candidates`, `load_gate`),
 [`crew_runner.py`](../backend/runtime/crew_runner.py) (`run_crew`),
 [`probe_executor.py`](../backend/runtime/probe_executor.py) (`execute_run`, `reconcile`).
 
@@ -205,7 +225,7 @@ Diagram references: [`frontend/src/pages/portal.tsx` — `PortalPage.handleSubmi
 |---|---|---|---|---|---|---|
 | Start / prepare | Target URL, flow name, root `scope.json`, crew configuration | `runs/{flow}/` working tree, copied crew files, run-scoped `scope.json` | Backend | Flow name/scope are checked before navigation; configured setup paths are merged into the copied scope. | Existing finish evidence, invalid scope, blocked production, or an out-of-scope target stops recording before analysis. | [`backend/runtime/crew_runner.py` — `prepare_run_dir`](../backend/runtime/crew_runner.py); [`backend/runtime/recorder.py` — `check_scope`, `record`](../backend/runtime/recorder.py) |
 | Record | Authorized user interaction in the Playwright-controlled browser | `flows/{flow}/demo.json`, `recording.har`, raw `har_data/`, validation markers | Backend recorder + Playwright MCP | Backend-captured source evidence is trusted as recording input, not as proof that a later adversarial probe ran. HAR synthesis checks entry count/body availability; `validate_har` checks HAR 1.2 structure. | Missing required MCP tools, lost browser, missing request details/bodies, invalid HAR, or timeout produces `RecordingError`; the AI subprocess is not launched. Some detached response bodies are tolerated only within the bounded rule in `dump_capture`. | [`backend/runtime/recorder.py` — `record`, `dump_capture`](../backend/runtime/recorder.py); [`backend/runtime/crew_runner.py` — `validate_har`, `run_crew`](../backend/runtime/crew_runner.py) |
-| Analyze | Validated `demo.json`, `recording.har`, copied scope and Analyst instructions | `flows/{flow}/state_map.json` | AI Analyst | The whole map is an agent interpretation. `ArtifactWatcher` and the final gate enforce schema versions, transition types/statuses, semantic step references, roles, endpoints, capture count, rule/fact IDs and exact raw pointers. After draft generation exits, a rejected map can receive at most two dedicated read-only Analyst correction attempts with structured validator feedback. The backend independently validates every proposal and preserves claims. | Probes remain blocked until a map passes. Uncorrectable/ambiguous evidence, exhausted attempts or deadline, changed source bytes, dropped facts/rules, or changed claims fail the run with the precise diagnostic. Original map, feedback and proposals remain in correction audit files. | [`crew/agents/analyst/charter.md` — Verification Gate](../crew/agents/analyst/charter.md); [`crew_runner.py` — `ArtifactWatcher.check`, `run_crew`, `execute_validated_probes`](../backend/runtime/crew_runner.py); [`state_map_correction.py` — `correct_state_map`, `analyst_proposal`](../backend/runtime/state_map_correction.py); [`ui_provenance.py` — `validate_state_map`](../backend/runtime/ui_provenance.py) |
+| Analyze | Validated `demo.json`, `recording.har`, copied scope and Analyst instructions | `flows/{flow}/state_map.json` | AI Analyst | The whole map is an agent interpretation. `ArtifactWatcher` and the final gate enforce schema versions, transition types/statuses, semantic step references, roles, endpoints, capture count, rule/fact IDs and exact raw pointers. After draft generation exits, a rejected map first receives a deterministic relocation pass that re-points an in-state locator to the unique matching element (off-by-N slips only); if that does not make it valid, at most two dedicated read-only Analyst correction attempts follow with structured validator feedback. The backend independently validates every proposal and preserves claims. | Probes remain blocked until a map passes. Uncorrectable/ambiguous evidence, exhausted attempts or deadline, changed source bytes, dropped facts/rules, or changed claims fail the run with the precise diagnostic. Original map, feedback and proposals remain in correction audit files. | [`crew/agents/analyst/charter.md` — Verification Gate](../crew/agents/analyst/charter.md); [`crew_runner.py` — `ArtifactWatcher.check`, `run_crew`, `execute_validated_probes`](../backend/runtime/crew_runner.py); [`state_map_correction.py` — `correct_state_map`, `analyst_proposal`](../backend/runtime/state_map_correction.py); [`ui_provenance.py` — `validate_state_map`](../backend/runtime/ui_provenance.py) |
 | Mutate | Validated state map, endpoints, roles, UI-rule references and scope | `mutations/{flow}/*.py` | AI Saboteur | Scripts are untrusted executable inputs. Agent instructions require syntax checking and a structured execution contract. After at least three scripts exist, `ArtifactWatcher.check` runs conservative static checks, including a missing invariant, a literal non-boolean `violation.observed`, and result-root supplementary scenarios, before accepting the mutation phase. Supplementary evidence is a named object only at `verification.supplementary_scenarios`. | Missing scripts cause the mutation phase timeout. A statically detectable contract defect stops the agent and fails the assessment; it is not sent back as a correction request. Dynamic defects are caught from the first terminal receipt, which is preserved before remaining probes are stopped. Scripts are never evidence by themselves. | [`crew/agents/saboteur/charter.md` — Process and Verification Gate](../crew/agents/saboteur/charter.md); [`backend/runtime/crew_runner.py` — `ProbeContractError`, `ArtifactWatcher.check`, `run_crew`](../backend/runtime/crew_runner.py); [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `validate_probe_output`, `execute_run`](../backend/runtime/probe_executor.py) |
 | Draft report | State map and proposed scenarios | Pre-execution `reports/{flow}/findings.json` and `remediation.md` | AI crew | Both are drafts. Runtime instructions forbid AI-owned execution and do not accept draft verdicts as proof. Before execution, `execute_run` preserves a separate `agent-draft-*.json`; later normalization may retain stale draft verification under `agent_draft_verification`/`agent_draft_execution` while using authenticated receipt verification for the executed view. | Invalid/missing report JSON causes backend execution/report loading to fail; absence of a final findings file prevents successful completion. | [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py); [`backend/runtime/probe_executor.py` — `execute_run`, `_is_stale_unexecuted_draft`, `reconcile`](../backend/runtime/probe_executor.py); [`crew/agents/prober/charter.md` — Output contract](../crew/agents/prober/charter.md) |
 | Execute | Saved mutation and optional verification scripts plus copied `scope.json` | `reports/{flow}/executions/{execution_id}.json`; updated working `findings.json`; preserved `agent-draft-*.json` | Backend | Static preflight catches literal missing-invariant/non-boolean contracts and misplaced supplementary scenarios where possible. A probe must compute a boolean from its captured AFTER response; backend recomputation verifies agreement rather than filling in `null`. The capture harness records every request, while output validation requires the union of primary setup/scenario captures and named supplementary scenario captures to represent every signed sequence exactly once. | A preflight error prevents that script from starting. After execution, timeout/non-zero exit is a process error; malformed output, misplaced/omitted scenario captures, or sequence/invariant defects are evidence-contract errors; contradictory signed transport is a trace mismatch. The terminal receipt is retained and a contract-invalid result stops later generated probes. | [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `_all_declared_captures`, `execute`, `validate_probe_output`, `execute_run`](../backend/runtime/probe_executor.py); [`backend/runtime/probe_capture.py` — `main`](../backend/runtime/probe_capture.py) |
@@ -344,7 +364,24 @@ An Analyst may explicitly propose the uniquely matching element 67 in that
 snapshot, but the backend never searches for or substitutes that pointer.
 ([`ui_provenance.py` — `_validate_ui_text`, `validate_observed_ui_rule`](../backend/runtime/ui_provenance.py))
 
-There are at most two correction attempts. Each uses the current Analyst
+Before any model call, `correct_state_map` runs a deterministic relocation pass
+(`relocate_ui_pointers`). For each `explicit_ui_text` or `ui_element_transition`
+fact whose pointed element does not match the declared target, it re-points the
+JSON pointer to the matching element **only when exactly one element in the
+referenced state matches**. This repairs an off-by-N locator slip within the same
+state — the raw `price-adjust` failure, where a `button "Cancel order"` was
+pointed at a `heading` three indices away — without trusting the model to re-emit
+an index. The pass touches pointer indexes only: role, name, claimed text,
+statement, inferences and API facts stay byte-identical, and it is audited in
+`state_map_corrections/attempt-00-deterministic.json` with each old/new pointer
+and its evidence. A genuine hallucination (no match) or an ambiguous duplicate
+(several matches) yields zero or multiple candidates, so the pointer is left
+untouched and the bounded model correction below is used instead. Relocation can
+never manufacture or launder a claim, and it never weakens a signature.
+([`ui_provenance.py` — `relocate_ui_pointers`](../backend/runtime/ui_provenance.py);
+[`state_map_correction.py` — `correct_state_map`](../backend/runtime/state_map_correction.py))
+
+There are at most two correction attempts after that deterministic pass. Each uses the current Analyst
 contract, read-only copies of the same demo/HAR, the rejected map, and structured
 feedback. Only the `Read` tool is enabled; MCP servers, shell/write tools and
 probe execution are unavailable. Bare mode and empty settings sources suppress

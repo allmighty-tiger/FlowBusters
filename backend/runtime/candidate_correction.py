@@ -1,11 +1,13 @@
 """Bounded candidate proposals; authenticated source facts and execution allowlist."""
 import asyncio
+import ast
 import hashlib
 import hmac
 import json
 import shutil
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from backend.runtime.application_model import validate_cross_flow_candidates, CROSS_FLOW_INSTRUCTIONS
 from backend.runtime.ui_provenance import resolve_json_pointer, _verify_cross_flow_snapshot
@@ -13,7 +15,94 @@ from backend.runtime.state_map_correction import evidence_hashes
 from backend.runtime.probe_executor import canonical, key_for
 
 
-def validate_candidate(candidate, run, root):
+def _script_endpoint_paths(script: Path) -> set[str]:
+    """Deterministically recover the endpoint PATHS a probe sends.
+
+    Two shapes are recognised:
+      * a leading ``CONFIG = {...}`` literal (the backend ``render_probe`` and
+        coverage template put their actions there and call
+        ``client.request(method, CONFIG['origin'] + path)`` — the URLs are not
+        statically resolvable otherwise); and
+      * direct ``httpx/requests/client`` calls whose URL is a resolvable constant
+        (f-strings, concatenation, module-level name bindings) — the same AST
+        resolution the endpoint catalog's preflight uses.
+    Fully dynamic targets are skipped rather than guessed. This is how a candidate
+    is bound to a script by its actual action chain, never by a random basename or
+    the order files happen to sort in.
+    """
+    try:
+        tree = ast.parse(script.read_text(encoding='utf-8'))
+    except (OSError, ValueError, SyntaxError):
+        return set()
+    paths: set[str] = set()
+
+    def add(value) -> None:
+        if isinstance(value, str) and value:
+            path = urlsplit(value).path
+            paths.add(path or value)
+
+    # 1) Leading CONFIG literal (coverage / render_probe template).
+    for node in tree.body:
+        if (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name) and node.targets[0].id == 'CONFIG'):
+            try:
+                config = ast.literal_eval(node.value)
+            except (ValueError, TypeError, SyntaxError):
+                config = None
+            if isinstance(config, dict):
+                for key in ('setup', 'state_read'):
+                    add(config.get(key))
+                for action in config.get('actions', []) if isinstance(config.get('actions'), list) else []:
+                    if isinstance(action, dict):
+                        add(action.get('endpoint'))
+
+    # 2) Direct client calls with resolvable URLs.
+    names: dict[str, str] = {}
+
+    def value(node) -> str | None:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return names.get(node.id)
+        if isinstance(node, ast.JoinedStr):
+            pieces = [value(part.value) if isinstance(part, ast.FormattedValue) else value(part)
+                      for part in node.values]
+            if all(isinstance(piece, str) for piece in pieces):
+                return ''.join(pieces)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = value(node.left), value(node.right)
+            if isinstance(left, str) and isinstance(right, str):
+                return left + right
+        return None
+
+    for node in tree.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    names[target.id] = value(node.value)
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        receiver = node.func.value
+        if not isinstance(receiver, ast.Name) or receiver.id not in ('client', 'session', 'httpx', 'requests'):
+            continue
+        method = node.func.attr.upper()
+        if method not in ('GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'REQUEST'):
+            continue
+        args = [value(arg) for arg in node.args]
+        if method == 'REQUEST':
+            _method, url = (args + [None, None])[:2]
+        else:
+            url = args[0] if args else next((value(k.value) for k in node.keywords if k.arg == 'url'), None)
+        if isinstance(url, str) and (urlsplit(url).scheme or url.startswith('/')):
+            add(url)
+    return paths
+
+
+def validate_candidate(candidate, run, root, scripts=None):
+    """Validate one candidate. If ``scripts`` is given it is the backend's
+    deterministic binding (by action chain/invariant/evidence) and is checked for
+    full coverage; otherwise the candidate's own ``scripts`` field is used."""
     validate_cross_flow_candidates({'schema_version': 1, 'candidates': [candidate]}, run, root)
     facts = candidate.get('source_facts')
     if not isinstance(facts, list):
@@ -47,17 +136,39 @@ def validate_candidate(candidate, run, root):
         covered.add(source)
     if covered != set(candidate['source_runs']) or len(covered) < 2:
         raise ValueError('Every declared source needs a resolved action fact; at least two distinct sources required')
-    scripts = candidate.get('scripts')
+    if scripts is None:
+        scripts = candidate.get('scripts')
     if not isinstance(scripts, list) or not scripts:
         raise ValueError('Candidate needs explicit scripts filenames linking its executable probes')
+    script_paths = []
     for script in scripts:
         if not isinstance(script, str) or Path(script).name != script or not script.endswith('.py'):
             raise ValueError('Invalid candidate script filename')
-        if not (run / 'mutations' / run.name / script).is_file():
+        path = run / 'mutations' / run.name / script
+        if not path.is_file():
             raise ValueError('Candidate script does not exist: ' + script)
-    code = '\n'.join((run / 'mutations' / run.name / s).read_text(encoding='utf-8') for s in scripts)
+        script_paths.append(path)
+    # Deterministic action-chain coverage: every state-changing endpoint the
+    # candidate declares (and every cited source fact) must be sent by a bound
+    # probe, and the bound probes must actually contain the cited facts. This is
+    # what binds candidate -> script by verified action chain, not basename.
+    declared = set()
+    for item in candidate.get('actions', []):
+        if isinstance(item, str) and item.startswith('/'):
+            declared.add(item)
+    for endpoint in candidate.get('action_endpoints', []):
+        if isinstance(endpoint, str) and endpoint.startswith('/'):
+            declared.add(endpoint)
     for fact in facts:
-        from urllib.parse import urlsplit
+        declared.add(urlsplit(fact['url']).path)
+    code = '\n'.join(path.read_text(encoding='utf-8') for path in script_paths)
+    extracted = set()
+    for path in script_paths:
+        extracted |= _script_endpoint_paths(path)
+    for endpoint in sorted(declared):
+        if endpoint not in extracted:
+            raise ValueError('Candidate action endpoint %s is not exercised by any bound probe script' % endpoint)
+    for fact in facts:
         if urlsplit(fact['url']).path not in code:
             raise ValueError('Referenced action endpoint is absent from candidate probe source')
 
@@ -128,6 +239,54 @@ def load_gate(run, root):
     return data
 
 
+def _candidate_action_endpoints(candidate) -> set[str]:
+    """Exact endpoint paths the candidate's action chain exercises.
+
+    Covers declared action paths, named action endpoints, and (critically for
+    cross-flow) the paths actually demonstrated by the candidate's source facts
+    from each distinct source. A probe that reproduces that cross-source chain is
+    the deterministic binding target."""
+    endpoints: set[str] = set()
+    for item in candidate.get('actions', []) or []:
+        if isinstance(item, str) and item.startswith('/'):
+            endpoints.add(item)
+    for endpoint in candidate.get('action_endpoints', []) or []:
+        if isinstance(endpoint, str) and endpoint.startswith('/'):
+            endpoints.add(endpoint)
+    for fact in candidate.get('source_facts', []) or []:
+        if isinstance(fact, dict) and isinstance(fact.get('url'), str):
+            endpoints.add(urlsplit(fact['url']).path)
+    return endpoints
+
+
+def _bind_candidate_scripts(candidate, script_actions: dict[str, set[str]]):
+    """Bind a candidate to probe scripts by its verified action chain, not basename.
+
+    Returns ``(scripts, reason)``. An exact, unique binding (one probe whose sent
+    endpoints cover the candidate's cross-source action chain; or the single
+    non-setup probe when the chain is not statically resolvable) is authoritative.
+    A zero- or multi-way match is ambiguous: the candidate is left unverified with
+    the precise reason instead of being guessed, renamed, or dropped."""
+    targets = _candidate_action_endpoints(candidate)
+    if targets:
+        matches = [name for name, actions in script_actions.items() if targets <= actions]
+        if len(matches) == 1:
+            return [matches[0]], None
+        if len(matches) == 0:
+            return [], ('no bound probe exercises the full cross-source action chain %s'
+                        % sorted(targets))
+        return [], ('ambiguous: %d probe scripts each cover the action chain %s; '
+                    'exactly one must own it' % (len(matches), sorted(matches)))
+    non_setup = [name for name, actions in script_actions.items()
+                 if any(a != '/api/demo/reset' for a in actions)]
+    if len(non_setup) == 1:
+        return non_setup, None
+    if not non_setup:
+        return [], 'no non-setup probe script available to bind to this candidate'
+    return [], ('ambiguous: action chain not statically resolvable and %d non-setup '
+                'scripts could own it; exactly one must be named' % len(non_setup))
+
+
 async def correct_candidates(config, run, flow, env, progress):
     run = Path(run); root = Path(config.run_dir)
     path = run / 'flows' / flow / 'cross_flow_candidates.json'
@@ -150,21 +309,48 @@ async def correct_candidates(config, run, flow, env, progress):
     (audit / 'original.json').write_text(json.dumps(data, indent=2))
     if list((run / 'reports').glob('*/executions/*.json')):
         raise ValueError('Candidate correction refused after execution')
-    valid, errors = [], []
+    # Static action chains of every AI probe in this run, used for deterministic
+    # candidate -> script binding. Computed once; it never touches source evidence.
+    script_actions: dict[str, set[str]] = {}
+    for script in sorted((run / 'mutations' / flow).glob('*.py')):
+        script_actions[script.name] = _script_endpoint_paths(script)
+    errors: list[dict] = []
+    # Deterministic binding pass: run before any retry so candidates whose only
+    # problem is a missing/renamed script link are fixed directly, without trusting
+    # a correction agent to re-emit a script name it might mangle.
+    binding: dict[str, str | None] = {}
+    for c in original:
+        _scripts, reason = _bind_candidate_scripts(c, script_actions)
+        c.pop('scripts', None)
+        if reason is None:
+            c['scripts'] = _scripts
+            binding[c['id']] = None
+        else:
+            binding[c['id']] = reason
+            errors.append({'candidate_id': c['id'], 'code': 'CANDIDATE_SCRIPT_BINDING',
+                           'message': reason, 'candidate': c})
+    (audit / 'binding.json').write_text(json.dumps(binding, indent=2))
+    progress('Deterministically bound cross-flow candidates to probe scripts by '
+             'action chain (%d of %d bound)'
+             % (sum(1 for v in binding.values() if v is None), len(binding)))
+    valid: list[dict] = []
     for attempt in range(3):
         if evidence_hashes(run, flow) != baseline:
             raise ValueError('Immutable source evidence changed during candidate correction')
         valid, errors = [], []
         for c in data['candidates']:
             try:
-                validate_candidate(c, run, root)
+                validate_candidate(c, run, root, scripts=c.get('scripts'))
                 valid.append(c)
             except (ValueError, KeyError, TypeError, OSError, AttributeError) as exc:
                 errors.append({'candidate_id': c['id'], 'code': 'INVALID_SOURCE_PROVENANCE',
                                'message': str(exc), 'candidate': c})
         if not errors or attempt == 2:
             break
-        feedback = {'attempt': attempt + 1, 'max_attempts': 2, 'errors': errors}
+        feedback = {'attempt': attempt + 1, 'max_attempts': 2,
+                    'errors': errors,
+                    'note': ('scripts are bound deterministically by action chain; '
+                             'do not rename scripts, only correct provenance')}
         (audit / f'feedback-{attempt+1}.json').write_text(json.dumps(feedback, indent=2))
         progress(f'Correcting cross-flow candidate provenance: attempt {attempt+1}/2; {len(errors)} invalid hypotheses')
         try:
@@ -178,11 +364,18 @@ async def correct_candidates(config, run, flow, env, progress):
                 for field in ('title', 'name', 'hypothesis', 'actions', 'expected_behavior'):
                     if old.get(field) != new.get(field):
                         raise ValueError('Correction changed hypothesis/action chain: ' + old['id'])
+            # The deterministic binding is authoritative: discard any script names
+            # the correction agent emitted or renamed and keep the bound ones.
+            for old, new in zip(original, rows):
+                bound = old.get('scripts')
+                new.pop('scripts', None)
+                if bound:
+                    new['scripts'] = bound
             data = proposal
             (audit / f'proposal-{attempt+1}.json').write_text(json.dumps(proposal, indent=2))
         except (ValueError, KeyError, TypeError, asyncio.TimeoutError) as exc:
             progress('Candidate correction rejected: ' + (str(exc) or type(exc).__name__))
-    allowed = sorted({s for c in valid for s in c['scripts']})
+    allowed = sorted({s for c in valid for s in c.get('scripts', [])})
     if evidence_hashes(run, flow) != baseline:
         raise ValueError('Immutable source evidence changed during candidate correction')
     assigned = {s for c in data['candidates'] for s in c.get('scripts', []) if isinstance(s, str)}
@@ -194,7 +387,9 @@ async def correct_candidates(config, run, flow, env, progress):
             'allowed_scripts': allowed, 'unverified_coverage': errors}
     gate['signature'] = hmac.new(key_for(root), canonical(gate), hashlib.sha256).hexdigest()
     (run / 'candidate_gate.json').write_text(json.dumps(gate, indent=2))
-    if not valid:
-        raise ValueError('Cross-flow could not be checked: ' + '; '.join(e['candidate_id'] + ': ' + e['message'] for e in errors))
+    # Ambiguous or uncorrectable candidates stay in the report as unverified
+    # candidate coverage (gate.unverified_coverage) with their precise reason;
+    # backend coverage plans still run independently and are labelled separately.
+    # We never fabricate a second source or weaken signatures to force a pass.
     path.write_text(json.dumps({'schema_version': 1, 'candidates': valid}, indent=2))
     return len(valid)

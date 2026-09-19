@@ -828,9 +828,18 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
                 new_artifacts = []
                 if pending_state_map_error != str(exc):
                     pending_state_map_error = str(exc)
+                    # This is the live draft being written, not the final map: the
+                    # Analyst may still be fixing it. A deterministic relocation pass
+                    # and a bounded Analyst correction run at the final gate after the
+                    # agent exits. The prominent line stays neutral (no "invalid"/
+                    # "failed" wording); the specific draft detail is kept out of the
+                    # main view and surfaced only in the collapsed technical section.
                     progress_cb(ProgressEvent(Phase.ANALYZE,
-                        f'State map rejected: {exc}. Analyst correction queued after draft generation; probes blocked.',
-                        done=False))
+                        'Analyst is finalizing the state map. A relocation/correction '
+                        'pass runs automatically at the final gate if needed — probes '
+                        'stay ready and resume once it is valid.',
+                        done=False,
+                        technical_detail=f'State-map draft detail: {exc}'))
             except ProbeContractError as exc:
                 error_msg = f'Probe contract validation failed: {exc}'
                 try:
@@ -1001,8 +1010,13 @@ preconditions under scope. If unavailable emit NOT_EXECUTED. Exit when ready.
                 if "analyze" not in phase_timers:
                     phase_timers["analyze"] = time.time()
                 elif time.time() - phase_timers["analyze"] > config.phase_timeout:
-                    error_msg = (f'ANALYZE phase timeout exceeded; state map rejected: {pending_state_map_error}'
-                                 if pending_state_map_error else 'ANALYZE phase timeout exceeded')
+                    # A timeout is a timeout: do not dress it up as a state-map
+                    # validation failure. Mention the last draft error only as
+                    # context, so an operator can tell "killed for time" from
+                    # "map was rejected and uncorrectable".
+                    error_msg = 'ANALYZE phase timed out before a valid state map was published'
+                    if pending_state_map_error:
+                        error_msg += f' (last draft error seen while writing: {pending_state_map_error})'
                     progress_cb(ProgressEvent(
                         Phase.FAILED, error_msg, done=True, error=error_msg))
                     proc.terminate()

@@ -1,0 +1,330 @@
+{
+  "schema_version": 1,
+  "kind": "application_state_map",
+  "flow_name": "cross-flow-c5239cec0713",
+  "target_url": "http://localhost:3000",
+  "analysis_source": "CROSS_FLOW",
+  "application_identity": {
+    "application_id": "northstar-market",
+    "identity_version": "2",
+    "product": "Northstar Market",
+    "requirements_version": "2026-09-17"
+  },
+  "source_runs": ["price", "cancel", "refund"],
+  "entities": [
+    {
+      "id": "order-1042",
+      "type": "order",
+      "observed_in": ["price", "cancel", "refund"],
+      "fields": {
+        "id": "1042",
+        "orderNumber": "#1042",
+        "product": "Northstar Weekender Pack · Slate · 28 L",
+        "originalAmount": 100,
+        "paymentStatus": "paid",
+        "orderStatus": "delivered",
+        "cancellation": {"status": "none", "reimbursementAmount": 0, "completedAt": null},
+        "priceProtection": {"status": "eligible", "currentPrice": 70, "adjustmentAmount": 0, "completedAt": null},
+        "refund": {"status": "none", "requestedAmount": 0, "completedAmount": 0, "requestedAt": null, "completedAt": null},
+        "totalReturned": 0,
+        "netCustomerBenefit": -100
+      },
+      "source_references": [
+        {"run_id": "price", "artifact": "recording.har", "json_pointer": "/log/entries/0/response/content/text"},
+        {"run_id": "cancel", "artifact": "recording.har", "json_pointer": "/log/entries/0/response/content/text"},
+        {"run_id": "refund", "artifact": "recording.har", "json_pointer": "/log/entries/0/response/content/text"}
+      ]
+    },
+    {
+      "id": "principal-anonymous",
+      "type": "authenticated_session",
+      "observed_in": ["price", "cancel", "refund"],
+      "note": "No credentials observed in any source. scope.json does not set authentication_required, so authentication is out of scope, not a vulnerability. Each source is treated as an independent demo session against the shared order fixture.",
+      "source_references": [
+        {"run_id": "price", "artifact": "state_map.json", "json_pointer": "/roles/0"}
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "id": "act_price_adjustment",
+      "name": "request_price_adjustment",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/price-adjustment",
+      "observed_in": ["price"],
+      "inferred_in": ["cancel", "refund"],
+      "payout_amount_observed": 30,
+      "state_effects_observed": {
+        "priceProtection.status": "eligible -> completed",
+        "priceProtection.adjustmentAmount": "0 -> 30",
+        "totalReturned": "0 -> 30",
+        "availableActions.requestPriceAdjustment": "true -> false",
+        "availableActions.cancelOrder": "true -> false"
+      },
+      "source_references": [
+        {"run_id": "price", "artifact": "recording.har", "json_pointer": "/log/entries/1"}
+      ]
+    },
+    {
+      "id": "act_cancel",
+      "name": "cancel_order",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/cancel",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/cancel",
+      "observed_in": ["cancel"],
+      "inferred_in": ["price", "refund"],
+      "payout_amount_observed": 100,
+      "state_effects_observed": {
+        "orderStatus": "delivered -> canceled",
+        "cancellation.status": "none -> completed",
+        "cancellation.reimbursementAmount": "0 -> 100",
+        "totalReturned": "0 -> 100",
+        "availableActions.requestRefund": "true -> false",
+        "availableActions.requestPriceAdjustment": "true -> false",
+        "availableActions.cancelOrder": "true -> false"
+      },
+      "source_references": [
+        {"run_id": "cancel", "artifact": "recording.har", "json_pointer": "/log/entries/1"}
+      ]
+    },
+    {
+      "id": "act_refund_request",
+      "name": "request_refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/request",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/refund/request",
+      "observed_in": ["refund"],
+      "inferred_in": ["price", "cancel"],
+      "payout_amount_observed": 0,
+      "state_effects_observed": {
+        "refund.status": "none -> pending",
+        "refund.requestedAmount": "0 -> 100",
+        "availableActions.requestRefund": "true -> false",
+        "availableActions.requestPriceAdjustment": "true -> false",
+        "availableActions.cancelOrder": "true -> false",
+        "availableActions.completeRefund": "false -> true"
+      },
+      "source_references": [
+        {"run_id": "refund", "artifact": "recording.har", "json_pointer": "/log/entries/1"}
+      ]
+    },
+    {
+      "id": "act_refund_complete",
+      "name": "complete_refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/refund/complete",
+      "observed_in": ["refund"],
+      "inferred_in": ["price", "cancel"],
+      "payout_amount_observed": 100,
+      "state_effects_observed": {
+        "refund.status": "pending -> completed",
+        "refund.completedAmount": "0 -> 100",
+        "totalReturned": "0 -> 100",
+        "availableActions.completeRefund": "true -> false"
+      },
+      "source_references": [
+        {"run_id": "refund", "artifact": "recording.har", "json_pointer": "/log/entries/2"}
+      ]
+    }
+  ],
+  "observed_transitions": [
+    {
+      "name": "request_price_adjustment",
+      "source_run": "price",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "source_run": "price",
+        "before_step": 3,
+        "after_step": 4,
+        "visible_constraints": ["Price protection Eligible · Current price $70.00", "You may qualify for a $30.00 adjustment."],
+        "observed_changes": ["button \"Request price adjustment\" disappeared", "button \"Cancel order\" disappeared", "Price protection status changed from Eligible to Adjustment issued", "Order summary Price adjustment changed from $0.00 to $30.00", "Total returned appeared with status message Price adjustment issued."]
+      },
+      "source_reference": {"run_id": "price", "artifact": "state_map.json", "json_pointer": "/transitions/0"}
+    },
+    {
+      "name": "cancel_order",
+      "source_run": "cancel",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/cancel",
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "source_run": "cancel",
+        "before_step": 3,
+        "after_step": 4,
+        "visible_constraints": ["Cancel dialog states: 'A $100.00 reimbursement will be sent to the original payment method.'"],
+        "observed_changes": ["status 'Order canceled and reimbursement issued.' appeared", "Shipment status changed Delivered -> Canceled", "Order actions collapsed to 'This order has no actions requiring your attention.'", "Price protection changed Eligible -> Unavailable"]
+      },
+      "source_reference": {"run_id": "cancel", "artifact": "state_map.json", "json_pointer": "/transitions/0"}
+    },
+    {
+      "name": "request_refund",
+      "source_run": "refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/request",
+      "response_status": 201,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "source_run": "refund",
+        "before_step": 1,
+        "after_step": 3,
+        "visible_constraints": ["Order summary shows Original total $100.00", "Refund request creates a $100.00 refund request for review"],
+        "observed_changes": ["Refund request created status shown", "Shipment changed from Delivered to Refund pending", "Complete refund button became available"]
+      },
+      "source_reference": {"run_id": "refund", "artifact": "state_map.json", "json_pointer": "/transitions/0"}
+    },
+    {
+      "name": "complete_refund",
+      "source_run": "refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": ["request_refund"],
+      "ui_context": {
+        "source_run": "refund",
+        "before_step": 3,
+        "after_step": 5,
+        "visible_constraints": ["Your refund request is ready to be processed", "The $100.00 refund will be sent to the original payment method"],
+        "observed_changes": ["Refund completed status shown", "Total returned reached $100.00", "Order actions changed to no actions requiring your attention"]
+      },
+      "source_reference": {"run_id": "refund", "artifact": "state_map.json", "json_pointer": "/transitions/1"}
+    }
+  ],
+  "inferred_relationships": [
+    {
+      "id": "rel_price_locks_cancel",
+      "relationship": "price_adjustment_observed_locks_cancel",
+      "direction": "price_adjustment -> cancel",
+      "kind": "observed_ui_lock",
+      "description": "After a price adjustment is issued, the Cancel order affordance is removed from the order page. This is a UI-observed lock; whether the server enforces it server-side is unverified.",
+      "observed_ui_rule_refs": [
+        {"source_run": "price", "artifact": "state_map.json", "json_pointer": "/observed_ui_rules/0"}
+      ]
+    },
+    {
+      "id": "rel_price_one_time",
+      "relationship": "price_adjustment_one_time",
+      "direction": "price_adjustment -> price_adjustment",
+      "kind": "observed_ui_one_time",
+      "description": "Price protection is a one-time eligibility: once an adjustment is issued, the Request price adjustment affordance disappears.",
+      "observed_ui_rule_refs": [
+        {"source_run": "price", "artifact": "state_map.json", "json_pointer": "/observed_ui_rules/1"}
+      ]
+    },
+    {
+      "id": "rel_cancel_terminal",
+      "relationship": "cancel_terminal_no_customer_actions",
+      "direction": "cancel -> all_customer_actions",
+      "kind": "observed_ui_terminal",
+      "description": "After the order is canceled, all customer order actions are removed and the UI shows 'This order has no actions requiring your attention.'",
+      "observed_ui_rule_refs": [
+        {"source_run": "cancel", "artifact": "state_map.json", "json_pointer": "/observed_ui_rules/0"}
+      ]
+    },
+    {
+      "id": "rel_cancel_fixed_reimbursement",
+      "relationship": "cancel_fixed_100_reimbursement",
+      "direction": "cancel -> reimbursement_amount",
+      "kind": "observed_ui_fixed_amount",
+      "description": "The cancel action offers a single, fixed $100.00 reimbursement to the original payment method.",
+      "observed_ui_rule_refs": [
+        {"source_run": "cancel", "artifact": "state_map.json", "json_pointer": "/observed_ui_rules/1"}
+      ]
+    },
+    {
+      "id": "rel_price_locked_by_active_request",
+      "relationship": "price_locks_when_another_request_active",
+      "direction": "cancel_or_refund -> price_adjustment",
+      "kind": "observed_ui_lock",
+      "description": "Price protection is not available while another order request is active; the price-adjustment action is removed after cancellation.",
+      "observed_ui_rule_refs": [
+        {"source_run": "cancel", "artifact": "state_map.json", "json_pointer": "/observed_ui_rules/2"},
+        {"source_run": "refund", "artifact": "state_map.json", "json_pointer": "/observed_ui_rules/0"}
+      ]
+    },
+    {
+      "id": "rel_refund_complete_gated_by_request",
+      "relationship": "refund_complete_gated_by_request",
+      "direction": "refund_request -> refund_complete",
+      "kind": "observed_ui_prerequisite",
+      "description": "Refund completion is gated behind a prior refund request in the UI; the Complete refund button appears only after a refund request exists.",
+      "observed_ui_rule_refs": [
+        {"source_run": "refund", "artifact": "state_map.json", "json_pointer": "/observed_ui_rules/1"}
+      ]
+    },
+    {
+      "id": "rel_monetary_invariant",
+      "relationship": "total_returned_must_not_exceed_original_amount",
+      "direction": "all_payout_actions -> order.totalReturned",
+      "kind": "agent_inference_monetary_cap",
+      "description": "Agent inference (unverified): the sum of cancellation reimbursement, price adjustment, and completed refund must not exceed originalAmount ($100). Each single action in isolation reaches at most totalReturned=100, so the single-source recordings do not violate the cap; only cross-source composed sequences are capable of violating it.",
+      "observed_ui_rule_refs": []
+    }
+  ],
+  "contradictions": [
+    {
+      "id": "contradiction-1",
+      "description": "The cancel-flow state map marks /api/order/refund/request and /api/order/refund/complete as inferred (not exercised in the cancel recording) and lists them as conflicting actions co-visible at UI step 1. The refund-flow state map exercises both refund actions on the same order ID and treats the complete action as observed. The cross-flow analysis treats refund/request and refund/complete as observed (per refund run), not inferred.",
+      "resolution": "Treat the refund endpoints as observed via the refund source run; the cancel-run's 'inferred' labels only reflect what that single run captured, not global availability."
+    },
+    {
+      "id": "contradiction-2",
+      "description": "In the price source, after a price adjustment, availableActions.requestRefund remains true, but availableActions.cancelOrder and availableActions.requestPriceAdjustment are set to false. In the cancel source, after cancellation, availableActions.requestRefund is false. The UI affordance state is not a simple 'any action locks all others' — only some pairwise locks are observed.",
+      "resolution": "Record the observed pairwise locks as they appear; do not assume a global 'all actions locked' invariant. The cross-flow tests will determine whether the server enforces each pairwise lock."
+    },
+    {
+      "id": "contradiction-3",
+      "description": "All three recordings operate on order id=1042 with the same initial fixture. The recordings were not made in a single continuous session — they were independent resets of the same fixture. No single HAR contains both a cancel and a price adjustment, or a cancel and a refund, in one session.",
+      "resolution": "The cross-flow analysis composes these independent observations into hypothetical composed sequences. The backend fixture (POST /api/demo/reset) is assumed to restore the same initial state; each mutation script establishes its own fresh state via that reset before composing its sequence."
+    }
+  ],
+  "setup_paths": ["/api/demo/reset"],
+  "setup_note": "POST /api/demo/reset is the documented setup path for restoring the demo order fixture. It is never an attack target and may only be invoked to establish a clean precondition for each scenario.",
+  "critical_endpoints": [
+    {
+      "id": "cep_price_adjustment",
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "method": "POST",
+      "why": "Observed payout action (price source): issues a $30 adjustment that raises totalReturned from 0 to 30 and locks price adjustment + cancellation. Agent inference (unverified): composed with cancel or refund completion, the $30 may stack past originalAmount=100.",
+      "attack_surface": ["SKIP_STEP", "REPLAY_ATTACK", "STATE_INTERLEAVING", "PRICING_TAMPER"],
+      "observed_in": ["price"]
+    },
+    {
+      "id": "cep_cancel",
+      "url": "http://localhost:3000/api/order/cancel",
+      "method": "POST",
+      "why": "Observed payout action (cancel source): issues a $100 reimbursement that sets totalReturned to 100 and locks all customer actions. Agent inference (unverified): composed with price adjustment or refund completion, a second payout may raise totalReturned past 100.",
+      "attack_surface": ["SKIP_STEP", "REPLAY_ATTACK", "STATE_INTERLEAVING", "DATA_TAMPER"],
+      "observed_in": ["cancel"]
+    },
+    {
+      "id": "cep_refund_request",
+      "url": "http://localhost:3000/api/order/refund/request",
+      "method": "POST",
+      "why": "Observed payout-initiation action (refund source): creates a $100 refund request (requestedAmount=100, status=pending) and enables completeRefund. Agent inference (unverified): composed with a prior price adjustment, the pending $100 refund plus the already-paid $30 adjustment may exceed originalAmount=100 once complete is called.",
+      "attack_surface": ["SKIP_STEP", "REPLAY_ATTACK", "STATE_INTERLEAVING", "PRICING_TAMPER"],
+      "observed_in": ["refund"]
+    },
+    {
+      "id": "cep_refund_complete",
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "method": "POST",
+      "why": "Observed payout-completion action (refund source): completes a pending $100 refund, raising totalReturned from 0 to 100. Highest financial impact per action. Agent inference (unverified): composed with a prior price adjustment or a prior cancellation, the $100 refund completion may push totalReturned past originalAmount=100.",
+      "attack_surface": ["SKIP_STEP", "REPLAY_ATTACK", "STATE_INTERLEAVING", "DOUBLE_SPEND", "PRICING_TAMPER"],
+      "observed_in": ["refund"]
+    }
+  ]
+}

@@ -9,7 +9,7 @@ from pathlib import Path
 import tempfile
 import time
 
-from backend.runtime.ui_provenance import UIProvenanceError, validate_state_map
+from backend.runtime.ui_provenance import UIProvenanceError, relocate_ui_pointers, validate_state_map
 
 MAX_CORRECTION_ATTEMPTS = 2
 
@@ -128,6 +128,36 @@ async def correct_state_map(config, run_dir, flow, env, progress, *, expected_ha
     if any((run_dir / 'reports').glob('*/executions/*.json')):
         raise UIProvenanceError(f'State-map correction refused: execution receipts already exist; {source_error}')
     original_claims = _claims(state)
+
+    def _publish(candidate_state):
+        """Atomically publish a validated map; refuse if the file changed meanwhile."""
+        if path.read_bytes() != original_bytes:
+            raise UIProvenanceError('State map changed concurrently during correction; proposal rejected')
+        staged = path.with_suffix('.correction.tmp')
+        staged.write_text(json.dumps(candidate_state, indent=2), encoding='utf-8')
+        staged.replace(path)
+
+    # Deterministic attempt 0: re-point UI locators to the unique matching element.
+    # Only a locator that is provably wrong AND unambiguously repairable is touched;
+    # genuine hallucinations (no match) and ambiguous duplicates (several) are left
+    # for the bounded model correction. No signature or claim is ever weakened here.
+    try:
+        relocated, changes = relocate_ui_pointers(state, path.parent)
+        validate_state_map(relocated, path.parent, flow, require_current=True)
+    except UIProvenanceError:
+        changes = []
+    if changes:
+        _unchanged(run_dir, flow, expected_hashes)
+        audit = run_dir / 'state_map_corrections'
+        audit.mkdir(exist_ok=True)
+        (audit / 'original_state_map.json').write_bytes(original_bytes)
+        (audit / 'attempt-00-deterministic.json').write_text(
+            json.dumps({'method': 'deterministic_relocation', 'changes': changes}, indent=2),
+            encoding='utf-8')
+        _publish(relocated)
+        progress(f'State-map correction 0/{MAX_CORRECTION_ATTEMPTS} deterministic relocation '
+                 f'validated ({len(changes)} pointer(s)); probe gate passed')
+        return 0
     for attempt in range(1, MAX_CORRECTION_ATTEMPTS + 1):
         _unchanged(run_dir, flow, expected_hashes)
         remaining = min(120, config.phase_timeout, deadline - time.monotonic())

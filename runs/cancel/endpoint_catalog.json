@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "flow_name": "cancel",
+  "endpoints": [
+    {
+      "method": "GET",
+      "origin": "http://localhost:3000",
+      "path": "/api/order",
+      "authority": "backend_application_contract"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/demo/reset",
+      "authority": "backend_application_contract"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/cancel",
+      "authority": "backend_application_contract"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/price-adjustment",
+      "authority": "backend_application_contract"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/refund/complete",
+      "authority": "backend_application_contract"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/refund/request",
+      "authority": "backend_application_contract"
+    }
+  ],
+  "workflows": {
+    "price": [
+      "/api/order/price-adjustment"
+    ],
+    "refund": [
+      "/api/order/refund/request",
+      "/api/order/refund/complete"
+    ],
+    "cancel": [
+      "/api/order/cancel"
+    ]
+  },
+  "signature": "9751969386286e2884a7911817832ef60b895f295f99f5039a1c296f029c75d2"
+}

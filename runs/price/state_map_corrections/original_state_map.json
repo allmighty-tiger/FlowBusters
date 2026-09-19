@@ -1,0 +1,251 @@
+{
+  "schema_version": 2,
+  "observed_ui_rules_schema_version": 1,
+  "target_url": "http://localhost:3000",
+  "flow_name": "price",
+  "setup_paths": ["/api/demo/reset"],
+  "recorded_at": "2026-09-18T20:12:46.842278Z",
+  "transitions": [
+    {
+      "name": "request_price_adjustment",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "before_step": 3,
+        "after_step": 4,
+        "visible_constraints": [
+          "Price protection shows Eligible with current price $70.00",
+          "You may qualify for a $30.00 adjustment.",
+          "Dialog confirms: We'll return the $30.00 difference to your original payment method."
+        ],
+        "observed_changes": [
+          "button \"Request price adjustment\" disappeared",
+          "button \"Cancel order\" disappeared",
+          "Price protection status changed from Eligible to Adjustment issued",
+          "Order summary Price adjustment changed from $0.00 to $30.00",
+          "Total returned appeared with status message Price adjustment issued."
+        ]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "name": "demo_session",
+      "cookies": [],
+      "headers": {}
+    }
+  ],
+  "semantic_ui_capture": {
+    "status": "succeeded",
+    "artifact": "demo.json",
+    "ui_state_count": 4
+  },
+  "observed_ui_rules": [
+    {
+      "schema_version": 1,
+      "id": "UIR-001",
+      "statement": "After a price adjustment is issued, the cancel-order affordance is removed from the order page",
+      "facts": [
+        {
+          "id": "UIR-001-F1",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "price",
+          "artifact": "demo.json",
+          "before_step": 3,
+          "after_step": 4,
+          "element": {
+            "role": "button",
+            "name": "Cancel order"
+          },
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/2/elements/53",
+            "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/4"
+          }
+        },
+        {
+          "id": "UIR-001-F2",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "price",
+          "artifact": "demo.json",
+          "before_step": 3,
+          "after_step": 4,
+          "element": {
+            "role": "button",
+            "name": "Request price adjustment"
+          },
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/2/elements/51",
+            "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/3"
+          }
+        },
+        {
+          "id": "UIR-001-F3",
+          "type": "api_field_transition",
+          "provenance_type": "api_state_fact",
+          "source_run": "price",
+          "artifact": "recording.har",
+          "field_path": ["order", "availableActions", "cancelOrder"],
+          "before": true,
+          "after": false,
+          "entry_indexes": [0, 1],
+          "json_pointers": {
+            "before": "/log/entries/0/response/content/text",
+            "after": "/log/entries/1/response/content/text"
+          }
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The workflow locks cancellation after a price adjustment has been issued, so the server should reject POST /api/order/cancel once priceProtection.status is completed.",
+        "derived_from": [
+          "UIR-001-F1",
+          "UIR-001-F2",
+          "UIR-001-F3"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "UIR-002",
+      "statement": "Price protection is a one-time eligibility: once an adjustment has been issued, the Request price adjustment affordance disappears from the UI",
+      "facts": [
+        {
+          "id": "UIR-002-F1",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "price",
+          "artifact": "demo.json",
+          "before_step": 3,
+          "after_step": 4,
+          "element": {
+            "role": "button",
+            "name": "Request price adjustment"
+          },
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/2/elements/51",
+            "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/3"
+          }
+        },
+        {
+          "id": "UIR-002-F2",
+          "type": "api_field_transition",
+          "provenance_type": "api_state_fact",
+          "source_run": "price",
+          "artifact": "recording.har",
+          "field_path": ["order", "availableActions", "requestPriceAdjustment"],
+          "before": true,
+          "after": false,
+          "entry_indexes": [0, 1],
+          "json_pointers": {
+            "before": "/log/entries/0/response/content/text",
+            "after": "/log/entries/1/response/content/text"
+          }
+        },
+        {
+          "id": "UIR-002-F3",
+          "type": "api_field_transition",
+          "provenance_type": "api_state_fact",
+          "source_run": "price",
+          "artifact": "recording.har",
+          "field_path": ["order", "priceProtection", "status"],
+          "before": "eligible",
+          "after": "completed",
+          "entry_indexes": [0, 1],
+          "json_pointers": {
+            "before": "/log/entries/0/response/content/text",
+            "after": "/log/entries/1/response/content/text"
+          }
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The workflow marks price protection as one-time; the server should reject a second POST /api/order/price-adjustment after priceProtection.status is completed.",
+        "derived_from": [
+          "UIR-002-F1",
+          "UIR-002-F2",
+          "UIR-002-F3"
+        ]
+      }
+    }
+  ],
+  "conflicting_action_pairs": [
+    {
+      "ui_step": 3,
+      "state": "delivered order with price protection eligible (pre-adjustment)",
+      "rule": "Cancellation reimbursement, completed refund, and price adjustment must not together return more than the original payment",
+      "actions": [
+        {
+          "name": "cancel_order",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/cancel",
+          "inferred": false
+        },
+        {
+          "name": "request_price_adjustment",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/price-adjustment",
+          "inferred": false
+        },
+        {
+          "name": "request_refund",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/refund/request",
+          "inferred": true
+        },
+        {
+          "name": "complete_refund",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/refund/complete",
+          "inferred": true
+        }
+      ]
+    }
+  ],
+  "critical_endpoints": [
+    {
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "method": "POST",
+      "why": "Observed in recording (HAR entry 1) issuing a $30 payout on a delivered order. Agent inference (unverified): server may trust the request body for the adjustment amount, or may allow re-issuance after priceProtection.status=completed.",
+      "attack_surface": ["PRICING_TAMPER", "REPLAY_ATTACK", "SKIP_STEP", "MASS_ASSIGNMENT"],
+      "inferred": false
+    },
+    {
+      "url": "http://localhost:3000/api/order/cancel",
+      "method": "POST",
+      "why": "Listed in endpoint_catalog.json and co-visible with refund/adjustment controls at UI step 3; UI removes the cancel affordance after price adjustment (UIR-001). Agent inference (unverified): server may allow cancellation + reimbursement after a price adjustment has already paid out, enabling totalReturned > originalAmount.",
+      "attack_surface": ["SKIP_STEP", "STATE_INTERLEAVING", "DATA_TAMPER", "REPLAY_ATTACK"],
+      "inferred": false
+    },
+    {
+      "url": "http://localhost:3000/api/order/refund/request",
+      "method": "POST",
+      "why": "Listed in endpoint_catalog.json as part of the refund workflow (request -> complete). Not exercised in the demo. Agent inference (unverified): requestedAmount body field may be client-trusted; combined with price adjustment may exceed the original payment.",
+      "attack_surface": ["PRICING_TAMPER", "DATA_TAMPER", "STATE_INTERLEAVING", "MASS_ASSIGNMENT"],
+      "inferred": true
+    },
+    {
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "method": "POST",
+      "why": "Listed in endpoint_catalog.json as the payout-completion step of the refund workflow. Not exercised in the demo. Agent inference (unverified): completing a refund after a price adjustment may push totalReturned past originalAmount if the server does not recompute the payout cap.",
+      "attack_surface": ["SKIP_STEP", "STATE_INTERLEAVING", "REPLAY_ATTACK", "DATA_TAMPER"],
+      "inferred": true
+    },
+    {
+      "url": "http://localhost:3000/api/order",
+      "method": "GET",
+      "why": "Baseline state read; the response contains order.availableActions, priceProtection, cancellation, refund, totalReturned and originalAmount — the fields the invariant is computed from.",
+      "attack_surface": ["FORCED_BROWSING"],
+      "inferred": false
+    }
+  ]
+}

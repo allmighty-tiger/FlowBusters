@@ -1,0 +1,28 @@
+{
+  "method": "deterministic_relocation",
+  "changes": [
+    {
+      "rule_id": "UIR-001",
+      "fact_id": "UIR-001-F1",
+      "side": "before",
+      "old_pointer": "/workflow_timeline/ui_states/0/elements/60",
+      "new_pointer": "/workflow_timeline/ui_states/0/elements/59",
+      "evidence": "unique role/name element in the referenced state"
+    },
+    {
+      "rule_id": "UIR-001",
+      "fact_id": "UIR-001-F2",
+      "old_pointer": "/workflow_timeline/ui_states/2/elements/57",
+      "new_pointer": "/workflow_timeline/ui_states/2/elements/59",
+      "evidence": "unique exact-text element in the referenced state"
+    },
+    {
+      "rule_id": "UIR-002",
+      "fact_id": "UIR-002-F1",
+      "side": "after",
+      "old_pointer": "/workflow_timeline/ui_states/2/changes_from_previous/appeared/8",
+      "new_pointer": "/workflow_timeline/ui_states/2/changes_from_previous/appeared/9",
+      "evidence": "unique appeared delta entry matching role/name"
+    }
+  ]
+}

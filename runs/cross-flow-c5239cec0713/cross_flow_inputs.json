@@ -1,0 +1,450 @@
+{
+  "schema_version": 1,
+  "target_url": "http://localhost:3000",
+  "sources": [
+    {
+      "run_id": "price",
+      "sha256": "7035ea250aec59d5336e48bde628e58b8e24bc99f9395d5cefcbaab8d1829234",
+      "path": "cross_flow_sources/price",
+      "observed_ui_provenance": "verified",
+      "observed_ui_rules": [
+        {
+          "schema_version": 1,
+          "id": "UIR-001",
+          "statement": "After a price adjustment is issued, the cancel-order affordance is removed from the order page",
+          "facts": [
+            {
+              "id": "UIR-001-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "price",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Cancel order"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements/64",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/4"
+              }
+            },
+            {
+              "id": "UIR-001-F2",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "price",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Request price adjustment"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements/59",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/3"
+              }
+            },
+            {
+              "id": "UIR-001-F3",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "price",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "availableActions",
+                "cancelOrder"
+              ],
+              "before": true,
+              "after": false,
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The workflow locks cancellation after a price adjustment has been issued, so the server should reject POST /api/order/cancel once priceProtection.status is completed.",
+            "derived_from": [
+              "UIR-001-F1",
+              "UIR-001-F2",
+              "UIR-001-F3"
+            ]
+          }
+        },
+        {
+          "schema_version": 1,
+          "id": "UIR-002",
+          "statement": "Price protection is a one-time eligibility: once an adjustment has been issued, the Request price adjustment affordance disappears from the UI",
+          "facts": [
+            {
+              "id": "UIR-002-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "price",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Request price adjustment"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements/59",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/3"
+              }
+            },
+            {
+              "id": "UIR-002-F2",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "price",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "availableActions",
+                "requestPriceAdjustment"
+              ],
+              "before": true,
+              "after": false,
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            },
+            {
+              "id": "UIR-002-F3",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "price",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "priceProtection",
+                "status"
+              ],
+              "before": "eligible",
+              "after": "completed",
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The workflow marks price protection as one-time; the server should reject a second POST /api/order/price-adjustment after priceProtection.status is completed.",
+            "derived_from": [
+              "UIR-002-F1",
+              "UIR-002-F2",
+              "UIR-002-F3"
+            ]
+          }
+        }
+      ],
+      "application_identity": {
+        "application_id": "northstar-market",
+        "identity_version": "2",
+        "requirements_version": "2026-09-17",
+        "product": "Northstar Market"
+      }
+    },
+    {
+      "run_id": "cancel",
+      "sha256": "1a3cc188ea2389199a0f6b2aaaaacbd791b8db2952bae18ccacdfa2f265ed144",
+      "path": "cross_flow_sources/cancel",
+      "observed_ui_provenance": "verified",
+      "observed_ui_rules": [
+        {
+          "schema_version": 1,
+          "id": "UIR-001",
+          "statement": "After the order is canceled, all customer order actions are removed: the UI shows 'This order has no actions requiring your attention.' and the Request refund and Cancel order controls disappear.",
+          "facts": [
+            {
+              "id": "UIR-001-F1",
+              "type": "explicit_ui_text",
+              "provenance_type": "explicit_visible_ui_text",
+              "source_run": "cancel",
+              "artifact": "demo.json",
+              "step": 4,
+              "text": "paragraph : This order has no actions requiring your attention.",
+              "json_pointer": "/workflow_timeline/ui_states/3/elements/65"
+            },
+            {
+              "id": "UIR-001-F2",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "cancel",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Cancel order"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements/64",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/7"
+              }
+            },
+            {
+              "id": "UIR-001-F3",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "cancel",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Request refund"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements/63",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/6"
+              }
+            },
+            {
+              "id": "UIR-001-F4",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "cancel",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "orderStatus"
+              ],
+              "before": "delivered",
+              "after": "canceled",
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            },
+            {
+              "id": "UIR-001-F5",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "cancel",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "availableActions",
+                "cancelOrder"
+              ],
+              "before": true,
+              "after": false,
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The UI intends a canceled order to be terminal and to expose no further customer actions; the server is expected to enforce this server-side, not only via the removed buttons.",
+            "derived_from": [
+              "UIR-001-F1",
+              "UIR-001-F2",
+              "UIR-001-F3",
+              "UIR-001-F4",
+              "UIR-001-F5"
+            ]
+          }
+        },
+        {
+          "schema_version": 1,
+          "id": "UIR-002",
+          "statement": "The cancel action offers a single, fixed $100.00 reimbursement to the original payment method.",
+          "facts": [
+            {
+              "id": "UIR-002-F1",
+              "type": "explicit_ui_text",
+              "provenance_type": "explicit_visible_ui_text",
+              "source_run": "cancel",
+              "artifact": "demo.json",
+              "step": 3,
+              "text": "paragraph : A $100.00 reimbursement will be sent to the original payment method.",
+              "json_pointer": "/workflow_timeline/ui_states/2/elements/70"
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The UI presents one fixed reimbursement amount; the server should not trust a client-supplied reimbursement amount different from the order's original amount.",
+            "derived_from": [
+              "UIR-002-F1"
+            ]
+          }
+        },
+        {
+          "schema_version": 1,
+          "id": "UIR-003",
+          "statement": "Price protection is not available while another order request is active; the price-adjustment action is removed after cancellation.",
+          "facts": [
+            {
+              "id": "UIR-003-F1",
+              "type": "explicit_ui_text",
+              "provenance_type": "explicit_visible_ui_text",
+              "source_run": "cancel",
+              "artifact": "demo.json",
+              "step": 4,
+              "text": "paragraph : Price protection is not available while another order request is active.",
+              "json_pointer": "/workflow_timeline/ui_states/3/elements/59"
+            },
+            {
+              "id": "UIR-003-F2",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "cancel",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Request price adjustment"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements/59",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/4"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The UI intends price protection to be locked while another order request (such as cancellation) is active; the server should reject a price adjustment once the order is canceled or another request is in flight.",
+            "derived_from": [
+              "UIR-003-F1",
+              "UIR-003-F2"
+            ]
+          }
+        }
+      ],
+      "application_identity": {
+        "application_id": "northstar-market",
+        "identity_version": "2",
+        "requirements_version": "2026-09-17",
+        "product": "Northstar Market"
+      }
+    },
+    {
+      "run_id": "refund",
+      "sha256": "ff4cae8d9abdbed22d8d764c2ec1684554fc691cc1b48adb55435803c8bc0ee9",
+      "path": "cross_flow_sources/refund",
+      "observed_ui_provenance": "verified",
+      "observed_ui_rules": [
+        {
+          "schema_version": 1,
+          "id": "UIR-001",
+          "statement": "Price protection and the price adjustment action become unavailable while a refund request is active",
+          "facts": [
+            {
+              "id": "UIR-001-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "refund",
+              "artifact": "demo.json",
+              "before_step": 1,
+              "after_step": 3,
+              "element": {
+                "role": "button",
+                "name": "Request price adjustment"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/0/elements/59",
+                "after": "/workflow_timeline/ui_states/2/changes_from_previous/disappeared/4"
+              }
+            },
+            {
+              "id": "UIR-001-F2",
+              "type": "explicit_ui_text",
+              "provenance_type": "explicit_visible_ui_text",
+              "source_run": "refund",
+              "artifact": "demo.json",
+              "step": 3,
+              "text": "paragraph : Price protection is not available while another order request is active.",
+              "json_pointer": "/workflow_timeline/ui_states/2/elements/59"
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The workflow intends price adjustment to be blocked while a refund is active, so the server should reject a concurrent price adjustment once a refund is pending",
+            "derived_from": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        {
+          "schema_version": 1,
+          "id": "UIR-002",
+          "statement": "Refund completion is gated behind a prior refund request in the UI",
+          "facts": [
+            {
+              "id": "UIR-002-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "refund",
+              "artifact": "demo.json",
+              "before_step": 1,
+              "after_step": 3,
+              "element": {
+                "role": "button",
+                "name": "Complete refund"
+              },
+              "transition": "appeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/0/elements",
+                "after": "/workflow_timeline/ui_states/2/changes_from_previous/appeared/9"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "Complete refund is only exposed after a refund request exists, so the server should reject completing a refund that has not been requested",
+            "derived_from": [
+              "UIR-002-F1"
+            ]
+          }
+        }
+      ],
+      "application_identity": {
+        "application_id": "northstar-market",
+        "identity_version": "2",
+        "requirements_version": "2026-09-17",
+        "product": "Northstar Market"
+      }
+    }
+  ],
+  "signature": "90341674a4697e5c12adf72f6d7873e0dc67a2b30910d63e6155e01057d8b034"
+}

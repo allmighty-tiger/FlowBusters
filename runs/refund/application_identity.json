@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "application_id": "northstar-market",
+  "identity_version": "2",
+  "product": "Northstar Market",
+  "requirements_version": "2026-09-17",
+  "target_origin": "http://localhost:3000",
+  "issued_at": "2026-09-18T20:47:21.776673+00:00",
+  "issuer": "flowbusters_backend",
+  "signature": "51dd68c6f5ef318639e42c83f4dcef945bf80b18bb82d92c984b6fab6968bf35"
+}

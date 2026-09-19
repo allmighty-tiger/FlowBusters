@@ -1,0 +1,344 @@
+{
+  "run_timestamp": "2026-09-18T20:12:46.842278Z",
+  "target_url": "http://localhost:3000",
+  "flow_name": "price",
+  "total_scripts": 7,
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Co-visible cancel + price-adjustment may double-reimburse (UI hides Cancel after adjustment; server may not)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841",
+        "CWE-362"
+      ],
+      "script": "01_state_interleaving_cancel_then_price_adjustment.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": {
+        "summary": "UI state step 3 shows button \"Cancel order\" and button \"Request price adjustment\" co-visible on a delivered order with $100 originalAmount. UIR-001 shows the cancel affordance disappears after adjustment (UIR-001-F1). This probe runs both orders A\u2192B and a concurrent race from a clean reset, then reads the final GET. The business invariant order.totalReturned <= order.originalAmount is the supported executable check.",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "price",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        }
+      }
+    },
+    {
+      "id": "F-002",
+      "title": "Client-supplied requestedAmount on /api/order/refund/request may drive payout past originalAmount",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-468",
+        "CWE-20"
+      ],
+      "script": "02_pricing_tamper_refund_request_amount.py",
+      "mutation_type": "PRICING_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "evidence": {
+        "summary": "The UI never exposes a refund-amount input; the server must recompute payout from server-side state. This probe sends requestedAmount=5000 (against a $100 originalAmount), then completes the refund, then reads the final GET. If totalReturned exceeds originalAmount the server is trusting the client amount.",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "price",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F2"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        }
+      }
+    },
+    {
+      "id": "F-003",
+      "title": "Replaying POST /api/order/price-adjustment after completion may issue a second payout",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841",
+        "CWE-307"
+      ],
+      "script": "03_replay_price_adjustment.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": {
+        "summary": "UIR-002 shows the Request price adjustment affordance disappears after priceProtection.status=completed, and the availableActions flag flips to false (UIR-002-F2/F3). This probe posts the same bodyless request twice and reads the final GET. A server that trusts the request instead of server-side state may re-issue the $30 adjustment, pushing totalReturned toward $60 (still under $100, so a partial re-issue would NOT trigger the sum_lte bound \u2014 a re-issue + a second workflow would). The probe's sum_lte invariant is the supported executable check; a second issuance without exceeding the cap is a NEEDS_REVIEW outcome.",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "price",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F1",
+              "UIR-002-F2",
+              "UIR-002-F3"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        }
+      }
+    },
+    {
+      "id": "F-004",
+      "title": "POST /api/order/refund/complete without a prior refund request may still pay out",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "04_skip_step_refund_complete.py",
+      "mutation_type": "SKIP_STEP",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "evidence": {
+        "summary": "The UI only exposes refund completion when refund.status is not 'none' (availableActions.completeRefund=false in baseline GET). This probe calls /refund/complete directly on a fresh order with no prior request. If totalReturned > 0 in the final GET, the workflow prerequisite was not enforced server-side.",
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        }
+      }
+    },
+    {
+      "id": "F-005",
+      "title": "Price adjustment + completed refund chain may exceed originalAmount",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "05_state_interleaving_adjust_then_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": {
+        "summary": "Composes the full recorded monetary workflow: price-adjustment ($30) -> refund/request -> refund/complete. If the server does not recompute the payout cap against originalAmount at each payout step, the combined totalReturned can exceed $100.",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "price",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F2"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        }
+      }
+    },
+    {
+      "id": "F-006",
+      "title": "Privileged fields in refund request body may stick (role, is_admin, status, balance, verified)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-915",
+        "CWE-639"
+      ],
+      "script": "06_mass_assignment_refund_request.py",
+      "mutation_type": "MASS_ASSIGNMENT",
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "evidence": {
+        "summary": "Sends a refund request with role=admin, is_admin=true, status=completed, balance=999999, verified=true in addition to the normal fields. The UI never sends these. Predicate is unsupported_business_rule because a field-absence check cannot be expressed via sum_lte; the result stays NEEDS_REVIEW and the leaked_fields_observed field in the script's stdout indicates whether any privileged field stuck on the AFTER GET.",
+        "predicate": "unsupported_business_rule",
+        "unsupported_reason": "Field-absence / privilege-persistence predicate; sum_lte cannot express it."
+      }
+    },
+    {
+      "id": "F-007",
+      "title": "Client-supplied reimbursementAmount on /api/order/cancel may drive payout past originalAmount",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-468",
+        "CWE-20"
+      ],
+      "script": "07_data_tamper_cancel_reimbursement.py",
+      "mutation_type": "DATA_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": {
+        "summary": "UI never exposes a reimbursement amount. This probe sends reimbursementAmount=10000 on the cancel call and reads the final GET. If totalReturned exceeds originalAmount, the server trusts the client amount.",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "price",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        }
+      }
+    }
+  ],
+  "results": [
+    {
+      "script": "01_state_interleaving_cancel_then_price_adjustment.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-001"
+    },
+    {
+      "script": "02_pricing_tamper_refund_request_amount.py",
+      "mutation_type": "PRICING_TAMPER",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-002"
+    },
+    {
+      "script": "03_replay_price_adjustment.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-003"
+    },
+    {
+      "script": "04_skip_step_refund_complete.py",
+      "mutation_type": "SKIP_STEP",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-004"
+    },
+    {
+      "script": "05_state_interleaving_adjust_then_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-005"
+    },
+    {
+      "script": "06_mass_assignment_refund_request.py",
+      "mutation_type": "MASS_ASSIGNMENT",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-006"
+    },
+    {
+      "script": "07_data_tamper_cancel_reimbursement.py",
+      "mutation_type": "DATA_TAMPER",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-007"
+    }
+  ],
+  "auth_check": {
+    "performed": false,
+    "reason": "No login/credential endpoint in scope.json or endpoint_catalog.json; the demo flow is unauthenticated by design (stateless session-less fixture with /api/demo/reset). Authentication is out of scope for this run."
+  },
+  "summary": {
+    "bugs_found": 0,
+    "critical_findings": 0,
+    "rejected": 0,
+    "errors": 0,
+    "needs_review": 7,
+    "note": "Draft: all 7 scripts pending backend execution. Verdicts (CONFIRMED / NOT_REPRODUCED / CHECK_ERROR / NOT_EXECUTED) will be recomputed by the backend from the signed transport capture after this session exits. This draft is review-only."
+  }
+}

@@ -328,19 +328,28 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         self.assertEqual(report['validated_ai_candidates'], 1)
         self.assertEqual(len(load_receipts(run / 'reports' / run.name, self.root)), 1)
 
-    def test_candidate_correction_exhausted_never_executes(self):
+    def test_candidate_correction_exhausted_leaves_unverified_not_aborted(self):
         from types import SimpleNamespace
         from backend.runtime.application_model import collect, prepare_inputs
-        from backend.runtime.candidate_correction import correct_candidates
+        from backend.runtime.candidate_correction import correct_candidates, load_gate
         sources = [self.recording('fail-' + name, CHAINS[name]) for name in ('price', 'refund', 'cancel')]
         run = self.root / 'runs' / 'cross-failure'; run.mkdir()
         prepare_inputs(run, run.name, collect(self.root, [p.name for p in sources], self.origin), root=self.root)
+        # A single-source candidate is never valid (needs >=2 distinct sources);
+        # the mocked correction agent cannot fix it, so bounded retry is exhausted.
         data = {'schema_version': 1, 'candidates': [{'id': 'C1', 'source_runs': ['fail-price']}]}
         (run / 'flows' / run.name / 'cross_flow_candidates.json').write_text(json.dumps(data))
         with patch('backend.runtime.candidate_correction.propose', return_value=data) as agent:
-            with self.assertRaisesRegex(ValueError, 'Cross-flow could not be checked'):
-                asyncio.run(correct_candidates(SimpleNamespace(run_dir=self.root), run, run.name, {}, lambda _: None))
+            # Bounded retry runs (two proposals) but the run is NOT aborted: the
+            # candidate stays unverified with a precise reason; nothing executes.
+            self.assertEqual(asyncio.run(correct_candidates(SimpleNamespace(run_dir=self.root), run, run.name, {}, lambda _: None)), 0)
             self.assertEqual(agent.call_count, 2)
+        gate = load_gate(run, self.root)
+        self.assertEqual(gate['valid_candidate_ids'], [])
+        self.assertEqual(gate['allowed_scripts'], [])
+        unverified = {e['candidate_id']: e['message'] for e in gate['unverified_coverage']}
+        self.assertIn('C1', unverified)
+        self.assertTrue(unverified['C1'])
         self.assertEqual(load_receipts(run / 'reports' / run.name, self.root), {})
 
     def test_endpoint_catalog_guides_generation_and_rejects_guessed_route(self):

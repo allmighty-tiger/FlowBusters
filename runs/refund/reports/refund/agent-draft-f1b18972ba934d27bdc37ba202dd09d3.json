@@ -1,0 +1,222 @@
+{
+  "run_timestamp": "2026-09-18T20:47:34.114390Z",
+  "target_url": "http://localhost:3000/",
+  "flow_name": "refund",
+  "total_scripts": 8,
+  "auth_check": {
+    "performed": false,
+    "reason": "No login/credential endpoint exists in the state map or endpoint catalog; the recording carried no session cookies or authorization headers (unauthenticated fixture app), and scope.json does not set authentication_required: true."
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Replaying refund completion must not pay the customer twice (order.totalReturned <= order.originalAmount)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-294",
+        "CWE-362",
+        "CWE-472"
+      ],
+      "script": "01_replay_complete_refund.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "evidence": "Scenario: reset -> GET order -> POST refund/request -> POST refund/complete -> POST refund/complete (replay) -> GET order. Invariant sum_lte order.totalReturned <= order.originalAmount evaluated from the final GET.",
+      "verification": null
+    },
+    {
+      "id": "F-002",
+      "title": "Cancel order + complete refund must not double-reimburse the same order (order.totalReturned <= order.originalAmount)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-362",
+        "CWE-472"
+      ],
+      "script": "02_state_interleaving_cancel_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": "Co-visible in baseline: Cancel order + Request refund. Three bracketed scenarios from clean states (refund-then-cancel, cancel-then-refund, concurrent cancel/refund race), each ending in a full GET and asserting sum_lte order.totalReturned <= order.originalAmount. Cites observed-UI rule UIR-001 (price protection gated while a refund is active).",
+      "verification": null
+    },
+    {
+      "id": "F-003",
+      "title": "A second refund request on an already-completed order must not stack a second payout",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-294",
+        "CWE-362"
+      ],
+      "script": "03_replay_request_refund_after_complete.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "evidence": "Scenario: reset -> GET order -> POST refund/request -> POST refund/complete -> POST refund/request (second) -> POST refund/complete -> GET order. Invariant sum_lte order.totalReturned <= order.originalAmount from the final GET.",
+      "verification": null
+    },
+    {
+      "id": "F-004",
+      "title": "Refund completion must require a prior refund request (no payout for an un-requested refund)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841",
+        "CWE-425"
+      ],
+      "script": "04_forced_browse_complete_refund.py",
+      "mutation_type": "FORCED_BROWSING",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "evidence": "Scenario: reset -> GET order -> POST refund/complete directly (no refund/request) -> GET order. Cites observed-UI rule UIR-002 (Complete refund only appears after a refund request exists). The workflow-gating bypass claim is not fully proven by the monetary bound alone, so the workflow aspect is NEEDS_REVIEW; the executable monetary check is sum_lte order.totalReturned <= order.originalAmount.",
+      "verification": null
+    },
+    {
+      "id": "F-005",
+      "title": "Refund request/complete must not honor a client-inflated amount (order.totalReturned <= order.originalAmount)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-20",
+        "CWE-472"
+      ],
+      "script": "05_pricing_tamper_refund_amount.py",
+      "mutation_type": "PRICING_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "evidence": "Scenario: reset -> GET order -> POST refund/request with tampered body {requestedAmount:100000, completedAmount:100000, originalAmount:5,...} -> POST refund/complete -> GET order. Invariant sum_lte order.totalReturned <= order.originalAmount from the final GET. The recorded request was bodyless, so request-field acceptance is uncertain and stays NEEDS_REVIEW.",
+      "verification": null
+    },
+    {
+      "id": "F-006",
+      "title": "Price adjustment + refund must not push cumulative reimbursement past originalAmount",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-20",
+        "CWE-472"
+      ],
+      "script": "06_pricing_tamper_price_adjustment.py",
+      "mutation_type": "PRICING_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": "Scenario: reset -> GET order -> POST price-adjustment with tampered body {adjustmentAmount:100000,...} -> POST refund/request -> POST refund/complete -> GET order. Invariant sum_lte order.totalReturned <= order.originalAmount from the final GET. The price-adjustment endpoint was not exercised in the recording, so its request-field schema is unknown; request-field acceptance stays NEEDS_REVIEW.",
+      "verification": null
+    },
+    {
+      "id": "F-007",
+      "title": "Cancel order must not honor a client-inflated cancellation reimbursement amount",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-20",
+        "CWE-472"
+      ],
+      "script": "07_data_tamper_cancel_reimbursement.py",
+      "mutation_type": "DATA_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": "Scenario: reset -> GET order -> POST cancel with tampered body {reimbursementAmount:100000, status:completed,...} -> GET order. Invariant sum_lte order.totalReturned <= order.originalAmount from the final GET. The cancel endpoint was not exercised in the recording, so its body schema is unknown; request-field acceptance stays NEEDS_REVIEW.",
+      "verification": null
+    },
+    {
+      "id": "F-008",
+      "title": "Concurrent identical refund requests must not stack multiple payouts",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-362",
+        "CWE-841"
+      ],
+      "script": "08_double_spend_concurrent_refund.py",
+      "mutation_type": "DOUBLE_SPEND",
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "evidence": "Scenario: reset -> GET order -> 5 concurrent POST refund/request (asyncio.gather) -> POST refund/complete -> GET order. Invariant sum_lte order.totalReturned <= order.originalAmount from the final GET.",
+      "verification": null
+    }
+  ],
+  "results": [
+    {
+      "script": "01_replay_complete_refund.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-001"
+    },
+    {
+      "script": "02_state_interleaving_cancel_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-002"
+    },
+    {
+      "script": "03_replay_request_refund_after_complete.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-003"
+    },
+    {
+      "script": "04_forced_browse_complete_refund.py",
+      "mutation_type": "FORCED_BROWSING",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-004"
+    },
+    {
+      "script": "05_pricing_tamper_refund_amount.py",
+      "mutation_type": "PRICING_TAMPER",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-005"
+    },
+    {
+      "script": "06_pricing_tamper_price_adjustment.py",
+      "mutation_type": "PRICING_TAMPER",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-006"
+    },
+    {
+      "script": "07_data_tamper_cancel_reimbursement.py",
+      "mutation_type": "DATA_TAMPER",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-007"
+    },
+    {
+      "script": "08_double_spend_concurrent_refund.py",
+      "mutation_type": "DOUBLE_SPEND",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-008"
+    }
+  ],
+  "summary": {
+    "bugs_found": 0,
+    "critical_findings": 0,
+    "needs_review": 8,
+    "rejected": 0,
+    "errors": 0
+  }
+}

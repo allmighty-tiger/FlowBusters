@@ -1,0 +1,34 @@
+[
+  {
+    "source_run": "price",
+    "artifact": "recording.har",
+    "json_pointer": "/log/entries/1",
+    "method": "POST",
+    "url": "http://localhost:3000/api/order/price-adjustment",
+    "status": 200
+  },
+  {
+    "source_run": "cancel",
+    "artifact": "recording.har",
+    "json_pointer": "/log/entries/1",
+    "method": "POST",
+    "url": "http://localhost:3000/api/order/cancel",
+    "status": 200
+  },
+  {
+    "source_run": "refund",
+    "artifact": "recording.har",
+    "json_pointer": "/log/entries/1",
+    "method": "POST",
+    "url": "http://localhost:3000/api/order/refund/request",
+    "status": 201
+  },
+  {
+    "source_run": "refund",
+    "artifact": "recording.har",
+    "json_pointer": "/log/entries/2",
+    "method": "POST",
+    "url": "http://localhost:3000/api/order/refund/complete",
+    "status": 200
+  }
+]

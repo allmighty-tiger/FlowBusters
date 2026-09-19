@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "candidates": [
+    {
+      "id": "CF-004",
+      "hypothesis": "Composing all three payout actions \u2014 price adjustment (source 'price'), refund completion (source 'refund'), and cancellation (source 'cancel') \u2014 on the same order may accumulate to totalReturned = 30 + 100 + 100 = 230, far exceeding originalAmount = 100.",
+      "shared_entity": "order-1042 (originalAmount=100, all three payout sub-objects present)",
+      "shared_invariant": "sum(order.totalReturned) <= order.originalAmount",
+      "source_runs": [
+        "price",
+        "cancel",
+        "refund"
+      ],
+      "source_facts": [
+        {
+          "source_run": "price",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/price-adjustment",
+          "status": 200
+        },
+        {
+          "source_run": "cancel",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/cancel",
+          "status": 200
+        },
+        {
+          "source_run": "refund",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/refund/request",
+          "status": 201
+        },
+        {
+          "source_run": "refund",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/2",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/refund/complete",
+          "status": 200
+        }
+      ],
+      "actions": [
+        {
+          "name": "request_price_adjustment",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/price-adjustment",
+          "origin": "http://localhost:3000",
+          "path": "/api/order/price-adjustment",
+          "observed_in": "price"
+        },
+        {
+          "name": "request_refund",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/refund/request",
+          "origin": "http://localhost:3000",
+          "path": "/api/order/refund/request",
+          "observed_in": "refund"
+        },
+        {
+          "name": "complete_refund",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/refund/complete",
+          "origin": "http://localhost:3000",
+          "path": "/api/order/refund/complete",
+          "observed_in": "refund"
+        },
+        {
+          "name": "cancel_order",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/cancel",
+          "origin": "http://localhost:3000",
+          "path": "/api/order/cancel",
+          "observed_in": "cancel"
+        }
+      ],
+      "action_endpoints": [
+        "http://localhost:3000/api/order/price-adjustment",
+        "http://localhost:3000/api/order/refund/request",
+        "http://localhost:3000/api/order/refund/complete",
+        "http://localhost:3000/api/order/cancel"
+      ],
+      "rule": {
+        "source": "agent_inference",
+        "provenance": {
+          "schema_version": 1,
+          "source_run": "price",
+          "artifact": "state_map.json",
+          "rule_id": "UIR-002",
+          "fact_ids": [
+            "UIR-002-F1",
+            "UIR-002-F2",
+            "UIR-002-F3"
+          ]
+        },
+        "note": "UIR-002 from source 'price' (verified observed-UI provenance): price protection is a one-time eligibility; once an adjustment has been issued, the Request price adjustment affordance disappears. The cross-flow hypothesis is that the server should enforce the one-time rule server-side and that no composed sequence of the three payout actions may exceed originalAmount. The composed-sequence claim is agent_inference."
+      },
+      "setup": {
+        "steps": [
+          "POST /api/demo/reset (establish clean order fixture)",
+          "GET /api/order (capture before state: totalReturned=0, originalAmount=100)"
+        ]
+      },
+      "evidence_chain": {
+        "before": "GET /api/order after reset \u2014 totalReturned=0, originalAmount=100, all three payout sub-objects at zero",
+        "actions": [
+          "POST /api/order/price-adjustment (expected: totalReturned 0->30)",
+          "POST /api/order/refund/request (expected: refund.status none->pending, requestedAmount=100)",
+          "POST /api/order/refund/complete (expected: totalReturned 30->130 if not capped)",
+          "POST /api/order/cancel (expected: totalReturned 130->230 if not capped)"
+        ],
+        "after": "GET /api/order \u2014 invariant: order.totalReturned <= order.originalAmount"
+      },
+      "expected_behavior": "The server should reject at least two of the three subsequent payout actions after the price adjustment, OR cap the composed total so totalReturned never exceeds originalAmount=100. A violation is totalReturned > 100 at any point after the composed sequence.",
+      "mutation_type": "STATE_INTERLEAVING",
+      "scripts": [
+        "04_state_interleaving_price_refund_cancel.py"
+      ]
+    }
+  ]
+}

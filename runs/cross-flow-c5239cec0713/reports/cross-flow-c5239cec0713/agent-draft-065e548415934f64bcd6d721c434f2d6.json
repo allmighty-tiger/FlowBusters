@@ -1,0 +1,472 @@
+{
+  "run_timestamp": "2026-09-19T00:17:52Z",
+  "target_url": "http://localhost:3000",
+  "flow_name": "cross-flow-c5239cec0713",
+  "analysis_source": "CROSS_FLOW",
+  "total_scripts": 4,
+  "application_identity": {
+    "application_id": "northstar-market",
+    "identity_version": "2",
+    "product": "Northstar Market",
+    "requirements_version": "2026-09-17"
+  },
+  "source_runs": [
+    "price",
+    "cancel",
+    "refund"
+  ],
+  "auth_check": {
+    "performed": false,
+    "reason": "No login/credential endpoint exists in any source recording. All state-changing endpoints are reachable without credentials against the demo fixture. scope.json does not set authentication_required: true, so authentication is out of scope for this run. Not a missing-auth vulnerability."
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Cross-flow CF-001: price adjustment then cancel may exceed originalAmount (30 + 100 = 130 > 100)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Critical",
+      "cwe": [
+        "CWE-841",
+        "CWE-367"
+      ],
+      "script": "01_state_interleaving_price_then_cancel.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "candidate_id": "CF-001",
+      "source_runs": [
+        "price",
+        "cancel"
+      ],
+      "analysis_source": "CROSS_FLOW",
+      "evidence": {
+        "summary": "The UI removes the Cancel order affordance after a price adjustment is issued (source 'price', UIR-001, verified observed-UI provenance). This probe composes the price-adjustment payout (observed in source 'price', HAR entry 1, totalReturned 0->30) with the cancellation reimbursement payout (observed in source 'cancel', HAR entry 1, totalReturned 0->100) on the same order. If the server does not enforce the pairwise lock and the monetary invariant, totalReturned would be 30 + 100 = 130 > 100 (originalAmount).",
+        "requests": [
+          {
+            "label": "setup_reset",
+            "method": "POST",
+            "url": "http://localhost:3000/api/demo/reset",
+            "body": null
+          },
+          {
+            "label": "before_read",
+            "method": "GET",
+            "url": "http://localhost:3000/api/order",
+            "body": null
+          },
+          {
+            "label": "action_price_adjustment",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/price-adjustment",
+            "body": null
+          },
+          {
+            "label": "action_cancel",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "body": null
+          },
+          {
+            "label": "after_read",
+            "method": "GET",
+            "url": "http://localhost:3000/api/order",
+            "body": null
+          }
+        ],
+        "responses": "Captured at execution time by the backend harness. See verification captures in the script's stdout JSON."
+      },
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "price",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2",
+              "UIR-001-F3"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "note": "Full before/actions/after captures will be populated by the backend execution harness. The invariant and rule are pre-declared; the backend recomputes the verdict from the signed transport trace."
+      }
+    },
+    {
+      "id": "F-002",
+      "title": "Cross-flow CF-002: price adjustment then refund completion may exceed originalAmount (30 + 100 = 130 > 100)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Critical",
+      "cwe": [
+        "CWE-841",
+        "CWE-367"
+      ],
+      "script": "02_state_interleaving_price_then_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "candidate_id": "CF-002",
+      "source_runs": [
+        "price",
+        "refund"
+      ],
+      "analysis_source": "CROSS_FLOW",
+      "evidence": {
+        "summary": "The UI removes the price-adjustment affordance while a refund request is active (source 'refund', UIR-001, verified observed-UI provenance). The price source shows the price-adjustment button disappears after an adjustment is issued (price/UIR-002). This probe composes the price-adjustment payout (source 'price', $30) with the refund request + refund completion chain (source 'refund', $100) on the same order. If the server does not enforce the lock or the monetary invariant, totalReturned would be 30 + 100 = 130 > 100.",
+        "requests": [
+          {
+            "label": "setup_reset",
+            "method": "POST",
+            "url": "http://localhost:3000/api/demo/reset",
+            "body": null
+          },
+          {
+            "label": "before_read",
+            "method": "GET",
+            "url": "http://localhost:3000/api/order",
+            "body": null
+          },
+          {
+            "label": "action_price_adjustment",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/price-adjustment",
+            "body": null
+          },
+          {
+            "label": "action_refund_request",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/request",
+            "body": null
+          },
+          {
+            "label": "action_refund_complete",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/complete",
+            "body": null
+          },
+          {
+            "label": "after_read",
+            "method": "GET",
+            "url": "http://localhost:3000/api/order",
+            "body": null
+          }
+        ],
+        "responses": "Captured at execution time by the backend harness. See verification captures in the script's stdout JSON."
+      },
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "refund",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "note": "Full before/actions/after captures will be populated by the backend execution harness."
+      }
+    },
+    {
+      "id": "F-003",
+      "title": "Cross-flow CF-003: cancel then refund completion may double-reimburse (100 + 100 = 200 > 100)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Critical",
+      "cwe": [
+        "CWE-841",
+        "CWE-367",
+        "CWE-799"
+      ],
+      "script": "03_state_interleaving_cancel_then_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "candidate_id": "CF-003",
+      "source_runs": [
+        "cancel",
+        "refund"
+      ],
+      "analysis_source": "CROSS_FLOW",
+      "evidence": {
+        "summary": "The UI removes all customer order actions after a cancellation (source 'cancel', UIR-001, verified observed-UI provenance: 'This order has no actions requiring your attention.'). This probe composes the cancellation reimbursement payout (source 'cancel', $100, totalReturned 0->100) with the refund request + refund completion chain (source 'refund', $100) on the same order. If the server does not enforce the terminal-state lock or the monetary invariant, totalReturned would be 100 + 100 = 200 > 100 \u2014 a full double reimbursement on a $100 order.",
+        "requests": [
+          {
+            "label": "setup_reset",
+            "method": "POST",
+            "url": "http://localhost:3000/api/demo/reset",
+            "body": null
+          },
+          {
+            "label": "before_read",
+            "method": "GET",
+            "url": "http://localhost:3000/api/order",
+            "body": null
+          },
+          {
+            "label": "action_cancel",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "body": null
+          },
+          {
+            "label": "action_refund_request",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/request",
+            "body": null
+          },
+          {
+            "label": "action_refund_complete",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/complete",
+            "body": null
+          },
+          {
+            "label": "after_read",
+            "method": "GET",
+            "url": "http://localhost:3000/api/order",
+            "body": null
+          }
+        ],
+        "responses": "Captured at execution time by the backend harness. See verification captures in the script's stdout JSON."
+      },
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "cancel",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2",
+              "UIR-001-F3",
+              "UIR-001-F4",
+              "UIR-001-F5"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "note": "Full before/actions/after captures will be populated by the backend execution harness."
+      }
+    },
+    {
+      "id": "F-004",
+      "title": "Cross-flow CF-004: price adjustment + refund completion + cancel may triple-stack payouts (30 + 100 + 100 = 230 > 100)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Critical",
+      "cwe": [
+        "CWE-841",
+        "CWE-367",
+        "CWE-799"
+      ],
+      "script": "04_state_interleaving_price_refund_cancel.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "candidate_id": "CF-004",
+      "source_runs": [
+        "price",
+        "cancel",
+        "refund"
+      ],
+      "analysis_source": "CROSS_FLOW",
+      "evidence": {
+        "summary": "The most aggressive cross-flow composed sequence: all three payout actions from all three recorded sources are composed on the same order \u2014 price adjustment (source 'price', $30), refund request + refund completion (source 'refund', $100), and cancel (source 'cancel', $100). Each UI removes its respective affordance after its action, but the server may not enforce the pairwise locks when actions from different recorded flows are composed. If all three payouts succeed, totalReturned = 30 + 100 + 100 = 230, more than double the original $100 payment.",
+        "requests": [
+          {
+            "label": "setup_reset",
+            "method": "POST",
+            "url": "http://localhost:3000/api/demo/reset",
+            "body": null
+          },
+          {
+            "label": "before_read",
+            "method": "GET",
+            "url": "http://localhost:3000/api/order",
+            "body": null
+          },
+          {
+            "label": "action_price_adjustment",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/price-adjustment",
+            "body": null
+          },
+          {
+            "label": "action_refund_request",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/request",
+            "body": null
+          },
+          {
+            "label": "action_refund_complete",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/complete",
+            "body": null
+          },
+          {
+            "label": "action_cancel",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "body": null
+          },
+          {
+            "label": "after_read",
+            "method": "GET",
+            "url": "http://localhost:3000/api/order",
+            "body": null
+          }
+        ],
+        "responses": "Captured at execution time by the backend harness. See verification captures in the script's stdout JSON."
+      },
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "price",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F1",
+              "UIR-002-F2",
+              "UIR-002-F3"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "note": "Full before/actions/after captures will be populated by the backend execution harness."
+      }
+    }
+  ],
+  "results": [
+    {
+      "script": "01_state_interleaving_price_then_cancel.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-001",
+      "candidate_id": "CF-001",
+      "source_runs": [
+        "price",
+        "cancel"
+      ],
+      "note": "Draft status. Backend will execute the script and recompute the verdict from the signed transport trace."
+    },
+    {
+      "script": "02_state_interleaving_price_then_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-002",
+      "candidate_id": "CF-002",
+      "source_runs": [
+        "price",
+        "refund"
+      ],
+      "note": "Draft status. Backend will execute the script and recompute the verdict from the signed transport trace."
+    },
+    {
+      "script": "03_state_interleaving_cancel_then_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-003",
+      "candidate_id": "CF-003",
+      "source_runs": [
+        "cancel",
+        "refund"
+      ],
+      "note": "Draft status. Backend will execute the script and recompute the verdict from the signed transport trace."
+    },
+    {
+      "script": "04_state_interleaving_price_refund_cancel.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-004",
+      "candidate_id": "CF-004",
+      "source_runs": [
+        "price",
+        "cancel",
+        "refund"
+      ],
+      "note": "Draft status. Backend will execute the script and recompute the verdict from the signed transport trace."
+    }
+  ],
+  "summary": {
+    "bugs_found": 0,
+    "critical_findings": 0,
+    "review_items": 4,
+    "not_reproduced": 0,
+    "not_executed": 0,
+    "errors": 0,
+    "note": "All 4 findings are draft status (NEEDS_REVIEW). The backend will execute each mutation script, capture the signed transport trace, recompute the sum_lte invariant from the AFTER response, and assign final verdicts (CONFIRMED / NOT_REPRODUCED / CHECK_ERROR). bugs_found and critical_findings will be updated after execution."
+  }
+}

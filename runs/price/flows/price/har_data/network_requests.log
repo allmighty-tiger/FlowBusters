@@ -1,0 +1,4 @@
+5. [GET] http://localhost:3000/api/order => [200] OK
+6. [POST] http://localhost:3000/api/order/price-adjustment => [200] OK
+
+Note: 4 static requests not shown, run with "static" option to see them.

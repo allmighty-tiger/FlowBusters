@@ -105,8 +105,18 @@ date when draft metadata is missing. That date is labelled “Recording complete
 Progress comes from real backend phases and execution results. Raw filenames and process details stay in the collapsed **Technical details** view.
 
 If the state map fails validation, probes stay blocked. After draft generation
-exits, a dedicated Analyst receives the exact error and immutable evidence for
-up to two correction attempts. The backend revalidates every proposal; if neither
+exits, the backend first tries a deterministic relocation pass: it re-points a
+locator to the unique matching element — an in-state off-by-N index slip (a
+`button "Cancel order"` pointed at a heading three indices away), an
+**out-of-bounds** pointer (an element index past the state's element count, which
+is provably wrong and so may be re-pointed to the unique same-state match), and
+the **appeared/disappeared delta** pointers of a `ui_element_transition`
+(re-pointed to the unique matching `appeared`/`disappeared` entry, the
+disappeared one required to equal the corrected before element) — but only when
+that target is unambiguous, and it changes no claim, statement, field, or
+signature, rewriting pointer indexes alone. If that does not make the map valid,
+a dedicated Analyst receives the exact error and immutable evidence for up to
+two correction attempts. The backend revalidates every proposal; if nothing
 passes, the run fails with the precise rule/fact error and no probes execute.
 Visible text must reference a unique
 snapshot element, not a list of appeared/disappeared elements.

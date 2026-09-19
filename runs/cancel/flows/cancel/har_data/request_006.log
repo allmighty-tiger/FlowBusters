@@ -1,0 +1,28 @@
+#6 [POST] http://localhost:3000/api/order/cancel
+
+  General
+    status:    [200] OK
+    duration:  5ms
+    type:      fetch
+    mimeType:  application/json
+
+  Request headers
+    sec-ch-ua-platform: "Linux"
+    referer: 
+    user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+    accept: application/json
+    sec-ch-ua: "Google Chrome";v="147", "Not.A/Brand";v="8", "Chromium";v="147"
+    sec-ch-ua-mobile: ?0
+
+  Response headers
+    content-security-policy: default-src 'self'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'
+    etag: W/"54c-3MEDFQhfUaoNYsBowjZhCfwk9uk"
+    connection: keep-alive
+    x-content-type-options: nosniff
+    referrer-policy: no-referrer
+    content-length: 1356
+    keep-alive: timeout=5
+    date: Fri, 18 Sep 2026 20:17:05 GMT
+    content-type: application/json; charset=utf-8
+
+Call browser_network_request with part="response-body" to read the response body.

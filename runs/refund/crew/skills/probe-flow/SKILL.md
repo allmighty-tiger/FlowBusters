@@ -1,0 +1,326 @@
+# Skill: Probe Flow
+
+## Purpose
+
+Execution is owned by the backend. Read `crew/skills/probe-flow/EXECUTION.md`
+before following the procedures below. Prepare scripts and a review-only draft;
+do not execute HTTP calls or scripts in the agent session. The backend creates
+the final execution log and recomputes verdicts after your session exits.
+
+Execute adversarial mutation scripts, verify state evidence, classify outcomes
+as CONFIRMED / NEEDS_REVIEW / NOT_REPRODUCED / NOT_EXECUTED / CHECK_ERROR, and
+produce findings reports with remediation guidance.
+
+## Confidence: medium
+
+## When to Use
+
+- Phase 4 of FlowBusters pipeline
+- After mutation scripts exist in `mutations/{flow-name}/` and are syntax-valid
+- Need to execute probes and determine if business logic flaws exist
+- The run may include an optional `--flow-name`; if omitted, use `default`
+
+## Inputs
+
+- Optional `flow-name` parameter
+- Mutation scripts in `mutations/{flow-name}/`
+
+`flow-name` must be kebab-case: lowercase letters, numbers, and hyphens only.
+If `flow-name` is omitted, default to `default`.
+
+## Procedure
+
+### 1. Resolve Flow Paths
+
+Resolve the flow name before probing:
+- Use the provided `flow-name` when present
+- Otherwise use `default`
+- Validate it matches `^[a-z0-9]+(?:-[a-z0-9]+)*$`
+
+Use these directories for the run:
+- Read scripts from `mutations/{flow-name}/`
+- Write reports to `reports/{flow-name}/`
+
+### 2. Enumerate Scripts
+
+List all `.py` files in `mutations/{flow-name}/`:
+```bash
+ls mutations/{flow-name}/*.py
+```
+
+Sort by filename (numeric prefix ensures execution order).
+
+### 3. Execute Each Script
+
+The backend executes each script with a 30-second timeout and preserves stdout,
+stderr, exit code and HTTP transport events. Do not run this step yourself.
+
+### 4. Parse Output
+
+Each script should print exactly one JSON line to stdout:
+```json
+{"url": "...", "mutation_type": "...", "status_code": 200, "response_body_snippet": "...", "expected_rejection": true}
+```
+
+**Parse rules:**
+- Find the last line of stdout that is valid JSON
+- If no valid JSON found, mark as ERROR
+- Extract all fields from the JSON
+
+### 5. Classify Outcomes
+
+| Condition | Classification | Meaning |
+|-----------|---------------|---------|
+| Script times out (>30s) | **ERROR** ⚠️ | Timeout — possible network issue or infinite loop |
+| Script throws exception | **ERROR** ⚠️ | Execution failure |
+| No JSON in stdout | **ERROR** ⚠️ | Malformed script output |
+
+### 6. Handle Common Errors
+
+**ImportError / ModuleNotFoundError:**
+```
+ERROR: Missing module 'httpx'. Fix: pip install httpx
+ERROR: Missing module 'playwright'. Fix: pip install playwright && playwright install
+```
+
+Report the exact module and install command.
+
+**ConnectionError / TimeoutError:**
+```
+ERROR: Connection refused to {url}. Is the target application running?
+ERROR: Request timed out after 30s. Target may be unreachable.
+```
+
+**JSON Parse Error:**
+```
+ERROR: Script output is not valid JSON. Raw output: {first 200 chars}
+```
+
+### 7. Auth Sanity Check (ALWAYS when the flow has a login endpoint)
+
+Check `flows/{flow-name}/state_map.json` for an auth/login endpoint. If one exists:
+
+Prepare a separate `verification_probes/{flow-name}/` script for authorized
+authentication checks, including state reads proving access or effects. Its
+source is VERIFICATION_PROBE. A token or 2xx alone cannot confirm a finding.
+Do not perform these requests during the agent session.
+
+### 8. Compile Findings
+
+Write `reports/{flow-name}/findings.json`:
+```json
+{
+  "run_timestamp": "2024-01-15T11:00:00Z",
+  "target_url": "https://example.com/login",
+  "flow_name": "{flow-name}",
+  "total_scripts": 5,
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Authentication bypass — /api/login accepts ANY username/password",
+      "source": "AUTH_CHECK",
+      "severity": "Critical",
+      "cwe": ["CWE-287"],
+      "script": null,
+      "mutation_type": null,
+      "url_tested": "https://api.example.com/login",
+      "evidence": {
+        "summary": "Login performs no credential validation: both a known user with a wrong password AND a brand-new unknown user get HTTP 200 + a valid bearer token",
+        "requests": [
+          {"label": "known_user_wrong_password", "method": "POST", "url": "https://api.example.com/login", "body": {"username": "knownuser", "password": "WRONGPWD"}},
+          {"label": "unknown_user_any_password", "method": "POST", "url": "https://api.example.com/login", "body": {"username": "newuser123", "password": "anything"}}
+        ],
+        "responses": [
+          {"label": "known_user_wrong_password", "status_code": 200, "response_body": "{\"ok\": true, \"token\": \"...\"}"},
+          {"label": "unknown_user_any_password", "status_code": 200, "response_body": "{\"ok\": true, \"token\": \"...\"}"}
+        ]
+      }
+    },
+    {
+      "id": "F-002",
+      "title": "Order approval skips creation step",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": ["CWE-841"],
+      "script": "01_skip_step_approval.py",
+      "mutation_type": "SKIP_STEP",
+      "url_tested": "https://api.example.com/orders/approve",
+      "evidence": "POST /orders/approve without create -> 200 {status: approved}"
+    }
+  ],
+  "results": [
+    {
+      "script": "01_skip_step_approval.py",
+      "mutation_type": "SKIP_STEP",
+      "outcome": "CONFIRMED",
+      "status_code": 200,
+      "url_tested": "https://api.example.com/orders/approve",
+      "response_snippet": "{\"status\": \"approved\", \"order_id\": \"12345\"}",
+      "error_message": null
+    },
+    {
+      "script": "02_role_swap_user_to_admin.py",
+      "mutation_type": "ROLE_SWAP",
+      "outcome": "NOT_REPRODUCED",
+      "status_code": 403,
+      "url_tested": "https://api.example.com/admin/users",
+      "response_snippet": "{\"error\": \"Forbidden\"}",
+      "error_message": null
+    },
+    {
+      "script": "03_data_tamper_order_amount.py",
+      "mutation_type": "DATA_TAMPER",
+      "outcome": "ERROR",
+      "status_code": null,
+      "url_tested": "https://api.example.com/orders/submit",
+      "response_snippet": null,
+      "error_message": "ModuleNotFoundError: No module named 'httpx'. Fix: pip install httpx"
+    }
+  ],
+  "summary": {
+    "bugs_found": 2,
+    "critical_findings": 1,
+    "rejected": 1,
+    "errors": 1
+  }
+}
+```
+
+Schema rules:
+- **`findings[]` is the distinct security-hypothesis list** — it contains
+  CONFIRMED vulnerabilities and unresolved review/not-executed items. Every item
+  carries structured verification. Sort confirmed findings first, then review
+  and coverage gaps; within each group sort by severity.
+- Every finding needs `title`, `severity` (Critical/High/Medium/Low), `cwe`, `url_tested`, and `evidence`. `script`/`mutation_type` are set only for `MUTATION_SCRIPT` findings, else `null`.
+- **`evidence`** — two accepted forms (the report UI renders both):
+  - **Object (preferred when a finding is proven by ≥2 probes)**: `{"summary": "what was sent → what came back → why it proves the flaw", "requests": [{"label","method","url","body"}], "responses": [{"label","status_code","response_body"}]}`. Keep `requests`/`responses` **parallel by index** (request[i] pairs with response[i]).
+  - **String** (fine for a single-probe finding): one compact line like `POST /api/login knownuser/WRONGPWD -> 200 {ok:true, token:...}`.
+- **`results[]` is the per-script execution log** — every script, with one of
+  CONFIRMED/NEEDS_REVIEW/NOT_REPRODUCED/NOT_EXECUTED/CHECK_ERROR.
+- Any CONFIRMED script must also appear in `findings[]` with supported evidence.
+- Severity assignment: auth bypass / full-system access = Critical; unauthorized state-changing action = High; data-integrity issues (e.g. accepting negative quantity) = Medium; information leaks = Low.
+
+**Suspected-but-not-demonstrated findings MUST still be findings — never bare result rows.**
+This is the single most-missed rule. If your probing *suspicion* indicates a business-logic or
+authorization defect (especially IDOR / broken object-level access control) but you could not
+fully demonstrate it in this environment, you MUST still emit a `findings[]` entry — do NOT leave
+it as a lone entry in `results[]` with no `finding_id`. A suspected bug the tool can't exercise
+is still a valid bug a human should verify; dropping it is a report failure.
+- **Demonstrable** (you can prove it on the resource that actually exists): emit the finding and
+  back it with state-change evidence so it is `CONFIRMED`. For IDOR/BAC, demonstrate it by
+  **acting as a second, different principal on the resource that exists** (e.g. a non-owner
+  deleting/reading a part on the owner's board) — do NOT rely on a second dashboard/board
+  existing, because single-resource apps (only one board) will 404 it.
+- **Not exercisable here** (the precondition isn't met, e.g. "no second resource owned by a
+  different principal exists"): still emit the finding, set its evidence to explain what is
+  missing, and note it is **not executed — verify manually**. Give the result's `finding_id` the
+  real finding's ID (never a phantom/placeholder ID, and never `null` when a finding exists).
+  The report will surface it as "not executed / needs manual reproduction."
+
+### 9. Generate Remediation (If Any Findings)
+
+If `findings[]` is non-empty, generate `reports/{flow-name}/remediation.md` — one `## Finding N:` section per entry in `findings[]`, **Critical first**:
+
+```markdown
+# FlowBusters Remediation Report
+
+**Target:** {target_url}
+**Flow:** {flow-name}
+**Run Date:** {timestamp}
+**Findings:** {count} ({critical} critical)
+
+## Summary
+
+{N} vulnerabilities were discovered in {target_url}.
+{If a Critical finding exists, lead with it: e.g. 'Most severe: authentication does not verify credentials — anyone can obtain a session token.'}
+
+## Findings
+
+### 1. {Finding title}
+
+- **CWE:** CWE-{id}: {name}
+- **Severity:** {Critical|High|Medium|Low}
+- **Source:** {AUTH_CHECK|MUTATION_SCRIPT|ANALYSIS}{ (script name if MUTATION_SCRIPT)}
+- **Endpoint:** {method} {url}
+- **Issue:** {Clear description of what went wrong}
+- **Evidence:** {exact request(s) + response(s)}
+- **Fix:**
+  - {Specific remediation step 1}
+  - {Specific remediation step 2}
+  - {Specific remediation step 3}
+
+---
+```
+
+**CWE Mapping Guide:**
+| Source / Mutation Type | Likely CWE | Name |
+|------------------------|-----------|------|
+| AUTH_CHECK (creds not verified) | CWE-287 | Improper Authentication |
+| SKIP_STEP | CWE-841 | Improper Enforcement of Behavioral Workflow |
+| ROLE_SWAP | CWE-284 | Improper Access Control |
+| DATA_TAMPER | CWE-20 | Improper Input Validation |
+| REPLAY_ATTACK | CWE-294 | Authentication Bypass by Capture-replay |
+| FORCED_BROWSING | CWE-425 | Direct Request (Forced Browsing) |
+
+**Severity Guide:**
+| Impact | Severity |
+|--------|----------|
+| Financial loss, privilege escalation, auth bypass | Critical |
+| Data modification, workflow bypass | High |
+| Information disclosure, minor state corruption | Medium |
+| Non-sensitive data access, cosmetic issues | Low |
+
+### 10. Print Summary Table
+
+Display to user in chat — the FINDINGS table (vulnerabilities, Critical first) AND the per-script execution log:
+```
+FINDINGS ({flow-name}):
+┌────────┬──────────────┬──────────────┬───────────┐
+│ ID     │ Severity     │ Source       │ Title     │
+├────────┼──────────────┼──────────────┼───────────┤
+│ F-001  │ 🚨 Critical  │ AUTH_CHECK   │ Auth bypa…│
+│ F-002  │ ⚠️ High      │ MUTATION     │ Skip-ste… │
+└────────┴──────────────┴──────────────┴───────────┘
+
+SCRIPT EXECUTION:
+┌─────────────────────────────────┬───────────────┬──────────────┐
+│ Script                          │ Mutation      │ Outcome      │
+├─────────────────────────────────┼───────────────┼──────────────┤
+│ 01_skip_step_approval.py        │ SKIP_STEP     │ CONFIRMED     │
+│ 02_role_swap_user_to_admin.py   │ ROLE_SWAP     │ NOT REPRODUCED│
+└─────────────────────────────────┴───────────────┴──────────────┘
+
+Flow: {flow-name}
+Summary: {N} findings ({K} critical) | {R} rejected | {E} errors
+```
+
+### 11. Verify Completion
+
+- `reports/{flow-name}/findings.json` exists, is valid JSON, and contains BOTH `findings` and `results` fields
+- Every CONFIRMED script appears as a `findings[]` entry
+- `summary.bugs_found` equals the number of CONFIRMED findings, not the total
+  length of `findings[]`
+- `summary.critical_findings` counts only CONFIRMED Critical findings
+- Auth sanity check (step 7) was run if the flow contained a login endpoint
+- If `findings[]` is non-empty: `reports/{flow-name}/remediation.md` exists and lists every finding, Critical first
+- Summary tables printed to chat
+
+## Important Notes
+
+- **NEVER modify or regenerate mutation scripts** — that's Saboteur's job
+- **ALWAYS use 30s timeout** — never let a script run indefinitely
+- **Capture stderr** — import errors and tracebacks are in stderr, not stdout
+- **One script at a time** — execute sequentially so results are ordered and debuggable
+- **Report ALL outcomes** — don't skip ERRORs, they indicate setup issues the user needs to fix
+- **Be actionable** — for every ERROR, tell the user exactly how to fix it (install command, config change, etc.)
+- **Flow isolation:** Read only from `mutations/{flow-name}/` and write only to `reports/{flow-name}/`.
+
+## Required verification contract (supersedes legacy outcome examples above)
+Read `crew/skills/probe-flow/EXECUTION.md` and
+`crew/skills/probe-flow/VERIFICATION.md` before probing.
+Never classify a vulnerability or a successful defense from HTTP status alone.
+Legacy BUG_FOUND labels and automatic auth Critical instructions do not bypass
+backend verification. A token response alone is not proof of usable access.
+Use CONFIRMED, NEEDS_REVIEW, NOT_REPRODUCED or CHECK_ERROR. The backend
+recomputes the verdict from supported evidence. Include every suspected finding,
+including inconclusive results, and associate probe evidence using finding_id.

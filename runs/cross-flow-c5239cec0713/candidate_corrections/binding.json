@@ -1,0 +1,6 @@
+{
+  "CF-001": "ambiguous: 2 probe scripts each cover the action chain ['01_state_interleaving_price_then_cancel.py', '04_state_interleaving_price_refund_cancel.py']; exactly one must own it",
+  "CF-002": "ambiguous: 2 probe scripts each cover the action chain ['02_state_interleaving_price_then_refund.py', '04_state_interleaving_price_refund_cancel.py']; exactly one must own it",
+  "CF-003": "ambiguous: 2 probe scripts each cover the action chain ['03_state_interleaving_cancel_then_refund.py', '04_state_interleaving_price_refund_cancel.py']; exactly one must own it",
+  "CF-004": null
+}

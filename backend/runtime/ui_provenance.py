@@ -89,6 +89,202 @@ def _matching_elements(state, role, name):
     return matches
 
 
+def _is_elements_pointer(pointer):
+    """True when a pointer targets a single element: .../ui_states/<i>/elements/<j>."""
+    if not isinstance(pointer, str):
+        return False
+    try:
+        tokens = _tokens(pointer)
+    except UIProvenanceError:
+        return False
+    return (len(tokens) == 5 and tokens[:2] == ['workflow_timeline', 'ui_states']
+            and bool(re.fullmatch(r'0|[1-9][0-9]*', tokens[2] or ''))
+            and tokens[3] == 'elements'
+            and bool(re.fullmatch(r'0|[1-9][0-9]*', tokens[4] or '')))
+
+
+def _ui_state_index(pointer):
+    return int(_tokens(pointer)[2])
+
+
+def _try_role_name(value):
+    try:
+        role, name, _ = _semantic_element(value)
+    except UIProvenanceError:
+        return None
+    return (role, name)
+
+
+def _relocate_elements_pointer(demo, pointer, state_index, match):
+    """New pointer when exactly one element in the referenced state matches; else None."""
+    states = demo.get('workflow_timeline', {}).get('ui_states') or []
+    if not (isinstance(states, list) and state_index < len(states)
+            and isinstance(states[state_index], dict)):
+        return None
+    elements = states[state_index].get('elements')
+    if not isinstance(elements, list):
+        return None
+    matches = [index for index, value in enumerate(elements) if match(value)]
+    if len(matches) != 1:
+        return None
+    return f'{pointer.rsplit("/", 1)[0]}/{matches[0]}'
+
+
+def _is_delta_pointer(pointer, delta_name):
+    """True when a pointer targets one delta entry:
+    .../ui_states/<i>/changes_from_previous/<delta_name>/<j> (appeared/disappeared)."""
+    if not isinstance(pointer, str):
+        return False
+    try:
+        tokens = _tokens(pointer)
+    except UIProvenanceError:
+        return False
+    return (len(tokens) == 6 and tokens[:2] == ['workflow_timeline', 'ui_states']
+            and bool(re.fullmatch(r'0|[1-9][0-9]*', tokens[2] or ''))
+            and tokens[3] == 'changes_from_previous' and tokens[4] == delta_name
+            and bool(re.fullmatch(r'0|[1-9][0-9]*', tokens[5] or '')))
+
+
+def _relocate_delta_pointer(demo, pointer, state_index, delta_name, match):
+    """New delta pointer when exactly one entry in the referenced delta list matches."""
+    states = demo.get('workflow_timeline', {}).get('ui_states') or []
+    if not (isinstance(states, list) and state_index < len(states)
+            and isinstance(states[state_index], dict)):
+        return None
+    delta = states[state_index].get('changes_from_previous', {}).get(delta_name)
+    if not isinstance(delta, list):
+        return None
+    matches = [index for index, value in enumerate(delta) if match(value)]
+    if len(matches) != 1:
+        return None
+    return f'{pointer.rsplit("/", 1)[0]}/{matches[0]}'
+
+
+def relocate_ui_pointers(state, artifact_dir):
+    """Deterministically re-point UI fact locators to the unique matching element.
+
+    Only pointer indexes are rewritten; role, name, text, statements, inferences and
+    API facts are byte-identical. A pointer is re-pointed only when the currently
+    pointed element does not match the fact's declared target AND exactly one element
+    in the referenced state matches it. Zero or multiple matches are left untouched so
+    a genuine hallucination or an ambiguous duplicate still fails validation.
+    Returns (relocated_state, changes); ``changes`` is empty when nothing was repaired.
+    """
+    _require(isinstance(state, dict), 'Relocation requires an object state map')
+    rules = state.get('observed_ui_rules')
+    if not isinstance(rules, list) or not rules:
+        return deepcopy(state), []
+    demo = _read_json(_artifact(artifact_dir, 'demo.json'))
+    relocated = deepcopy(state)
+    changes = []
+    for rule in relocated.get('observed_ui_rules') or []:
+        if not isinstance(rule, dict):
+            continue
+        for fact in rule.get('facts') or []:
+            if not isinstance(fact, dict):
+                continue
+            if fact.get('type') == 'explicit_ui_text':
+                pointer = fact.get('json_pointer')
+                text = fact.get('text')
+                if not _is_elements_pointer(pointer) or not isinstance(text, str) or not text:
+                    continue
+                try:
+                    current = resolve_json_pointer(demo, pointer)
+                except UIProvenanceError:
+                    current = None  # unresolvable (e.g. out-of-bounds): provably wrong
+                if current == text:
+                    continue
+                new_pointer = _relocate_elements_pointer(
+                    demo, pointer, _ui_state_index(pointer), lambda value: value == text)
+                if new_pointer and new_pointer != pointer:
+                    fact['json_pointer'] = new_pointer
+                    changes.append({'rule_id': rule.get('id'), 'fact_id': fact.get('id'),
+                                    'old_pointer': pointer, 'new_pointer': new_pointer,
+                                    'evidence': 'unique exact-text element in the referenced state'})
+            elif fact.get('type') == 'ui_element_transition':
+                element = fact.get('element')
+                if not (isinstance(element, dict) and isinstance(element.get('role'), str)
+                        and isinstance(element.get('name'), str) and element['role'] and element['name']):
+                    continue
+                role, name = element['role'], element['name']
+                pointers = fact.get('json_pointers')
+                if not isinstance(pointers, dict):
+                    continue
+                # The before pointer is always an elements pointer; re-point it to the
+                # unique matching role/name element when wrong.
+                before_pointer = pointers.get('before')
+                if _is_elements_pointer(before_pointer):
+                    try:
+                        before_current = resolve_json_pointer(demo, before_pointer)
+                    except UIProvenanceError:
+                        before_current = None
+                    if (before_current is None
+                            or (isinstance(before_current, str)
+                                and _try_role_name(before_current) != (role, name))):
+                        new_pointer = _relocate_elements_pointer(
+                            demo, before_pointer, _ui_state_index(before_pointer),
+                            lambda value: _try_role_name(value) == (role, name))
+                        if new_pointer and new_pointer != before_pointer:
+                            pointers['before'] = new_pointer
+                            changes.append({'rule_id': rule.get('id'),
+                                            'fact_id': fact.get('id'), 'side': 'before',
+                                            'old_pointer': before_pointer,
+                                            'new_pointer': new_pointer,
+                                            'evidence': 'unique role/name element in the referenced state'})
+                # The after pointer is a delta entry for appeared/disappeared, or an
+                # elements pointer otherwise. Relocate it only when exactly one
+                # candidate exists, matching the corrected before (disappeared) or the
+                # declared role/name (appeared). Zero/multiple is left for the model.
+                after_pointer = pointers.get('after')
+                transition = fact.get('transition')
+                try:
+                    before_final = resolve_json_pointer(demo, pointers.get('before'))
+                except UIProvenanceError:
+                    before_final = None
+                if transition == 'disappeared' and _is_delta_pointer(after_pointer, 'disappeared'):
+                    if isinstance(before_final, str):
+                        new_pointer = _relocate_delta_pointer(
+                            demo, after_pointer, _ui_state_index(after_pointer), 'disappeared',
+                            lambda value: value == before_final)
+                        if new_pointer and new_pointer != after_pointer:
+                            pointers['after'] = new_pointer
+                            changes.append({'rule_id': rule.get('id'),
+                                            'fact_id': fact.get('id'), 'side': 'after',
+                                            'old_pointer': after_pointer,
+                                            'new_pointer': new_pointer,
+                                            'evidence': 'unique disappeared delta entry equal to the before element'})
+                elif transition == 'appeared' and _is_delta_pointer(after_pointer, 'appeared'):
+                    new_pointer = _relocate_delta_pointer(
+                        demo, after_pointer, _ui_state_index(after_pointer), 'appeared',
+                        lambda value: _try_role_name(value) == (role, name))
+                    if new_pointer and new_pointer != after_pointer:
+                        pointers['after'] = new_pointer
+                        changes.append({'rule_id': rule.get('id'),
+                                        'fact_id': fact.get('id'), 'side': 'after',
+                                        'old_pointer': after_pointer,
+                                        'new_pointer': new_pointer,
+                                        'evidence': 'unique appeared delta entry matching role/name'})
+                elif _is_elements_pointer(after_pointer):
+                    try:
+                        after_current = resolve_json_pointer(demo, after_pointer)
+                    except UIProvenanceError:
+                        after_current = None  # unresolvable (e.g. out-of-bounds)
+                    if (after_current is None
+                            or (isinstance(after_current, str)
+                                and _try_role_name(after_current) != (role, name))):
+                        new_pointer = _relocate_elements_pointer(
+                            demo, after_pointer, _ui_state_index(after_pointer),
+                            lambda value: _try_role_name(value) == (role, name))
+                        if new_pointer and new_pointer != after_pointer:
+                            pointers['after'] = new_pointer
+                            changes.append({'rule_id': rule.get('id'),
+                                            'fact_id': fact.get('id'), 'side': 'after',
+                                            'old_pointer': after_pointer,
+                                            'new_pointer': new_pointer,
+                                            'evidence': 'unique role/name element in the referenced state'})
+    return relocated, changes
+
+
 def _artifact(artifact_dir, name):
     _require(name in ('demo.json', 'recording.har'),
              f'Unsupported provenance artifact: {name}')

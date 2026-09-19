@@ -1,0 +1,319 @@
+{
+  "flow": "cross-flow-c5239cec0713",
+  "valid_candidate_ids": [
+    "CF-004"
+  ],
+  "allowed_scripts": [
+    "04_state_interleaving_price_refund_cancel.py"
+  ],
+  "unverified_coverage": [
+    {
+      "candidate_id": "CF-001",
+      "code": "INVALID_SOURCE_PROVENANCE",
+      "message": "Candidate needs explicit scripts filenames linking its executable probes",
+      "candidate": {
+        "id": "CF-001",
+        "hypothesis": "Composing the price-adjustment payout (observed in source 'price') with the cancellation reimbursement payout (observed in source 'cancel') on the same order may push totalReturned past originalAmount (30 + 100 = 130 > 100).",
+        "shared_entity": "order-1042 (originalAmount=100, priceProtection.adjustmentAmount=30, cancellation.reimbursementAmount=100)",
+        "shared_invariant": "sum(order.totalReturned) <= order.originalAmount",
+        "source_runs": [
+          "price",
+          "cancel"
+        ],
+        "source_facts": [
+          {
+            "source_run": "price",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/1",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/price-adjustment",
+            "status": 200
+          },
+          {
+            "source_run": "cancel",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/1",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "status": 200
+          }
+        ],
+        "actions": [
+          {
+            "name": "request_price_adjustment",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/price-adjustment",
+            "origin": "http://localhost:3000",
+            "path": "/api/order/price-adjustment",
+            "observed_in": "price"
+          },
+          {
+            "name": "cancel_order",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "origin": "http://localhost:3000",
+            "path": "/api/order/cancel",
+            "observed_in": "cancel"
+          }
+        ],
+        "action_endpoints": [
+          "http://localhost:3000/api/order/price-adjustment",
+          "http://localhost:3000/api/order/cancel"
+        ],
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "price",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2",
+              "UIR-001-F3"
+            ]
+          },
+          "note": "UIR-001 from source 'price' (verified observed-UI provenance): after a price adjustment is issued, the cancel-order affordance is removed from the order page. The cross-flow hypothesis is that the server should also reject POST /api/order/cancel once priceProtection.status is completed, and in particular that the composed payout must not exceed originalAmount. The rule is cited from the verified source rule; the cross-flow composed-sequence claim itself is agent_inference."
+        },
+        "setup": {
+          "steps": [
+            "POST /api/demo/reset (establish clean order fixture)",
+            "GET /api/order (capture before state: totalReturned=0, originalAmount=100, priceProtection.status=eligible, cancellation.status=none)"
+          ]
+        },
+        "evidence_chain": {
+          "before": "GET /api/order after reset \u2014 totalReturned=0, originalAmount=100, all payout fields zero",
+          "actions": [
+            "POST /api/order/price-adjustment (expected: totalReturned 0->30, priceProtection.status eligible->completed)",
+            "POST /api/order/cancel (expected rejection: cancellation already locked by priceProtection.status=completed, OR if accepted totalReturned must not exceed 100)"
+          ],
+          "after": "GET /api/order \u2014 invariant: order.totalReturned <= order.originalAmount"
+        },
+        "expected_behavior": "The server should reject the second payout action (cancel after price adjustment) OR cap the composed payout so totalReturned never exceeds originalAmount=100. A violation is totalReturned > 100 after the composed sequence.",
+        "mutation_type": "STATE_INTERLEAVING"
+      }
+    },
+    {
+      "candidate_id": "CF-002",
+      "code": "INVALID_SOURCE_PROVENANCE",
+      "message": "Candidate needs explicit scripts filenames linking its executable probes",
+      "candidate": {
+        "id": "CF-002",
+        "hypothesis": "Composing the price-adjustment payout (observed in source 'price') with the refund request -> refund completion chain (observed in source 'refund') on the same order may push totalReturned past originalAmount (30 + 100 = 130 > 100).",
+        "shared_entity": "order-1042 (originalAmount=100, priceProtection.adjustmentAmount=30, refund.requestedAmount=100)",
+        "shared_invariant": "sum(order.totalReturned) <= order.originalAmount",
+        "source_runs": [
+          "price",
+          "refund"
+        ],
+        "source_facts": [
+          {
+            "source_run": "price",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/1",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/price-adjustment",
+            "status": 200
+          },
+          {
+            "source_run": "refund",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/1",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/request",
+            "status": 201
+          },
+          {
+            "source_run": "refund",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/2",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/complete",
+            "status": 200
+          }
+        ],
+        "actions": [
+          {
+            "name": "request_price_adjustment",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/price-adjustment",
+            "origin": "http://localhost:3000",
+            "path": "/api/order/price-adjustment",
+            "observed_in": "price"
+          },
+          {
+            "name": "request_refund",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/request",
+            "origin": "http://localhost:3000",
+            "path": "/api/order/refund/request",
+            "observed_in": "refund"
+          },
+          {
+            "name": "complete_refund",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/complete",
+            "origin": "http://localhost:3000",
+            "path": "/api/order/refund/complete",
+            "observed_in": "refund"
+          }
+        ],
+        "action_endpoints": [
+          "http://localhost:3000/api/order/price-adjustment",
+          "http://localhost:3000/api/order/refund/request",
+          "http://localhost:3000/api/order/refund/complete"
+        ],
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "refund",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          },
+          "note": "UIR-001 from source 'refund' (verified observed-UI provenance): price protection and the price adjustment action become unavailable while a refund request is active. The cross-flow hypothesis is that the server should also reject a refund completion that, combined with a prior price adjustment, exceeds originalAmount. The composed-sequence claim is agent_inference."
+        },
+        "setup": {
+          "steps": [
+            "POST /api/demo/reset (establish clean order fixture)",
+            "GET /api/order (capture before state: totalReturned=0, originalAmount=100)"
+          ]
+        },
+        "evidence_chain": {
+          "before": "GET /api/order after reset \u2014 totalReturned=0, originalAmount=100, priceProtection.status=eligible, refund.status=none",
+          "actions": [
+            "POST /api/order/price-adjustment (expected: totalReturned 0->30, priceProtection.status eligible->completed)",
+            "POST /api/order/refund/request (expected: refund.status none->pending, requestedAmount=100; should be rejected if priceProtection.status=completed blocks new requests)",
+            "POST /api/order/refund/complete (expected: refund.status pending->completed, completedAmount=100; if allowed after price adjustment, totalReturned 30->130 which violates the invariant)"
+          ],
+          "after": "GET /api/order \u2014 invariant: order.totalReturned <= order.originalAmount"
+        },
+        "expected_behavior": "The server should reject the refund request or completion when a price adjustment has already been issued (totalReturned already 30), OR cap the refund completion so totalReturned never exceeds originalAmount=100. A violation is totalReturned > 100 after the composed sequence.",
+        "mutation_type": "STATE_INTERLEAVING"
+      }
+    },
+    {
+      "candidate_id": "CF-003",
+      "code": "INVALID_SOURCE_PROVENANCE",
+      "message": "Candidate needs explicit scripts filenames linking its executable probes",
+      "candidate": {
+        "id": "CF-003",
+        "hypothesis": "Composing the cancellation reimbursement payout (observed in source 'cancel') with the refund request -> refund completion chain (observed in source 'refund') on the same order may push totalReturned past originalAmount (100 + 100 = 200 > 100).",
+        "shared_entity": "order-1042 (originalAmount=100, cancellation.reimbursementAmount=100, refund.requestedAmount=100)",
+        "shared_invariant": "sum(order.totalReturned) <= order.originalAmount",
+        "source_runs": [
+          "cancel",
+          "refund"
+        ],
+        "source_facts": [
+          {
+            "source_run": "cancel",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/1",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "status": 200
+          },
+          {
+            "source_run": "refund",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/1",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/request",
+            "status": 201
+          },
+          {
+            "source_run": "refund",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/2",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/complete",
+            "status": 200
+          }
+        ],
+        "actions": [
+          {
+            "name": "cancel_order",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "origin": "http://localhost:3000",
+            "path": "/api/order/cancel",
+            "observed_in": "cancel"
+          },
+          {
+            "name": "request_refund",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/request",
+            "origin": "http://localhost:3000",
+            "path": "/api/order/refund/request",
+            "observed_in": "refund"
+          },
+          {
+            "name": "complete_refund",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/complete",
+            "origin": "http://localhost:3000",
+            "path": "/api/order/refund/complete",
+            "observed_in": "refund"
+          }
+        ],
+        "action_endpoints": [
+          "http://localhost:3000/api/order/cancel",
+          "http://localhost:3000/api/order/refund/request",
+          "http://localhost:3000/api/order/refund/complete"
+        ],
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "cancel",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2",
+              "UIR-001-F3",
+              "UIR-001-F4",
+              "UIR-001-F5"
+            ]
+          },
+          "note": "UIR-001 from source 'cancel' (verified observed-UI provenance): after the order is canceled, all customer order actions are removed. The cross-flow hypothesis is that the server should reject a refund request or completion after the order is canceled, and in particular that a second $100 payout on top of the $100 cancellation reimbursement must not occur. The composed-sequence claim is agent_inference."
+        },
+        "setup": {
+          "steps": [
+            "POST /api/demo/reset (establish clean order fixture)",
+            "GET /api/order (capture before state: totalReturned=0, originalAmount=100)"
+          ]
+        },
+        "evidence_chain": {
+          "before": "GET /api/order after reset \u2014 totalReturned=0, originalAmount=100, cancellation.status=none, refund.status=none",
+          "actions": [
+            "POST /api/order/cancel (expected: orderStatus delivered->canceled, totalReturned 0->100, all availableActions set to false)",
+            "POST /api/order/refund/request (expected rejection: requestRefund=false after cancel; if accepted, a second $100 refund request is created on a canceled order)",
+            "POST /api/order/refund/complete (expected rejection: completeRefund should be false; if accepted, totalReturned 100->200 which violates the invariant)"
+          ],
+          "after": "GET /api/order \u2014 invariant: order.totalReturned <= order.originalAmount"
+        },
+        "expected_behavior": "The server should reject both the refund request and the refund completion once the order is canceled (totalReturned=100=originalAmount). A violation is totalReturned > 100 after the composed sequence, which would mean double reimbursement of $200 on a $100 order.",
+        "mutation_type": "STATE_INTERLEAVING"
+      }
+    },
+    {
+      "candidate_id": "unattributed:01_state_interleaving_price_then_cancel.py",
+      "message": "No candidate links this AI probe; excluded from execution"
+    },
+    {
+      "candidate_id": "unattributed:02_state_interleaving_price_then_refund.py",
+      "message": "No candidate links this AI probe; excluded from execution"
+    },
+    {
+      "candidate_id": "unattributed:03_state_interleaving_cancel_then_refund.py",
+      "message": "No candidate links this AI probe; excluded from execution"
+    }
+  ],
+  "signature": "9c49fbe1eac19d858b6f59daa02841eb3af96237d0cfad66f460985a4e2b2027"
+}

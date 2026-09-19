@@ -1,0 +1,290 @@
+{
+  "run_timestamp": "2026-09-18T20:20:00Z",
+  "target_url": "http://localhost:3000/",
+  "flow_name": "cancel",
+  "application": {
+    "application_id": "northstar-market",
+    "product": "Northstar Market",
+    "requirements_version": "2026-09-17"
+  },
+  "total_scripts": 8,
+  "auth_check": {
+    "performed": false,
+    "reason": "No login/credential endpoint exists in endpoint_catalog.json or the recording; no cookies, bearer tokens, or CSRF tokens appeared. All state-changing endpoints (/api/order/cancel, /api/order/refund/*, /api/order/price-adjustment) are reachable without any principal. Per the contract, a flow with no login/credential endpoint records auth_check.performed=false. The absence of authentication is recorded separately as F-009 (agent hypothesis, unverified, NOT_EXECUTED); scope.json does not set authentication_required:true, so this is treated as unconfirmed coverage, not a confirmed bypass."
+  },
+  "invariant_note": "All monetary scenarios assert the approved Northstar bound: order.totalReturned must not exceed order.originalAmount (sum_lte, 100 > 100 = false). Each script establishes a fresh state via POST /api/demo/reset, captures its own before/actions/after from the harness-assigned flowbusters_sequence, and computes violation.observed from its own AFTER read.",
+  "findings": [
+    {
+      "id": "F-009",
+      "title": "State-changing payout endpoints require no authentication (broken access control, unverified)",
+      "source": "ANALYSIS",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-306",
+        "CWE-352"
+      ],
+      "script": null,
+      "mutation_type": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "execution": {
+        "status": "NOT_EXECUTED",
+        "missing_precondition": "The fixture has no login endpoint, no second principal, and no per-user order ownership (single order #1042, all actions unauthenticated). A broken-access-control / IDOR finding cannot be demonstrated without two distinct principals acting on a shared resource.",
+        "next_step": "Provide an authed build with a second user who does not own order #1042; attempt GET /api/order and a state change (cancel/refund) using that second user's session, and verify ownership is enforced server-side. Note scope.json does not set authentication_required:true, so this remains an unconfirmed coverage gap, not a confirmed finding."
+      },
+      "expected": "N/A (coverage gap)",
+      "evidence": {
+        "summary": "Every state-changing endpoint in the catalog (cancel, refund/request, refund/complete, price-adjustment) and the recording responded 200 with no credentials present. This is consistent with a missing auth boundary but is NOT proof of a defect: the demo app may be intentionally auth-free. Retained as a review item so the missing boundary is not silently treated as safe."
+      }
+    },
+    {
+      "id": "F-001",
+      "title": "Cancel + refund-complete interleaving can stack two reimbursements on order #1042",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "01_state_interleaving_cancel_refund_complete.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "expected": "HOLD (violation false)",
+      "evidence": {
+        "summary": "Cancels a fresh order then drives refund/complete (and the reverse order, and a concurrent race). If both the cancellation reimbursement and a completed refund pay out, order.totalReturned could exceed order.originalAmount."
+      }
+    },
+    {
+      "id": "F-002",
+      "title": "Refund/complete is callable with no auth and no prior refund request",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841",
+        "CWE-862"
+      ],
+      "script": "02_skip_step_refund_complete.py",
+      "mutation_type": "SKIP_STEP",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "expected": "REJECTED (4xx) and totalReturned unchanged",
+      "evidence": {
+        "summary": "Calls refund/complete directly on a fresh order, bypassing refund/request and any authentication. A completed payout with no prior request or no principal would be a workflow-authorization flaw."
+      }
+    },
+    {
+      "id": "F-003",
+      "title": "Cancel honors a client-supplied reimbursementAmount larger than the fixed $100",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-464",
+        "CWE-20"
+      ],
+      "script": "03_pricing_tamper_cancel_reimbursement.py",
+      "mutation_type": "PRICING_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "expected": "IGNORED/CLAMPED (server recomputes reimbursement from order state)",
+      "evidence": {
+        "summary": "Sends a JSON body with reimbursementAmount=1000 on the (otherwise bodyless) cancel. Violation true iff order.totalReturned exceeds order.originalAmount, i.e. the server trusted the client amount."
+      }
+    },
+    {
+      "id": "F-004",
+      "title": "Replaying the cancel request can issue a second $100 reimbursement",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-294"
+      ],
+      "script": "04_replay_attack_cancel_twice.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "expected": "IDEMPOTENT (second cancel no-ops; totalReturned stays <= originalAmount)",
+      "evidence": {
+        "summary": "Cancels, then replays the identical cancel (and a concurrent double-cancel race). A second reimbursement would push totalReturned to 200 > 100."
+      }
+    },
+    {
+      "id": "F-005",
+      "title": "Price adjustment can stack on a completed refund to exceed original amount",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "05_state_interleaving_adjustment_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "expected": "HOLD (adjustment blocked once refund completed, or total capped at originalAmount)",
+      "evidence": {
+        "summary": "Combines the $30 price-protection adjustment with the full refund request->complete chain in both orders plus a concurrent adjustment+complete race, then re-reads totalReturned vs originalAmount."
+      }
+    },
+    {
+      "id": "F-006",
+      "title": "Refund request accepts a client-supplied requestedAmount far above the order total",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-20",
+        "CWE-464"
+      ],
+      "script": "06_data_tamper_refund_requested_amount.py",
+      "mutation_type": "DATA_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "expected": "CLAMPED to order total (requestedAmount must not exceed originalAmount)",
+      "evidence": {
+        "summary": "Sends requestedAmount=99999 to refund/request then completes it. Primary predicate checks totalReturned<=originalAmount; the request-clamp rule (requestedAmount<=originalAmount) is reported as an unsupported_business_rule review item because a payout cap could mask a large accepted requestedAmount."
+      }
+    },
+    {
+      "id": "F-007",
+      "title": "Price adjustment can still pay out on a canceled/reimbursed order",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "07_state_interleaving_cancel_adjustment.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "expected": "REJECTED after cancel (order terminal, already reimbursed)",
+      "evidence": {
+        "summary": "Runs cancel + price-adjustment in both orders and a concurrent race; if the $30 adjustment applies on top of the $100 cancellation reimbursement, totalReturned exceeds originalAmount (violates UIR-003 'price protection not available while another order request is active')."
+      }
+    },
+    {
+      "id": "F-008",
+      "title": "Price adjustment still applies to an order already canceled and reimbursed (terminal-state bypass)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "08_skip_step_price_adjustment_after_cancel.py",
+      "mutation_type": "SKIP_STEP",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "expected": "REJECTED (order terminal per observed UI rule UIR-001)",
+      "evidence": {
+        "summary": "Cancels the order, then bypasses the removed 'Request price adjustment' button and calls the endpoint directly. Violation true iff the adjustment still increments totalReturned past originalAmount."
+      }
+    },
+    {
+      "id": "F-009",
+      "title": "Unauthenticated access to all order state-changing endpoints (coverage gap)",
+      "source": "ANALYSIS",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-862",
+        "CWE-306"
+      ],
+      "script": null,
+      "mutation_type": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "expected": "n/a (analytic hypothesis)",
+      "evidence": {
+        "summary": "The recording shows no login, session cookie, bearer token, or CSRF token, and all state-changing endpoints were invoked without any principal. scope.json does not set authentication_required:true, so per contract this is NOT confirmed as a missing-authentication vulnerability. It is an agent hypothesis worth verifying: if this is the intended deployment, any anonymous caller can cancel/adjust/refund any order id (the flow uses a fixed order #1042 with no per-user scoping), which would be CWE-862/CWE-306.",
+        "execution": {
+          "status": "NOT_EXECUTED",
+          "missing_precondition": "No second, differently-scoped principal exists in the fixture to demonstrate broken object-level access control; the app exposes a single fixed order #1042 with no user identity.",
+          "next_step": "Confirm with the product owner whether authentication/authorization is in scope for this endpoint set. If it is, prepare two user fixtures each owning an order and attempt to read/act on the other user's order using the first user's session."
+        }
+      }
+    }
+  ],
+  "results": [
+    {
+      "script": "01_state_interleaving_cancel_refund_complete.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "finding_id": "F-001",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "error_message": null
+    },
+    {
+      "script": "02_skip_step_refund_complete.py",
+      "mutation_type": "SKIP_STEP",
+      "finding_id": "F-002",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "error_message": null
+    },
+    {
+      "script": "03_pricing_tamper_cancel_reimbursement.py",
+      "mutation_type": "PRICING_TAMPER",
+      "finding_id": "F-003",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "error_message": null
+    },
+    {
+      "script": "04_replay_attack_cancel_twice.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "finding_id": "F-004",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "error_message": null
+    },
+    {
+      "script": "05_state_interleaving_adjustment_refund.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "finding_id": "F-005",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "error_message": null
+    },
+    {
+      "script": "06_data_tamper_refund_requested_amount.py",
+      "mutation_type": "DATA_TAMPER",
+      "finding_id": "F-006",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "error_message": null
+    },
+    {
+      "script": "07_state_interleaving_cancel_adjustment.py",
+      "mutation_type": "STATE_INTERLEAVING",
+      "finding_id": "F-007",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "error_message": null
+    },
+    {
+      "script": "08_skip_step_price_adjustment_after_cancel.py",
+      "mutation_type": "SKIP_STEP",
+      "finding_id": "F-008",
+      "outcome": "NEEDS_REVIEW",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "error_message": null
+    },
+    {
+      "script": null,
+      "mutation_type": null,
+      "finding_id": "F-009",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "error_message": "Missing precondition: no second principal / order ownership in the fixture to demonstrate broken access control.",
+      "execution": {
+        "status": "NOT_EXECUTED",
+        "missing_precondition": "No login endpoint, no second principal, and no per-user order ownership (single order #1042).",
+        "next_step": "Provision a second user who does not own order #1042 and attempt read + state change under that session to test server-side ownership enforcement."
+      }
+    }
+  ],
+  "summary": {
+    "bugs_found": 0,
+    "critical_findings": 0,
+    "needs_review": 8,
+    "not_executed": 1,
+    "rejected": 0,
+    "errors": 0,
+    "note": "Draft review-only statuses. The backend executes each script once, captures signed HTTPX transport evidence, and recomputes the sum_lte(invariant) verdict from the captured AFTER response. A violation.observed=false (control held) promotes the result to NOT_REPRODUCED; a true (control failed) promotes to CONFIRMED with the finding retained. F-009 is a NOT_EXECUTED coverage gap."
+  }
+}
