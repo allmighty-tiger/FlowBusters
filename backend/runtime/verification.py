@@ -165,7 +165,8 @@ def load_report(path):
             for field in ('flow_name', 'target_url', 'run_timestamp'):
                 if not reconciled.get(field):
                     reconciled[field] = metadata[field]
-    return normalize_report(reconciled)
+    from backend.runtime.report_presentation import present_report
+    return present_report(normalize_report(reconciled), path, root)
 
 
 def _is_setup_path_centered(finding, setup_paths):

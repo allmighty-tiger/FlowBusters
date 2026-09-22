@@ -1,5 +1,37 @@
 # FlowBusters technical architecture
 
+## Report lifecycle and observed-impact presentation (2026-09-22)
+
+`verification.load_report` first performs the existing receipt reconciliation and
+verdict classification, then calls `report_presentation.present_report`. This
+read-only projection does not change execution, verification or stored evidence.
+The report has four sections: assessment summary, confirmed security issue(s),
+other probe outcomes and collapsed technical evidence. (`ReportView.tsx`,
+`LifecycleReport`.)
+
+A candidate, its `.plan.json`, compiled `.py`, receipt and final finding are
+stages of one probe, not five findings. A draft is attached to an executed probe
+only when the generation JSON exactly matches the literal plan embedded in the
+authenticated receipt's script, the script digest matches, and the draft's
+predicate/invariant agrees. Drafts claiming actual execution are not silently
+absorbed. Ambiguous or unmatched references remain separate analysis notes.
+Executed script labels always come from receipts, never the plan filename.
+(`report_presentation._receipt_plan`, `_draft_matches`, `present_report`.)
+
+Probe outcomes are counted separately from observed security impact. Confirmed
+reproductions may share an issue card only when the validated invariant, exact
+terminal-state paths/values, resource identifiers, successful repeated request,
+limits and measured increments match. Each repeated successful write must
+increase the evaluated amount. This narrow grouping is not speculative root-cause
+deduplication; all execution IDs and outcomes remain visible. No claim of
+"unique vulnerabilities" is made by the current loaded-report projection.
+(`report_presentation._repeat_evidence`, `present_report`.)
+
+The summary uses backend execution accounting. HTTP bodies, timestamps, state
+changes, cURL/Burp examples, receipt metadata, generation drafts and complete AI
+observations remain inspectable in collapsed technical sections. Missing optional
+metadata is omitted. (`ReportView.tsx`, `LifecycleReport`.)
+
 ## New-run inference and isolation gate (2026-09-21)
 
 `ui_provenance._validate_ui_text` resolves explicit text pointers and compares
@@ -801,7 +833,7 @@ recording browser or AI assessment or write repository run artifacts.
 - FastAPI stores one `_active_run` and latest report fields in process memory, so the current service is single-assessment and not a durable distributed job queue. ([`backend/api/main.py` — `start_assessment`, `start_cross_flow`, `_progress_writer`](../backend/api/main.py))
 - Cross-flow compatibility includes user confirmation, matching normalized origin and, when identities are present, matching authenticated application identities and versions. Mixed or conflicting identities are rejected. Matching signed metadata is not external deployment attestation: the local identity endpoint does not cryptographically prove which process serves the application. ([`frontend/src/pages/applications.tsx` — `ApplicationsPage`](../frontend/src/pages/applications.tsx); [`backend/api/main.py` — `start_cross_flow`](../backend/api/main.py); [`backend/runtime/application_model.py` — `collect`](../backend/runtime/application_model.py))
 - The demonstrated price-adjustment plus completed-refund overpayment is a combined-workflow defect, but it is not exclusive to cross-flow mode: ordinary-run probes can also execute multi-endpoint chains. Cross-flow's implemented distinction is authenticated composition of facts from at least two source recordings before executing a new candidate. It is not a proof that single-flow analysis could not find the same behavior. ([`backend/runtime/candidate_correction.py` — `validate_candidate`, `correct_candidates`](../backend/runtime/candidate_correction.py); [`backend/runtime/verification.py` — `_dedup_key`, `_unique_vulnerabilities`](../backend/runtime/verification.py))
-- `summary.unique_vulnerabilities` is a presentation grouping, not a proven source-code root cause. The grouping uses application/rule context, resource identifiers, ordered endpoint methods/paths, concurrency overlap and invariant, while retaining request payload variants in the individual evidence. ([`backend/runtime/verification.py` — `_unique_vulnerabilities`](../backend/runtime/verification.py))
-- The current Northstar confirmed-card explanation in `ReportView` assumes a price-adjustment plus completed-refund sequence. That is appropriate for the saved cross-flow example but too specific for every confirmed amount-tamper or replay chain. The ordered trace and normalized predicate remain the evidence; this prose should not be generalized beyond the displayed actions. ([`frontend/src/components/ReportView.tsx` — `ReportView`](../frontend/src/components/ReportView.tsx))
+- `summary.unique_vulnerabilities` remains a legacy API compatibility metric, not a proven source-code root cause. The current loaded-report UI does not display it; it uses the narrower observed-impact projection described above. ([`backend/runtime/verification.py` — `_unique_vulnerabilities`](../backend/runtime/verification.py); [`backend/runtime/report_presentation.py` — `present_report`](../backend/runtime/report_presentation.py))
+- Repeated-write narrative is generated only when the captured successful writes show repeated measured increases. Other confirmed results retain their evidence-derived title without a speculative shared root cause. ([`backend/runtime/report_presentation.py` — `_repeat_evidence`, `present_report`](../backend/runtime/report_presentation.py); [`frontend/src/components/ReportView.tsx` — `LifecycleReport`](../frontend/src/components/ReportView.tsx))
 - The AI may infer unobserved CRUD endpoints from response shapes. Those endpoints are labelled inferred in the state map and are hypotheses until a backend-owned probe produces authenticated evidence. ([`crew/agents/analyst/charter.md` — Process step 8](../crew/agents/analyst/charter.md); [`backend/runtime/ui_provenance.py` — `validate_state_map`](../backend/runtime/ui_provenance.py))
 - HTTP status alone never establishes a vulnerability or a held control; supported state evidence and provenance determine the verdict. ([`backend/runtime/verification.py` — `classify`, `_classify_business_rule`](../backend/runtime/verification.py))

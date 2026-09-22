@@ -243,6 +243,45 @@
   .trace-status { grid-column: 2; justify-self: start; }
 }
 
+/* Evidence-first lifecycle report. Keep these selectors isolated from legacy cards. */
+.lifecycle-report { display: grid; gap: 28px; }
+.lifecycle-section { background: var(--report-panel); border: 1px solid var(--report-line); border-radius: 14px; padding: clamp(24px, 3vw, 40px); }
+.lifecycle-section h2 { font-size: 29px; line-height: 1.3; margin: 0 0 20px; }
+.lifecycle-section h3 { font-size: 27px; line-height: 1.35; margin: 14px 0; }
+.lifecycle-section h4 { font-size: 18px; margin: 25px 0 8px; }
+.lifecycle-section p { margin: 10px 0; }
+.lifecycle-section .report-eyebrow { margin: 0 0 10px; }
+.assessment-status strong { color: var(--report-green); }
+.lifecycle-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 24px 0 0; }
+.lifecycle-metrics > div { border-top: 1px solid var(--report-line); padding: 16px 0 0; }
+.lifecycle-metrics dt, .impact-values dt { color: var(--report-muted); font-size: 16px; }
+.lifecycle-metrics dd, .impact-values dd { font-size: 34px; line-height: 1.4; margin: 3px 0 0; font-weight: 650; }
+.issue-status { color: var(--report-red); font-size: 14px; font-weight: 700; letter-spacing: .05em; }
+.issue-impact { max-width: 880px; }
+.impact-values { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; background: var(--report-panel-2); padding: 22px; border-radius: 10px; margin: 24px 0; }
+.impact-values > div:last-child dd { color: var(--report-red); }
+.attack-sequence { padding: 16px 20px; border-left: 3px solid var(--report-gold); background: var(--report-panel-2); }
+.observed-issue + .observed-issue { margin-top: 36px; padding-top: 28px; border-top: 1px solid var(--report-line); }
+.lifecycle-section li { margin: 6px 0; }
+.probe-table-scroll { overflow-x: auto; }
+.probe-outcomes { width: 100%; border-collapse: collapse; font-size: 16px; line-height: 1.6; }
+.probe-outcomes th { text-align: left; color: var(--report-muted); font-size: 14px; padding: 12px; border-bottom: 1px solid var(--report-line); }
+.probe-outcomes td { padding: 20px 12px; vertical-align: top; border-bottom: 1px solid var(--report-line); }
+.probe-outcomes td:first-child { white-space: nowrap; font-weight: 650; }
+.probe-outcomes td:nth-child(2) { min-width: 180px; }
+.probe-outcomes td:last-child { width: 45%; }
+.probe-outcomes small { color: var(--report-muted); white-space: nowrap; }
+.probe-verdict { display: inline-block; white-space: nowrap; font-size: 14px; color: var(--report-gold); }
+.verdict-not_reproduced { color: var(--report-green); }
+.probe-technical { border: 1px solid var(--report-line); border-radius: 8px; margin-top: 12px; }
+.probe-technical > summary { cursor: pointer; padding: 18px; font-size: 17px; }
+.probe-technical > summary code { display: block; color: var(--report-muted); font-size: 14px; margin-left: 18px; }
+.technical-content { border-top: 1px solid var(--report-line); padding: 24px; }
+.technical-content details { margin: 12px 0; }
+.technical-content summary { cursor: pointer; color: var(--report-blue); }
+.technical-content pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 480px; overflow: auto; font-size: 13px; line-height: 1.6; background: #0d0e1c; padding: 16px; border-radius: 8px; }
+@media (max-width: 650px) { .lifecycle-metrics, .impact-values { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
 @media (max-width: 520px) {
   .fb-report-page { padding: 20px 14px; }
   .finding-heading { padding: 18px 16px 17px 42px; }

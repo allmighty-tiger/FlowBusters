@@ -15,6 +15,38 @@ loaded._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
 }).outputText, filename);
 const { default: ReportView, ReportRunMeta, evidenceCaptures, invariantFor, remediationFor, manualReproductionFor, requestExamplesFor, cweViews } = loaded.exports;
 
+test('lifecycle report renders five outcomes, one observed issue and collapsed technical details', () => {
+  const statuses = ['CONFIRMED', 'NEEDS_REVIEW', 'CONFIRMED', 'NEEDS_REVIEW', 'NOT_REPRODUCED'];
+  const probes = statuses.map((verdict, i) => ({label: `Probe 0${i + 1}`, id: String(i), execution_id: String(i),
+    script: `0${i + 1}_probe.py`, title: 'Test', verdict, verification_status: verdict, source: 'MUTATION_SCRIPT',
+    cwe: [], verification_reason: 'Exact test limitation.', display_reason: 'Exact test limitation.',
+    verification: {actions: [{request: {method: 'POST', url: 'http://example.test/api/order/refund/complete'}, status_code: 200}]},
+    associated_agent_drafts: [{script: `0${i + 1}_probe.plan.json`}]}));
+  const report = {results: [], summary: {execution_attempts: 5, pending_execution: 0, process_errors: 0},
+    assessment_status: {status: 'COMPLETED'}, report_presentation: {version: 1, probes,
+      counts: {CONFIRMED: 2, NEEDS_REVIEW: 2, NOT_REPRODUCED: 1}, coverage_notes: [],
+      issues: [{id: 'I', title: 'Repeated refund completion causes a double payout',
+        impact: 'The refund completion endpoint accepted a second completion request and added the refund amount again.',
+        original: 100, returned: 200, overpayment: 100, term: ['order', 'totalReturned'], limit: ['order', 'originalAmount'],
+        endpoint: 'POST /api/order/refund/complete', probes: ['Probe 01', 'Probe 03'], execution_ids: ['0', '2'],
+        remediation: ['Make refund completion idempotent.']}]}};
+  const html = renderToStaticMarkup(React.createElement(ReportView, {report, remediation: null}));
+  for (const section of ['Assessment summary', 'Confirmed security issue', 'Other probe outcomes', 'Technical evidence']) assert.ok(html.includes(section));
+  assert.match(html, /Probes executed<\/dt><dd>5/);
+  assert.match(html, /Confirmed reproductions<\/dt><dd>2/);
+  assert.match(html, /Needs review<\/dt><dd>2/);
+  assert.match(html, /Not reproduced<\/dt><dd>1/);
+  assert.match(html, /Probe 01 and Probe 03/);
+  assert.match(html, /Unauthorized overpayment/);
+  assert.equal((html.match(/class="probe-technical"/g) || []).length, 5);
+  assert.equal((html.match(/<tbody>[\s\S]*?<\/tbody>/g)[0].match(/<tr>/g) || []).length, 3);
+  assert.doesNotMatch(html, /<details[^>]*open|unique vulnerabilities|unexecuted hypotheses|Generation origin not recorded|CWE not recorded|Not assessed|normalized findings after deduplication/i);
+  assert.match(html, /Executed script: <code>01_probe.py/);
+  assert.match(html, /Original generation artifacts/);
+  assert.match(html, /cURL commands/);
+  assert.match(html, /Burp requests/);
+});
+
 test('queue status and unexecuted hypotheses are separate from findings', () => {
   const report = {findings: [], results: [], summary: {preflight_rejected: 1},
     assessment_status: {status: 'COMPLETED_WITH_ERRORS', planned: 6, executed: 5, skipped: 1, failed: 1, pending: 0},

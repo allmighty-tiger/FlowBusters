@@ -1,5 +1,27 @@
 # FlowBusters demo cheatsheet
 
+## Reading the current report
+
+Start with **Assessment summary**: how many probes ran, their outcomes, pending
+work and process errors. A completed assessment does not mean every probe found
+a vulnerability.
+
+Next show **Confirmed security issue**. Two probes can reproduce the same observed
+impact. Say "two confirmed reproductions", not "two unique vulnerabilities".
+For the local v3 validation, repeated refund completion returned $200 against an
+original $100 payment: an additional $100 payout. Probes 01 and 03 reproduce that
+same measured impact.
+
+**Other probe outcomes** is the compact review table. Needs review is not a passed
+security control. **Technical evidence** contains the actual executed `.py`, full
+requests/responses, state changes, cURL/Burp examples and receipt metadata. A
+`.plan.json` is the generation stage of that probe, not an extra finding.
+
+Technical references: `backend/runtime/report_presentation.py` (`present_report`,
+`_draft_matches`, `_repeat_evidence`) and `frontend/src/components/ReportView.tsx`
+(`LifecycleReport`). The v3 example is a local validation observation, not a
+permanent fixture or a product rule.
+
 ## What the new-run gate checks
 
 The AI proposes a rule from the recording and states that it is an inference.

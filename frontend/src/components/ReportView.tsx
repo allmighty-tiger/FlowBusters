@@ -109,6 +109,13 @@ interface LegacyObservation {
 }
 
 export interface FindingsReport {
+  report_presentation?: {
+    version: number;
+    probes: (Finding & { label: string; verdict: string; display_reason?: string; raw_http_trace?: unknown[]; receipt_metadata?: unknown; receipt_path?: string; associated_agent_drafts?: unknown[] })[];
+    issues: { id: string; title: string; impact: string; probes: string[]; execution_ids: string[]; original?: number; returned?: number; overpayment?: number; endpoint?: string; term?: string[]; limit?: string[]; remediation: string[]; grouping_basis?: string }[];
+    counts: Record<string, number>;
+    coverage_notes: unknown[];
+  };
   vulnerabilities?: { id: string; representative_finding_id: string; finding_ids: (string | undefined)[]; execution_ids: string[]; grouping_basis: string }[];
   normalized_run_id?: string;
   recording_metadata?: { flow_name: string; target_url: string; run_timestamp: string; source: 'validated_recording' };
@@ -368,7 +375,103 @@ export function ReportRunMeta({ report }: { report: FindingsReport }) {
     <span>{metadata ? 'Recording completed: ' : 'Run: '}{date && !Number.isNaN(date.getTime()) ? date.toLocaleString() : 'Date unavailable'}</span></div>;
 }
 
-export default function ReportView({ report, remediation }: { report: FindingsReport; remediation: string | null }) {
+export default function ReportView(props: { report: FindingsReport; remediation: string | null }) {
+  return props.report.report_presentation ? <LifecycleReport report={props.report} /> : <LegacyReportView {...props} />;
+}
+
+function actionName(capture: Capture) {
+  const parts = endpoint(capture.request?.url).split('/').filter(Boolean);
+  const verb = parts.at(-1) || 'request';
+  const object = parts.at(-2)?.replaceAll('-', ' ') || '';
+  return `${verb.charAt(0).toUpperCase() + verb.slice(1)} ${object}`.trim();
+}
+
+function LifecycleReport({ report }: { report: FindingsReport }) {
+  const view = report.report_presentation!;
+  const counts = view.counts;
+  const summary = report.summary;
+  const metrics: [string, number][] = [
+    ['Probes executed', summary.execution_attempts ?? view.probes.length],
+    ['Confirmed reproductions', counts.CONFIRMED || 0],
+    ['Needs review', counts.NEEDS_REVIEW || 0],
+    ['Not reproduced', counts.NOT_REPRODUCED || 0],
+    ['Pending', summary.pending_execution || 0],
+    ['Process errors', summary.process_errors || 0],
+  ];
+  const other = view.probes.filter(p => p.verdict !== 'CONFIRMED');
+  const status = report.assessment_status?.status;
+  const label = (s: string) => ({ NEEDS_REVIEW: 'Needs review', NOT_REPRODUCED: 'Not reproduced', CONFIRMED: 'Confirmed', CHECK_ERROR: 'Check error', INSUFFICIENT_EVIDENCE: 'Insufficient evidence' }[s] || s);
+  return <div className="fb-report lifecycle-report">
+    <section className="lifecycle-section" id="assessment-summary">
+      <p className="report-eyebrow">01 / Overview</p><h2>Assessment summary</h2>
+      {status && <p className="assessment-status">Assessment: <strong>{status}</strong></p>}
+      <dl className="lifecycle-metrics">{metrics.map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value}</dd></div>)}</dl>
+      {(summary.evidence_contract_errors || summary.trace_mismatches || counts.CHECK_ERROR) ? <p className="report-notice">Evidence-contract errors: {summary.evidence_contract_errors || 0} · Trace mismatches: {summary.trace_mismatches || 0} · Check errors: {counts.CHECK_ERROR || 0}</p> : null}
+      {!view.probes.length && <p>0 probes generated / no security checks executed.</p>}
+    </section>
+    <section className="lifecycle-section" id="confirmed-security-issue">
+      <p className="report-eyebrow">02 / Observed security impact</p><h2>Confirmed security {view.issues.length === 1 ? 'issue' : 'issues'}</h2>
+      {!view.issues.length && <p>No confirmed security issue was established by these probes.</p>}
+      {view.issues.map(issue => {
+        const first = view.probes.find(p => p.execution_id === issue.execution_ids[0]);
+        const actions = first?.verification?.actions || [];
+        const seen = new Set<string>();
+        const sequence = actions.map(a => { const name = actionName(a); const repeated = seen.has(name); seen.add(name); return repeated ? `Repeat ${name}` : name; });
+        const financial = issue.term?.at(-1) === 'totalReturned' && issue.limit?.at(-1) === 'originalAmount';
+        return <article className="observed-issue" key={issue.id}>
+          <span className="issue-status">CONFIRMED · {issue.probes.length} reproduction{issue.probes.length === 1 ? '' : 's'}</span>
+          <h3>{issue.title}</h3><p className="issue-impact">{issue.impact}</p>
+          {issue.original !== undefined && <dl className="impact-values">
+            <div><dt>{financial ? 'Original payment' : 'Comparison limit'}</dt><dd>{financial ? `$${money(issue.original)}` : issue.original}</dd></div>
+            <div><dt>{financial ? 'Total returned' : 'Evaluated total'}</dt><dd>{financial ? `$${money(issue.returned!)}` : issue.returned}</dd></div>
+            <div><dt>{financial ? 'Unauthorized overpayment' : 'Amount above limit'}</dt><dd>{financial ? `$${money(issue.overpayment!)}` : issue.overpayment}</dd></div>
+          </dl>}
+          {issue.endpoint && <p><strong>Endpoint</strong> <code className="endpoint-chip">{issue.endpoint}</code></p>}
+          <p><strong>Reproduced by</strong> {issue.probes.join(' and ')}</p>
+          <h4>Attack sequence</h4><p className="attack-sequence">{sequence.join(' → ')}</p>
+          {issue.remediation.length > 0 && <><h4>Remediation</h4><ul>{issue.remediation.map(fix => <li key={fix}>{fix}</li>)}</ul></>}
+        </article>;
+      })}
+    </section>
+    <section className="lifecycle-section" id="other-probe-outcomes">
+      <p className="report-eyebrow">03 / Remaining checks</p><h2>Other probe outcomes</h2>
+      {other.length > 0 ? <div className="probe-table-scroll"><table className="probe-outcomes"><thead><tr><th>Probe</th><th>Executed actions</th><th>Outcome</th><th>What the result establishes</th></tr></thead><tbody>{other.map(probe => <tr key={probe.execution_id || probe.id}>
+        <td>{probe.label}</td><td>{(probe.verification?.actions || []).map((a, i) => <div key={i}>{actionName(a)}{a.status_code != null && <small> HTTP {a.status_code}</small>}</div>)}</td>
+        <td><span className={`probe-verdict verdict-${probe.verdict.toLowerCase()}`}>{label(probe.verdict)}</span></td><td>{probe.display_reason || probe.verification_reason}</td>
+      </tr>)}</tbody></table></div> : <p>No other probe outcomes.</p>}
+    </section>
+    <section className="lifecycle-section" id="technical-evidence">
+      <p className="report-eyebrow">04 / Inspect the evidence</p><h2>Technical evidence</h2>
+      <p>Each probe retains its executed script, requests, final state and execution receipt.</p>
+      {view.probes.map(probe => {
+        const examples = requestExamplesFor(probe);
+        const changes = transitionSummary(probe);
+        return <details className="probe-technical" key={probe.execution_id || probe.id}>
+          <summary>{probe.label} · {label(probe.verdict)}{probe.script && <code>{probe.script}</code>}</summary>
+          <div className="technical-content">
+            {probe.verification_reason && <p>{probe.verification_reason}</p>}
+            {probe.inferred_invariant?.statement && <section><h4>Tested AI-inferred invariant</h4><p>{probe.inferred_invariant.statement}</p><p>Rule origin: <code>{probe.rule_origin}</code></p></section>}
+            {probe.execution_id && <p>Execution: <code>{probe.execution_id}</code></p>}
+            {probe.script && <p>Executed script: <code>{probe.script}</code></p>}
+            {probe.receipt_path && <p>Receipt: <code>{probe.receipt_path}</code></p>}
+            {cweViews(probe).length > 0 && <p>CWE: {cweViews(probe).map(c => c.id).join(', ')}</p>}
+            <h4>Field-by-field state changes</h4>{Object.entries(changes).map(([key, values]) => <p key={key}><code>{key}</code>: {values.join(' → ')}</p>)}
+            <h4>Ordered HTTP evidence</h4>{evidenceCaptures(probe).map((c, i) => <details key={i}><summary>{i + 1}. {String(c.request?.method || '')} {endpoint(c.request?.url)} · HTTP {c.status_code}</summary><pre>{pretty(c)}</pre></details>)}
+            <details><summary>cURL commands</summary><CopyBlock label="Run requests in order in an authorized environment" text={examples.map(x => x.curl).join('\n\n')} /></details>
+            <details><summary>Burp requests</summary>{examples.map((x, i) => <CopyBlock key={i} label={x.label} text={x.rawHttp} />)}</details>
+            <details><summary>Raw HTTP trace and timestamps</summary><pre>{pretty(probe.raw_http_trace)}</pre></details>
+            <details><summary>Receipt metadata</summary><pre>{pretty(probe.receipt_metadata)}</pre></details>
+            {!!probe.supporting_observations?.length && <details><summary>Complete AI observations</summary><pre>{pretty(probe.supporting_observations)}</pre></details>}
+            {!!probe.associated_agent_drafts?.length && <details><summary>Original generation artifacts</summary><p>Earlier stages of this executed probe; not additional findings.</p><pre>{pretty(probe.associated_agent_drafts)}</pre></details>}
+          </div>
+        </details>;
+      })}
+      {view.coverage_notes.length > 0 && <details><summary>Additional analysis notes</summary><pre>{pretty(view.coverage_notes)}</pre></details>}
+    </section>
+  </div>;
+}
+
+function LegacyReportView({ report, remediation }: { report: FindingsReport; remediation: string | null }) {
   const findings = normalizeFindings(report);
   const confirmed = findings.filter(f => ['CONFIRMED', 'REPRODUCED'].includes(f.verification_status || ''));
   const vulnerabilities = report.vulnerabilities ?? confirmed.map((finding, index) => ({
