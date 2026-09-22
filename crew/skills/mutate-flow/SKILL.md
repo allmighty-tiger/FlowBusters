@@ -8,7 +8,7 @@ script must establish and capture its own independent before/actions/after
 scenario and print the required structured `verification`; status codes and a
 `violation_observed` flag alone are not acceptable evidence.
 Invariant paths must start at the HTTP response root and include every envelope
-key (for example `["order", "totalReturned"]`). Never use nested-relative paths,
+key (for example `["order", "measuredValue"]`). Never use nested-relative paths,
 recursive field lookup, or guessed array indexes.
 Use `response.extensions["flowbusters_sequence"]` as the capture sequence for
 every HTTPX response. Never maintain a parallel counter. Capture setup requests
@@ -26,7 +26,14 @@ response and print `violation.observed` as the resulting JSON boolean. Never
 leave it as `None`/`null` for the backend to fill in; backend recomputation only
 checks the emitted boolean against signed evidence.
 
-Generate adversarial Python scripts that probe business logic flaws by manipulating workflow state, replaying requests, swapping roles, and tampering with data extracted from the state map.
+Generate schema-v2 JSON plans (`NN_scenario.plan.json`), not Python scripts.
+Only `amount_bound/business_rule_must_hold` (sum_lte) and
+`unsupported/unsupported_business_rule` are allowed claim/predicate enum pairs.
+Attack techniques belong in the title; they are not predicate names. A double
+payout amount-bound claim can compare the final recorded amount against its
+observed limit. A uniqueness or field-trust claim cannot use that as proof.
+The backend validates plans before creating Python. Legacy script examples below
+describe compiled output, not files the agent should author for a new run.
 
 ## Confidence: medium
 
@@ -191,7 +198,7 @@ json_body = {"order_id": "OTHER_USERS_ORDER_ID", "amount": -1, "status": "approv
 **FORCED_BROWSING** — Access endpoints directly:
 ```python
 # Guess or enumerate endpoint URLs
-# Try: /api/orders/1, /api/orders/2, /api/orders/3
+# Try: /api/recordss/1, /api/recordss/2, /api/recordss/3
 # Try: /admin/users, /internal/config, /api/export
 # Access without going through the normal UI flow
 ```
@@ -284,6 +291,23 @@ Name scripts with zero-padded index and descriptive slug inside `mutations/{flow
 - **No production URLs** — only test against QA/staging environments
 - **Flow isolation:** Read from `flows/{flow-name}/` and write only to `mutations/{flow-name}/`.
 
+### Declarative plan setup gate
+
+For PROBE_PLAN, `setup` is a POST reset endpoint, never the GET state-read URL.
+Select it only from endpoint_catalog.json entries with authority `configured_setup`.
+Match every state read and action by exact origin, method and path in that catalog.
+Do not invent routes from button labels. Multiple independent plans need an
+authorized setup to restore starting state; `setup: null` does not provide isolation.
+If no such setup exists, report the missing precondition. The backend blocks the
+whole queue before requests, and can request at most two setup-only corrections
+when authorized alternatives exist. Corrections must preserve actions and predicates.
+
+`duplicate_refund_prevention` and other request-uniqueness claims cannot use a
+numeric upper-bound predicate: an unchanged requested amount does not establish
+idempotency. Use `unsupported_business_rule` and explain the missing executable
+predicate. The bounded correction path may downgrade such an invalid claim to
+reviewable unsupported coverage while preserving its claim and action chain.
+
 ### Complete financial scenarios
 
 Include request-body amount overrides for recorded payout actions, and replay
@@ -292,7 +316,7 @@ and obtain a final GET after completion. A pending refund is not a completed
 payout. Cross-flow probes compose complete source chains, including terminal
 completion, without resetting between the combined actions. Reset only before
 each independent scenario, then capture its before GET and its own after GET.
-For an approved totalReturned/originalAmount requirement, test exactly those
+For an approved measuredValue/comparisonValue requirement, test exactly those
 response-root paths. Report an amount-bound check, not an unrelated claim about
 mass-assignment prevention. Compute the boolean from that scenario's AFTER;
 never reuse a prior scenario's variables or compare against a different amount.

@@ -21,7 +21,7 @@ test('cross-flow progress uses its own mode, phases, and technical disclosure', 
     "'CROSS_FLOW'", 'Loading {source_count} source flows',
     'Authenticating source evidence', 'Building application state model',
     'Identifying cross-flow conflicts', 'Conflict hypotheses: {candidate_count} validated candidates',
-    'Preparing {script_count} executable probes', 'Verifying signed evidence and invariants',
+    'Preparing {script_count} executable probes', 'Verifying captured HTTP evidence and invariants',
     'Building normalized final report', 'Final security findings (', 'Technical details',
   ]) assert.ok(progressSource.includes(text) || runnerSource.includes(text), text);
   assert.ok(progressSource.includes("runMode === 'RECORDED_FLOW' && progress['record'] === 'active'"));

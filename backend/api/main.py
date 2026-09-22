@@ -190,8 +190,6 @@ async def start_assessment(body: AssessmentRequest):
     if _active_run and not _active_run.done():
         return JSONResponse(status_code=409, content={"detail": "An assessment is already running"})
 
-    from backend.runtime.application_identity import discover_application_identity
-    trusted_application_identity = await discover_application_identity(body.target_url)
 
     _last_findings = None
     _last_remediation = None
@@ -212,7 +210,6 @@ async def start_assessment(body: AssessmentRequest):
             anthropic_model=os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-5"),
             progress_cb=_make_progress_cb(),
             headless=False,
-            application_identity=trusted_application_identity,
         )
     )
 
@@ -299,7 +296,11 @@ async def get_report(flow_name: str = Query(default="")):
     if not findings_path.exists():
         return JSONResponse(status_code=404, content={"detail": "No report found"})
 
-    findings = load_report(findings_path)
+    try:
+        findings = load_report(findings_path)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return JSONResponse(status_code=422, content={
+            'detail': f'Report evidence could not be authenticated or loaded: {exc}'})
     remediation = remediation_path.read_text(encoding="utf-8") if remediation_path.exists() else None
 
     state_map = (run_dir / "flows" / flow_name / "state_map.json")
@@ -340,7 +341,11 @@ async def list_reports():
 
         try:
             data = load_report(findings_path)
-        except (json.JSONDecodeError, OSError):
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # One imported/tampered report must not take down the entire index.
+            # Keep it visible without inventing a zero-findings/clean summary.
+            items.append({'flow_name': flow_name, 'modified': '',
+                          'load_error': str(exc), 'report_status': 'UNAVAILABLE'})
             continue
 
         summary = data.get("summary", {}) or {}

@@ -3,7 +3,8 @@
 ## Purpose
 
 Execution is owned by the backend. Read `crew/skills/probe-flow/EXECUTION.md`
-before following the procedures below. Prepare scripts and a review-only draft;
+and `crew/skills/probe-flow/REPORTING.md` before following the procedures below.
+Prepare scripts and a review-only draft;
 do not execute HTTP calls or scripts in the agent session. The backend creates
 the final execution log and recomputes verdicts after your session exits.
 
@@ -106,6 +107,12 @@ source is VERIFICATION_PROBE. A token or 2xx alone cannot confirm a finding.
 Do not perform these requests during the agent session.
 
 ### 8. Compile Findings
+
+Write for business analysts first. Every title and explanation must state the
+affected business object, exact tested action sequence, expected behavior,
+actual result and practical impact. Use concrete amounts and differences when
+available. Keep verifier jargon in technical evidence, not in the primary issue
+description. Follow the complete `REPORTING.md` contract.
 
 Write `reports/{flow-name}/findings.json`:
 ```json

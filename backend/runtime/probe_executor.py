@@ -356,14 +356,14 @@ def validate_probe_output(receipt, *, enforce_contract=False):
     by_sequence = {event.get('sequence'): event for event in trace if isinstance(event, dict)}
     if len(by_sequence) != len(trace):
         result.update(status='invalid', category='trace_mismatch',
-                      error='Signed transport trace contains duplicate or missing sequence numbers')
+                      error='Authenticated HTTP trace contains duplicate or missing sequence numbers')
         return result
     for capture in declared:
         sequence = capture['sequence']
         event = by_sequence.get(sequence)
         if event is None:
             result.update(status='invalid', category='evidence_contract_error',
-                          error=f'Probe output contract error: capture sequence {sequence} is absent from the signed transport trace')
+                          error=f'Probe output contract error: capture sequence {sequence} is absent from the authenticated HTTP trace')
             return result
         request = capture.get('request') or {}
         request = {key: request.get(key) for key in ('method', 'url', 'body')}
@@ -373,7 +373,7 @@ def validate_probe_output(receipt, *, enforce_contract=False):
                 or not event.get('complete')):
             result.update(status='invalid', category='evidence_contract_error',
                           error=(f'Probe output contract error: capture sequence {sequence} '
-                                 'does not match its signed transport event'))
+                                 'does not match its authenticated HTTP trace event'))
             return result
     if predicate == 'business_rule_must_hold':
         after_response, _ = normalize_response(
@@ -391,7 +391,7 @@ def validate_probe_output(receipt, *, enforce_contract=False):
         unaccounted = sorted(set(by_sequence) - set(sequences))
         if unaccounted:
             result.update(status='invalid', category='evidence_contract_error',
-                          error=('Probe output contract error: signed transport sequences '
+                          error=('Probe output contract error: authenticated HTTP trace sequences '
                                  f'{unaccounted} are not represented in setup or scenario captures'))
             return result
     record = {'script': receipt.get('script'), 'source': receipt.get('source'),
@@ -570,14 +570,26 @@ def trace_error(record, receipt):
     return None
 
 
-def _is_stale_unexecuted_draft(verification):
+def _is_stale_unexecuted_draft(verification, executed=None):
     """Recognize a pre-execution plan without accepting claimed captures."""
     if not isinstance(verification, dict):
         return False
-    execution = verification.get('execution')
-    if not isinstance(execution, dict) or execution.get('status') != 'NOT_EXECUTED':
+    if any(key in verification for key in ('before', 'action', 'actions', 'after', 'setup')):
         return False
-    return not any(key in verification for key in ('before', 'action', 'actions', 'after'))
+    if 'violation' in verification:
+        violation = verification['violation']
+        if (not isinstance(violation, dict) or violation.get('observed', 'missing') is not None
+                or not set(violation).issubset({'observed', 'description'})):
+            return False
+    execution = verification.get('execution')
+    if execution is not None and (not isinstance(execution, dict)
+                                  or execution.get('status') != 'NOT_EXECUTED'):
+        return False
+    # A capture-free draft may declare a compatible plan, not a different test.
+    if executed is not None:
+        return all(key not in verification or verification[key] == executed.get(key)
+                   for key in ('predicate', 'invariant'))
+    return isinstance(execution, dict) and execution.get('status') == 'NOT_EXECUTED'
 
 
 def _candidate_declares_separate_scenarios(candidate):
@@ -681,8 +693,25 @@ def reconcile(data, report_dir, root):
     }
     if gate is not None:
         planned = [p for p in planned if p[0] == 'BACKEND_COVERAGE' or p[1] in gate['allowed_scripts']]
+    from backend.runtime.queue_status import load_rejections
+    rejections = load_rejections(run_dir, root)
+    rejected_by_name = {r['script']: r for r in rejections}
 
     def attach_rule_provenance(record):
+        from backend.runtime.inferred_invariants import validate_support, terminal_error
+        record.pop('_inferred_rule_valid', None)
+        record.pop('_inferred_rule_error', None)
+        verification = record.get('verification')
+        if (isinstance(verification, dict) and verification.get('rule_origin') == 'AI_INFERRED'
+                and verification.get('predicate') == 'business_rule_must_hold'):
+            try:
+                validate_support(verification, run_dir, root)
+                error = terminal_error(verification)
+                if error:
+                    raise ValueError(error)
+                record['_inferred_rule_valid'] = True
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                record['_inferred_rule_error'] = str(exc)
         record.pop('_rule_provenance_valid', None)
         record.pop('_rule_provenance_error', None)
         record.pop('_validated_rule_provenance', None)
@@ -701,7 +730,23 @@ def reconcile(data, report_dir, root):
             record['_rule_provenance_error'] = str(exc)
 
     findings = data.get('findings') or []
+
+    def separate_status_fields(record, receipt):
+        verification = ((receipt or {}).get('parsed_result') or {}).get('verification') or {}
+        record['execution_status'] = ('NOT_EXECUTED' if not receipt else
+            'COMPLETED' if receipt.get('exit_code') == 0 else 'FAILED')
+        record['evidence_validation_status'] = ('MISSING' if not receipt else
+            'INVALID' if receipt_evidence_error(dict(script=receipt['script'], source=receipt['source'],
+                triggered_by=receipt.get('triggered_by'), verification=deepcopy(verification)), receipt)
+            else 'VALID')
+        origin = verification.get('rule_origin')
+        if not origin and (verification.get('rule') or {}).get('source') == 'agent_inference':
+            origin = 'AI_INFERRED'
+        record['rule_origin'] = origin or 'UNSPECIFIED'
+        record['inferred_invariant'] = deepcopy(verification.get('inferred_invariant'))
+        record['supporting_observations'] = deepcopy(verification.get('supporting_observations', []))
     for finding in findings:
+        finding.pop('_preflight_error', None)
         finding.pop('_provenance_error', None)
         finding.pop('deduplicated_from', None)
         finding.pop('deduplicated_into', None)
@@ -713,10 +758,15 @@ def reconcile(data, report_dir, root):
                           if receipt.get('script') == finding['script']
                           and (receipt.get('source') == finding.get('source')
                                or finding.get('source') == 'CROSS_FLOW'
-                               and receipt.get('source') == 'MUTATION_SCRIPT')]
+                               and receipt.get('source') == 'MUTATION_SCRIPT'
+                               or finding.get('source') == 'ANALYSIS'
+                               and not isinstance(finding.get('verification'), dict)
+                               and receipt.get('source') == 'MUTATION_SCRIPT'
+                               and ('MUTATION_SCRIPT', finding['script']) in planned
+                               and finding.get('title') == (receipt.get('parsed_result') or {}).get('title'))]
             if len(candidates) == 1:
-                if finding.get('source') == 'CROSS_FLOW':
-                    finding['analysis_source'] = 'CROSS_FLOW'
+                if finding.get('source') in ('CROSS_FLOW', 'ANALYSIS'):
+                    finding['analysis_source'] = finding['source']
                     finding['source'] = 'MUTATION_SCRIPT'
                 finding['execution_id'] = candidates[0]['execution_id']
         receipt = receipts.get(finding.get('execution_id'))
@@ -724,7 +774,7 @@ def reconcile(data, report_dir, root):
                                if receipt else None)
         if isinstance(parsed_verification, dict) and (
                 not isinstance(finding.get('verification'), dict)
-                or _is_stale_unexecuted_draft(finding.get('verification'))):
+                or _is_stale_unexecuted_draft(finding.get('verification'), parsed_verification)):
             if 'verification' in finding:
                 finding['agent_draft_verification'] = deepcopy(finding['verification'])
             finding['verification'] = deepcopy(parsed_verification)
@@ -733,10 +783,81 @@ def reconcile(data, report_dir, root):
                 and finding['execution'].get('status') == 'NOT_EXECUTED'):
             finding['agent_draft_execution'] = deepcopy(finding.pop('execution'))
         finding['_provenance_error'] = receipt_evidence_error(finding, receipt)
+        # An explicitly unexecuted hypothesis without any planned script is a
+        # coverage item, not a missing receipt for an attempted check.
+        execution = finding.get('execution')
+        if (receipt is None and not finding.get('execution_id')
+                and not any(name == finding.get('script') for _, name in planned)
+                and isinstance(execution, dict) and execution.get('status') == 'NOT_EXECUTED'
+                and isinstance(execution.get('missing_precondition'), str)
+                and execution['missing_precondition'].strip()
+                and _is_stale_unexecuted_draft(finding.get('verification'))):
+            finding['_provenance_error'] = None
         from backend.runtime.coverage_plans import receipt_probe_origin
         finding['probe_origin'] = receipt_probe_origin(receipt) if receipt else 'UNKNOWN'
         finding['execution_trace'] = deepcopy(receipt.get('trace', [])) if receipt else []
         attach_rule_provenance(finding)
+        separate_status_fields(finding, receipt)
+        if receipt and receipt.get('exit_code') != 0:
+            finding['error_message'] = receipt.get('error') or 'Probe process exited non-zero'
+        if receipt is None and finding.get('script') in rejected_by_name:
+            finding['_preflight_error'] = rejected_by_name[finding['script']]['error']
+            finding['preflight_rejection'] = deepcopy(rejected_by_name[finding['script']])
+    # A previously normalized report can omit a deduplicated backend-created
+    # finding that never existed in the agent draft. Rebuild that atomic row
+    # from its authenticated receipt, then recompute deduplication in memory.
+    represented = {f.get('execution_id') for f in findings}
+    for identifier, receipt in receipts.items():
+        parsed = receipt.get('parsed_result') or {}
+        if identifier in represented:
+            continue
+        finding_id = f'EXEC-{identifier}'
+        while any(f.get('id') == finding_id for f in findings):
+            finding_id += '-receipt'
+        finding = {'id': finding_id, 'execution_id': identifier,
+                   'title': parsed.get('title', receipt['script']),
+                   'script': receipt['script'], 'source': receipt['source'],
+                   'mutation_type': parsed.get('mutation_type', ''),
+                   'severity': 'Not assessed', 'cwe': [],
+                   'verification': deepcopy(parsed.get('verification')),
+                   'execution_trace': deepcopy(receipt.get('trace', []))}
+        finding['_provenance_error'] = receipt_evidence_error(finding, receipt)
+        from backend.runtime.coverage_plans import receipt_probe_origin
+        finding['probe_origin'] = receipt_probe_origin(receipt)
+        attach_rule_provenance(finding)
+        separate_status_fields(finding, receipt)
+        if receipt.get('exit_code') != 0:
+            finding['error_message'] = receipt.get('error') or 'Probe process exited non-zero'
+        findings.append(finding)
+    for rejection in rejections:
+        if not any(f.get('script') == rejection['script'] for f in findings):
+            findings.append({'id': 'PREFLIGHT-' + rejection['script'], 'script': rejection['script'],
+                'title': rejection['script'], 'source': 'MUTATION_SCRIPT',
+                '_preflight_error': rejection['error'], 'preflight_rejection': deepcopy(rejection),
+                'execution_status': 'NOT_EXECUTED', 'evidence_validation_status': 'INVALID'})
+    # An empty analytical draft and an executor-created row can name the same
+    # receipt. They are not two probes. Collapse only identical, validated
+    # executed verification, preserving the extra draft for inspection.
+    primary = []
+    for finding in sorted(findings, key=lambda f: str(f.get('id', '')).startswith('EXEC-')):
+        same = next((f for f in primary if finding.get('execution_id')
+                     and f.get('execution_id') == finding['execution_id']
+                     and not f.get('_provenance_error') and not finding.get('_provenance_error')
+                     and f.get('verification') == finding.get('verification')), None)
+        if same is None:
+            primary.append(finding)
+        else:
+            same.setdefault('associated_agent_drafts', []).append(deepcopy(finding))
+    findings = primary
+    # Unscripted hypotheses are coverage notes, not extra executed findings.
+    coverage_notes = [f for f in findings if not f.get('execution_id')
+                      and not any(name == f.get('script') for _, name in planned)
+                      and not f.get('_preflight_error')]
+    existing_notes = data.get('unexecuted_hypotheses') or []
+    data['unexecuted_hypotheses'] = deepcopy(existing_notes + [f for f in coverage_notes
+        if not any(note.get('id') == f.get('id') for note in existing_notes)])
+    findings = [f for f in findings if f not in coverage_notes]
+    data['findings'] = findings
     partial_coverage = []
     cross_flow_candidates = data.get('_cross_flow_candidates')
     if not isinstance(cross_flow_candidates, list):
@@ -765,6 +886,7 @@ def reconcile(data, report_dir, root):
         row['evidence_error_category'] = validation.get('category') if validation else None
         row['_provenance_error'] = receipt_evidence_error(row, receipt)
         attach_rule_provenance(row)
+        separate_status_fields(row, receipt)
         linked = [f for f in findings if f.get('execution_id') == identifier]
         if len(linked) == 1:
             row['finding_id'] = linked[0]['id']
@@ -773,7 +895,7 @@ def reconcile(data, report_dir, root):
         (receipt.get('source'), receipt.get('script'))
         for receipt in terminal_receipts.values()
     }
-    pending = sum(plan not in terminal_plans for plan in planned)
+    pending = sum(plan not in terminal_plans and plan[1] not in rejected_by_name for plan in planned)
     executor_failures = {
         identifier for identifier, receipt in terminal_receipts.items()
         if receipt.get('error') or receipt.get('exit_code') != 0
@@ -812,6 +934,7 @@ def reconcile(data, report_dir, root):
         'execution_attempts': len(receipts),
         'completed_executions': len(terminal_receipts),
         'pending_execution': pending,
+        'preflight_rejected': len(rejections),
         'missing_receipts': pending,
         'process_errors': len(executor_failures),
         'evidence_contract_errors': len(parse_failures | contract_failures),
@@ -820,6 +943,8 @@ def reconcile(data, report_dir, root):
         'untrusted_receipts': max(0, raw_receipt_count - len(receipts)),
     }
     data['results'] = results
+    from backend.runtime.queue_status import assessment_status
+    data['assessment_status'] = assessment_status(data['_execution_summary'])
     return data
 
 
@@ -840,12 +965,7 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
     with (reports / f'agent-draft-{uuid.uuid4().hex}.json').open('x', encoding='utf-8') as stream:
         json.dump(draft, stream, indent=2)
     backend_coverage = run_dir / 'backend_coverage' / flow
-    if list(backend_coverage.glob('*.py')):
-        from backend.runtime.coverage_plans import prepare_coverage_probes
-        authorized = set(prepare_coverage_probes(run_dir, flow, root))
-        if set(backend_coverage.glob('*.py')) != authorized:
-            raise ValueError('Unrecognized backend coverage script; generation authority cannot be established')
-    scripts = sorted(backend_coverage.glob('*.py')) + sorted((run_dir / 'mutations' / flow).glob('*.py'))
+    scripts = sorted((run_dir / 'mutations' / flow).glob('*.py'))
     # Extra verification probes are separate programs/receipts, never relabelled mutations.
     extra = run_dir / 'verification_probes' / flow
     scripts += sorted(extra.glob('*.py'))
@@ -860,23 +980,27 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
     from backend.runtime.candidate_correction import load_gate
     gate = load_gate(run_dir, root)
     if gate is not None:
-        scripts = [p for p in scripts if p.parent == backend_coverage or p.name in gate['allowed_scripts']]
+        scripts = [p for p in scripts if p.name in gate['allowed_scripts']]
         total = len(scripts)
     # Validate the entire finished plan before executing even the first probe.
+    from backend.runtime.generated_probes import validate_plan_set
+    plan_errors = validate_plan_set(scripts, endpoint_catalog, run=run_dir, root=root)
+    rejected = {p: e['error'] for p in scripts for e in plan_errors if e['script'] == p.name}
     for planned_script in scripts:
         error = (preflight_script_contract(planned_script)
                  or preflight_endpoints(planned_script, endpoint_catalog))
         if error:
-            raise ValueError(f'Probe plan preflight failed: {planned_script.name}: {error}')
+            rejected.setdefault(planned_script, error)
+    from backend.runtime.queue_status import save_rejections
+    save_rejections(run_dir, flow, root, rejected)
     for index, script in enumerate(scripts, start=1):
-        source = ('BACKEND_COVERAGE' if script.parent == backend_coverage else
-                  'VERIFICATION_PROBE' if script.parent == extra else 'MUTATION_SCRIPT')
+        source = ('VERIFICATION_PROBE' if script.parent == extra else 'MUTATION_SCRIPT')
         matching = [f for f in draft.get('findings', []) if f.get('script') == script.name
                     and (f.get('source', 'MUTATION_SCRIPT') == source
                          or source == 'MUTATION_SCRIPT' and f.get('source') == 'CROSS_FLOW')]
         triggered_by = matching[0].get('triggered_by') if len(matching) == 1 else None
         scenario_name = _readable_scenario_name(script)
-        preflight_error = preflight_script_contract(script)
+        preflight_error = rejected.get(script) or preflight_script_contract(script)
         if not preflight_error:
             preflight_error = preflight_endpoints(script, endpoint_catalog)
         if preflight_error:
@@ -889,7 +1013,7 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
                 })
             else:
                 progress(f'Probe contract validation failed for {script.name}: {preflight_error}')
-            break
+            continue
         if execution_progress is not None:
             execution_progress({
                 'stage': 'started',
@@ -948,14 +1072,12 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
             # Claimed captures must agree with stdout. Empty drafts can acquire raw evidence.
             if not finding.get('verification'):
                 finding['verification'] = deepcopy(parsed.get('verification'))
-        # A terminal receipt has already been persisted. Stop before executing
-        # more generated code when its output violates the evidence contract.
-        if failed:
-            break
+        # Each admitted declarative plan establishes its own baseline. Its error
+        # is terminal for that probe, not for other independent checks.
     findings_path.write_text(json.dumps(draft, indent=2), encoding='utf-8')
     if execution_progress is not None:
         attempt_noun = 'attempt' if attempts == 1 else 'attempts'
-        pending = max(0, total - attempts)
+        pending = max(0, total - attempts - len(rejected))
         receipt_noun = 'receipt' if completed == 1 else 'receipts'
         summary_label = ('Execution stopped' if pending and
                          (process_errors or contract_errors or trace_mismatches)

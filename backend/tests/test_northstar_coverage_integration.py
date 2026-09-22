@@ -16,7 +16,9 @@ import httpx
 
 from backend.runtime import application_identity
 from backend.runtime.application_model import collect, prepare_inputs
-from backend.runtime.coverage_plans import prepare_coverage_probes, render_probe
+from backend.runtime.coverage_plans import prepare_coverage_probes
+from backend.runtime.generated_probes import render_plan
+from backend.tests.probe_fixture import evidence_plan
 from backend.runtime.crew_runner import execute_validated_probes
 from backend.runtime.probe_executor import execute_run, load_receipts, validate_probe_output
 from backend.runtime.verification import load_report
@@ -45,18 +47,7 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
             str(NORTHSTAR / 'server.js')], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         self.addCleanup(self.stop_server)
         self.origin = 'http://127.0.0.1:' + self.server.stdout.readline().strip()
-        self.registry = self.root / 'applications.json'
-        self.registry.write_text(json.dumps({'schema_version': 1, 'applications': [{
-            'application_id': 'northstar-market', 'identity_version': '2',
-            'requirements_version': '2026-09-17', 'product': 'Northstar Market',
-            'identity_endpoint': '/.well-known/flowbusters-identity',
-            'allowed_origins': [self.origin]}]}), encoding='utf-8')
-        original = application_identity.load_applications
-        self.registry_patch = patch.object(application_identity, 'load_applications',
-                                            side_effect=lambda *_: original(self.registry))
-        self.registry_patch.start(); self.addCleanup(self.registry_patch.stop)
-        self.selection = asyncio.run(application_identity.discover_application_identity(self.origin))
-        self.assertEqual(self.selection['identity_version'], '2')
+        self.selection = None  # Product identity and registry are intentionally disabled.
 
     def stop_server(self):
         self.server.terminate(); self.server.wait(timeout=10)
@@ -89,10 +80,31 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         state['transitions'][0].update(entries[-1]['request'])
         state['critical_endpoints'] = [entries[-1]['request']]
         state_path.write_text(json.dumps(state), encoding='utf-8')
-        application_identity.issue_identity(run, self.root, self.origin, self.selection)
+        scope = json.loads((run / 'scope.json').read_text())
+        scope['setup_paths'] = ['/api/demo/reset']
+        (run / 'scope.json').write_text(json.dumps(scope))
+        self.current_run = run
         return run
 
+    def render_probe(self, origin, setup, state_read, actions, invariant, title):
+        return render_plan(evidence_plan(self.current_run, origin, actions, invariant, title))
+
+
     def execute_and_load(self, run, expected_count=1):
+        self.current_run = run
+        folder = run / 'mutations' / run.name
+        folder.mkdir(parents=True, exist_ok=True)
+        if not list(folder.glob('*.py')):
+            if (run / 'cross_flow_inputs.json').exists():
+                actions = [{'endpoint': p, 'body': {}} for p in CHAINS['price'] + CHAINS['refund']]
+            else:
+                har = json.loads((run / 'flows' / run.name / 'recording.har').read_text())
+                paths = [e['request']['url'].replace(self.origin, '') for e in har['log']['entries'] if e['request']['method'] == 'POST']
+                actions = [{'endpoint': p, 'body': {}} for p in paths]
+                if paths == CHAINS['price']: actions[0]['body'] = {'adjustmentAmount': 130}
+                if paths == CHAINS['cancel']: actions[0]['body'] = {'reimbursementAmount': 200}
+                if paths == CHAINS['refund']: actions.append({'endpoint': paths[-1], 'body': {}})
+            (folder / 'probe.py').write_text(self.render_probe(self.origin, '/api/demo/reset', '/api/order', actions, INVARIANT, 'Amount bound'), encoding='utf-8')
         asyncio.run(execute_validated_probes(run, run.name, self.root, lambda _: None))
         reports = run / 'reports' / run.name
         receipts = load_receipts(reports, self.root)
@@ -114,7 +126,7 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
                 report, receipts = self.execute_and_load(run)
                 self.assertEqual([f['verification_status'] for f in report['findings']], ['CONFIRMED'])
                 self.assertEqual([r['outcome'] for r in report['results']], ['CONFIRMED'])
-                self.assertEqual(report['results'][0]['probe_origin'], 'BACKEND_COVERAGE')
+                self.assertEqual(report['results'][0]['probe_origin'], 'UNKNOWN')
                 v = receipts[0]['parsed_result']['verification']; order = v['after']['response']['order']
                 self.assertEqual(v['after']['request']['method'], 'GET')
                 self.assertEqual(v['invariant'], INVARIANT)
@@ -125,7 +137,7 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         inputs = collect(self.root, list(CHAINS), self.origin)
         run = self.root / 'runs' / 'cross'; run.mkdir()
         prepare_inputs(run, run.name, inputs, root=self.root)
-        application_identity.issue_identity(run, self.root, self.origin, inputs['application_identity'])
+        application_identity.issue_identity(run, self.root, self.origin, inputs.get('application_identity'))
         (run / 'scope.json').write_text((sources[0] / 'scope.json').read_text(), encoding='utf-8')
         state = json.loads((sources[0] / 'flows' / 'price' / 'state_map.json').read_text())
         state.update(flow_name='cross')
@@ -146,7 +158,7 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         har = run / 'cross_flow_sources' / 'price' / 'recording.har'
         har.write_text(har.read_text().replace('"status": 200', '"status": 201'), encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'snapshot manifest'):
-            prepare_coverage_probes(run, run.name, self.root)
+            prepare_endpoint_catalog(run, run.name, self.root)
 
     def test_normal_controls_exact_predicate_and_wrong_identity(self):
         for name, chain in CHAINS.items():
@@ -154,7 +166,7 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
                 run = self.recording('normal-' + name, chain)
                 folder = run / 'mutations' / run.name; folder.mkdir(parents=True)
                 script = folder / 'normal.py'
-                script.write_text(render_probe(self.origin, '/api/demo/reset', '/api/order',
+                script.write_text(self.render_probe(self.origin, '/api/demo/reset', '/api/order',
                     [{'endpoint': path, 'body': {}} for path in chain], INVARIANT, 'Normal amount bound'), encoding='utf-8')
                 asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
                 report = load_report(run / 'reports' / run.name / 'findings.json')
@@ -163,53 +175,49 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         run = self.recording('positive', CHAINS['price'])
         report, _ = self.execute_and_load(run)
         self.assertEqual(report['findings'][0]['verification_status'], 'CONFIRMED')
-        path = run / 'application_identity.json'; identity = json.loads(path.read_text())
-        identity['application_id'] = 'other-app'  # signature does not authenticate this edit
-        path.write_text(json.dumps(identity), encoding='utf-8')
+        # A fake product identity neither supplies nor removes inference authority.
+        (run / 'application_identity.json').write_text(json.dumps({'application_id': 'other-app'}))
         report = load_report(run / 'reports' / run.name / 'findings.json')
-        self.assertEqual(report['findings'][0]['verification_status'], 'NEEDS_REVIEW')
-        self.assertEqual(report['results'][0]['outcome'], 'NEEDS_REVIEW')
+        self.assertEqual(report['findings'][0]['verification_status'], 'CONFIRMED')
+        self.assertEqual(report['results'][0]['outcome'], 'CONFIRMED')
 
     def test_signed_other_identity_and_different_predicate_cannot_get_rule(self):
-        for wrong_app in (False, True):
-            run = self.recording('wrong-' + str(wrong_app), CHAINS['price'])
-            if wrong_app:
-                registry = json.loads(self.registry.read_text())
-                other = {**registry['applications'][0], 'application_id': 'other-app', 'product': 'Other app'}
-                registry['applications'].append(other)
-                self.registry.write_text(json.dumps(registry), encoding='utf-8')
-                (run / 'application_identity.json').unlink()  # isolated fixture only
-                application_identity.issue_identity(run, self.root, self.origin, other)
-                self.assertEqual(prepare_coverage_probes(run, run.name, self.root), [])
-            invariant = deepcopy(INVARIANT)
-            if not wrong_app: invariant['terms'] = [['order', 'priceProtection', 'adjustmentAmount']]
+        for wrong_observation in (False, True):
+            run = self.recording('wrong-' + str(wrong_observation), CHAINS['price'])
+            (run / 'application_identity.json').write_text(json.dumps({'application_id': 'other-app', 'validated': True}))
+            plan = evidence_plan(run, self.origin, [{'endpoint': CHAINS['price'][0], 'body': {'adjustmentAmount': 130}}], INVARIANT)
+            if wrong_observation:
+                plan['supporting_observations'][0]['value'] = 'invented'
+            else:
+                plan['inferred_invariant']['predicate']['terms'] = [['order', 'otherTotal']]
             folder = run / 'mutations' / run.name; folder.mkdir(parents=True)
-            (folder / 'test.py').write_text(render_probe(self.origin, '/api/demo/reset', '/api/order',
-                [{'endpoint': CHAINS['price'][0], 'body': {'adjustmentAmount': 130}}], invariant,
-                'Final amount bound'), encoding='utf-8')
+            (folder / 'test.py').write_text('PROBE_PLAN = ' + repr(plan))
+            prepare_endpoint_catalog(run, run.name, self.root)
             asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
             report = load_report(run / 'reports' / run.name / 'findings.json')
-            self.assertEqual(report['findings'][0]['verification_status'], 'NEEDS_REVIEW')
-            self.assertEqual(report['results'][0]['outcome'], 'NEEDS_REVIEW')
+            self.assertEqual(report['findings'][0]['verification_status'], 'CHECK_ERROR')
+            self.assertEqual(report['summary']['preflight_rejected'], 1)
+            self.assertEqual(report['results'], [])
+
 
     def test_incomplete_refund_and_missing_identity_do_not_generate_coverage(self):
         run = self.recording('pending-only', [CHAINS['refund'][0]])
         self.assertEqual(prepare_coverage_probes(run, run.name, self.root), [])
         run = self.recording('unbound', CHAINS['price'])
-        (run / 'application_identity.json').unlink()  # temporary fixture only
+        self.assertFalse((run / 'application_identity.json').exists())
         self.assertEqual(prepare_coverage_probes(run, run.name, self.root), [])
 
-    def test_contradiction_stops_remaining_probes_and_keeps_terminal_receipt(self):
+    def test_contradiction_continues_independent_probes_and_keeps_terminal_receipts(self):
         run = self.recording('bad-output', CHAINS['price'])
         folder = run / 'mutations' / run.name; folder.mkdir(parents=True)
-        code = render_probe(self.origin, '/api/demo/reset', '/api/order',
+        code = self.render_probe(self.origin, '/api/demo/reset', '/api/order',
             [{'endpoint': CHAINS['price'][0], 'body': {'adjustmentAmount': 130}}], INVARIANT, 'Amount bound')
-        (folder / '01_bad.py').write_text(code.replace("'observed': total > limit", "'observed': total < limit"), encoding='utf-8')
+        (folder / '01_bad.py').write_text(code.replace("'observed': total > maximum", "'observed': total < maximum"), encoding='utf-8')
         (folder / '02_never.py').write_text(code, encoding='utf-8')
         asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
         receipts = load_receipts(run / 'reports' / run.name, self.root)
-        self.assertEqual(len(receipts), 1)
-        receipt = next(iter(receipts.values()))
+        self.assertEqual(len(receipts), 2)
+        receipt = next(r for r in receipts.values() if r['script'] == '01_bad.py')
         error = validate_probe_output(receipt, enforce_contract=True)
         self.assertEqual(error['category'], 'evidence_contract_error')
         self.assertIn('scenario=primary', error['error'])
@@ -224,42 +232,86 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         self.assertFalse(list(run.rglob('*.py')))
         self.assertEqual(load_receipts(run / 'reports' / run.name, self.root), {})
 
-    def test_real_legacy_404_is_reviewable_and_amount_variants_share_one_issue(self):
-        run = self.recording('amount-variants', CHAINS['price'])
-        prepare_coverage_probes(run, run.name, self.root)
+    def test_empty_analysis_draft_and_executor_row_are_one_primary_finding(self):
+        run = self.recording('analysis-draft', CHAINS['refund'])
+        _, receipts = self.execute_and_load(run)
+        receipt = receipts[0]
+        path = run / 'reports' / run.name / 'findings.json'
+        draft = json.loads(path.read_text(encoding='utf-8'))
+        draft['findings'].append({'id': 'F-001', 'source': 'ANALYSIS', 'script': receipt['script'],
+                                  'title': receipt['parsed_result']['title'], 'verification': None})
+        path.write_text(json.dumps(draft), encoding='utf-8')
+        raw = path.read_bytes()
+        report = load_report(path)
+        self.assertEqual([(f['id'], f['verification_status']) for f in report['findings']], [('F-001', 'CONFIRMED')])
+        self.assertEqual(len(report['results']), 1)
+        self.assertEqual(report['results'][0]['finding_id'], 'F-001')
+        self.assertEqual(len(report['findings'][0]['associated_agent_drafts']), 1)
+        self.assertEqual(path.read_bytes(), raw)
+        # Similar filename is insufficient if the analytical claim differs.
+        draft['findings'][-1]['title'] = 'A different unexecuted claim'
+        path.write_text(json.dumps(draft), encoding='utf-8')
+        changed = load_report(path)
+        unlinked = next(f for f in changed['findings'] if f['id'] == 'F-001')
+        self.assertFalse(unlinked.get('execution_id'))
+        self.assertNotEqual(unlinked['verification_status'], 'CONFIRMED')
+
+    def test_process_error_retains_receipt_and_next_probe_confirms(self):
+        run = self.recording('process-error', CHAINS['refund'])
         folder = run / 'mutations' / run.name; folder.mkdir(parents=True)
-        for name, actions in [('amount', [{'endpoint': CHAINS['price'][0], 'body': {'adjustmentAmount': 999999, 'amount': 999999}}]),
-                              ('missing', [{'endpoint': '/api/order/refund', 'body': {}}, {'endpoint': '/api/order/cancel', 'body': {}}])]:
-            code = render_probe(self.origin, '/api/demo/reset', '/api/order', actions, INVARIANT, name)
-            code = code.replace("'response': response.json()", "'response': response.json() if 'application/json' in response.headers.get('content-type', '') else response.text")
-            (folder / (name + '.py')).write_text(code, encoding='utf-8')
-        # Legacy receipts have no endpoint catalog; preserve the signed 404 as evidence.
+        code = self.render_probe(self.origin, '/api/demo/reset', '/api/order',
+            [{'endpoint': p, 'body': {}} for p in CHAINS['refund'] + [CHAINS['refund'][-1]]],
+            INVARIANT, 'Repeated completed payout')
+        (folder / '01_crash.py').write_text(code.replace('with httpx.Client(',
+            "raise RuntimeError('intentional test process failure')\nwith httpx.Client("), encoding='utf-8')
+        (folder / '02_valid.py').write_text(code, encoding='utf-8')
         asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
         reports = run / 'reports' / run.name
-        original = {p: p.read_bytes() for p in (reports / 'executions').glob('*.json')}
+        receipts = load_receipts(reports, self.root)
+        self.assertEqual(len(receipts), 2)
+        self.assertEqual(sorted(r['exit_code'] for r in receipts.values()), [0, 1])
         report = load_report(reports / 'findings.json')
-        self.assertEqual(len(original), 3)
+        self.assertEqual({r['script']: r['outcome'] for r in report['results']},
+                         {'01_crash.py': 'CHECK_ERROR', '02_valid.py': 'CONFIRMED'})
+        self.assertEqual(report['assessment_status'], dict(status='COMPLETED_WITH_ERRORS',
+            planned=2, executed=2, skipped=0, failed=1, pending=0))
+        self.assertEqual(len(report['findings']), 2)
+        self.assertTrue(all(r.get('finding_id') for r in report['results']))
+
+    def test_real_legacy_404_is_reviewable_and_amount_variants_share_one_issue(self):
+        run = self.recording('amount-variants', CHAINS['price'])
+        folder = run / 'mutations' / run.name; folder.mkdir(parents=True)
+        for name, amount in [('small', 130), ('large', 999999)]:
+            code = self.render_probe(self.origin, '/api/demo/reset', '/api/order',
+                [{'endpoint': CHAINS['price'][0], 'body': {'adjustmentAmount': amount}}], INVARIANT, 'Amount bound')
+            (folder / (name + '.py')).write_text(code, encoding='utf-8')
+        # Execute a legacy program directly to retain genuine 404 transport evidence.
+        from backend.runtime.probe_executor import execute
+        code = self.render_probe(self.origin, '/api/demo/reset', '/api/order',
+            [{'endpoint': '/api/order/refund', 'body': {}}], INVARIANT, 'Missing workflow')
+        asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
+        reports = run / 'reports' / run.name
+        (folder / 'missing.py').write_text(code, encoding='utf-8')
+        asyncio.run(execute(folder / 'missing.py', reports, root=self.root, cwd=run, source='MUTATION_SCRIPT'))
+        raw = {p: p.read_bytes() for p in (reports / 'executions').glob('*.json')}
+        report = load_report(reports / 'findings.json')
         self.assertEqual(report['summary']['confirmed'], 2)
         self.assertEqual(report['summary']['unique_vulnerabilities'], 1)
-        self.assertEqual(report['summary']['needs_review'], 1)
-        self.assertEqual(report['summary']['coverage_gaps'], 1)
+        self.assertEqual(report['summary']['insufficient_evidence'], 1)
         self.assertEqual(report['summary']['controls_held'], 0)
-        self.assertEqual(report['summary']['probe_origin_counts']['AI_PROBE'], 2)
-        self.assertEqual(report['summary']['probe_origin_counts']['BACKEND_COVERAGE'], 1)
-        missing = next(r for r in report['results'] if r['script'] == 'missing.py')
-        self.assertEqual(missing['outcome'], 'NEEDS_REVIEW')
-        self.assertEqual(missing['evidence_validation_status'], 'valid')
-        self.assertEqual(original, {p: p.read_bytes() for p in original})
+        self.assertEqual(len(raw), 3)
+        self.assertEqual(raw, {p: p.read_bytes() for p in raw})
+
 
     def test_pending_and_completed_payout_have_distinct_signed_verdicts(self):
-        run = self.recording('semantic-coverage', CHAINS['price'])
+        run = self.recording('semantic-coverage', CHAINS['price'] + CHAINS['refund'])
         folder = run / 'mutations' / run.name
         folder.mkdir(parents=True)
         actions = [{'endpoint': '/api/order/price-adjustment', 'body': {}},
                    {'endpoint': '/api/order/refund/request', 'body': {}}]
         for name, chain in [('pending', actions), ('completed', actions + [
                 {'endpoint': '/api/order/refund/complete', 'body': {}}])]:
-            (folder / (name + '.py')).write_text(render_probe(
+            (folder / (name + '.py')).write_text(self.render_probe(
                 self.origin, '/api/demo/reset', '/api/order', chain, INVARIANT, name), encoding='utf-8')
         asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
         reports = run / 'reports' / run.name
@@ -272,16 +324,19 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         self.assertEqual(len(load_receipts(reports, self.root)), 2)
         self.assertEqual(raw, {p: p.read_bytes() for p in raw})
 
-    def test_invalid_later_probe_blocks_first_backend_coverage_probe(self):
+    def test_invalid_later_probe_is_rejected_without_blocking_independent_probe(self):
         run = self.recording('invalid-plan', CHAINS['price'])
-        prepare_coverage_probes(run, run.name, self.root)
-        folder = run / 'mutations' / run.name
-        folder.mkdir(parents=True)
-        (folder / 'later.py').write_text(
-            "verification = {'predicate': 'business_rule_must_hold'}", encoding='utf-8')
-        with self.assertRaisesRegex(ValueError, 'Probe plan preflight failed'):
-            asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
-        self.assertEqual(load_receipts(run / 'reports' / run.name, self.root), {})
+        folder = run / 'mutations' / run.name; folder.mkdir(parents=True)
+        (folder / 'later.py').write_text("verification = {'predicate': 'business_rule_must_hold'}")
+        (folder / 'valid.py').write_text(self.render_probe(self.origin, '/api/demo/reset', '/api/order',
+            [{'endpoint': CHAINS['price'][0], 'body': {'adjustmentAmount': 130}}], INVARIANT, 'Amount bound'), encoding='utf-8')
+        asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
+        report = load_report(run / 'reports' / run.name / 'findings.json')
+        self.assertEqual(report['summary']['preflight_rejected'], 1)
+        self.assertEqual(report['summary']['completed_executions'], 1)
+        self.assertEqual(report['assessment_status']['status'], 'COMPLETED_WITH_ERRORS')
+        self.assertEqual(report['assessment_status']['pending'], 0)
+
 
     def test_candidate_correction_three_sources_to_signed_execution(self):
         from types import SimpleNamespace
@@ -295,10 +350,17 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         actions = [{'endpoint': '/api/order/price-adjustment', 'body': {}},
                    {'endpoint': '/api/order/refund/request', 'body': {}},
                    {'endpoint': '/api/order/refund/complete', 'body': {}}]
-        (folder / 'probe.py').write_text(render_probe(self.origin, '/api/demo/reset', '/api/order', actions, INVARIANT, 'combined'), encoding='utf-8')
+        from backend.runtime.generated_probes import render_plan, binding_contract
+        plan = {'schema_version': 1, 'title': 'combined', 'origin': self.origin,
+                'setup': '/api/demo/reset', 'state_read': '/api/order', 'claim_type': 'amount_bound',
+                'predicate': 'business_rule_must_hold', 'invariant': INVARIANT,
+                'actions': [{'method': 'POST', 'path': a['endpoint'], 'body': a['body']} for a in actions]}
+        plan = evidence_plan(run, self.origin, actions, INVARIANT, 'combined')
+        (run / 'scope.json').write_text((sources[0] / 'scope.json').read_text())
+        (folder / 'probe.py').write_text(render_plan(plan), encoding='utf-8')
         c = {'id': 'C1', 'title': 'combined', 'source_runs': ['src-price'],
              'rule': {'source': 'user', 'reference': 'hypothesis only'}, 'scripts': ['probe.py'],
-             'actions': [a['endpoint'] for a in actions]}
+             'actions': [a['endpoint'] for a in actions], 'execution_contract': binding_contract(plan)}
         original = {'schema_version': 1, 'candidates': [c]}
         path = run / 'flows' / run.name / 'cross_flow_candidates.json'
         path.write_text(json.dumps(original))
@@ -317,6 +379,12 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         fake = deepcopy(c); fake['source_facts'][1]['status'] = 999
         with self.assertRaisesRegex(ValueError, 'contradicts'):
             validate_candidate(fake, run, self.root)
+        fake = deepcopy(c); fake['execution_contract']['actions'][0]['method'] = 'GET'
+        with self.assertRaisesRegex(ValueError, 'method/path'):
+            validate_candidate(fake, run, self.root)
+        fake = deepcopy(c); fake['actions'].reverse()
+        with self.assertRaisesRegex(ValueError, 'ordered action'):
+            validate_candidate(fake, run, self.root)
         with patch('backend.runtime.candidate_correction.propose', return_value=corrected) as agent:
             self.assertEqual(asyncio.run(correct_candidates(config, run, run.name, {}, lambda _: None)), 1)
             self.assertEqual(agent.call_count, 1)
@@ -328,7 +396,30 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         self.assertEqual(report['validated_ai_candidates'], 1)
         self.assertEqual(len(load_receipts(run / 'reports' / run.name, self.root)), 1)
 
-    def test_candidate_correction_exhausted_leaves_unverified_not_aborted(self):
+    def test_compiled_plan_captures_repeated_requests_and_recomputes_final_state(self):
+        from backend.runtime.generated_probes import compile_plans
+        from backend.runtime.probe_executor import execute, validate_probe_output
+        run = self.recording('compiled-refund', CHAINS['refund'])
+        prepare_endpoint_catalog(run, run.name, self.root)
+        folder = run / 'mutations' / run.name; folder.mkdir(parents=True)
+        plan = {'schema_version': 1, 'title': 'Repeated refund exceeds compensation bound',
+                'origin': self.origin, 'setup': '/api/demo/reset', 'state_read': '/api/order',
+                'claim_type': 'amount_bound', 'predicate': 'business_rule_must_hold', 'invariant': INVARIANT,
+                'actions': [{'method': 'POST', 'path': p, 'body': {}} for p in
+                            [*CHAINS['refund'], '/api/order/refund/complete']]}
+        plan = evidence_plan(run, self.origin, [{'endpoint': a['path'], 'body': a['body']} for a in plan['actions']], INVARIANT)
+        script = folder / 'probe.py'; script.write_text('PROBE_PLAN = ' + repr(plan), encoding='utf-8')
+        compile_plans(run, run.name)
+        receipt = asyncio.run(execute(script, run / 'reports' / run.name, root=self.root, cwd=run))
+        self.assertEqual(validate_probe_output(receipt, enforce_contract=True)['status'], 'valid', receipt)
+        v = receipt['parsed_result']['verification']
+        self.assertEqual([c['sequence'] for c in [*v['setup'], v['before'], *v['actions'], v['after']]], list(range(1, 7)))
+        self.assertEqual(v['after']['response']['order']['totalReturned'], 200)
+        self.assertIs(v['violation']['observed'], True)
+        altered = deepcopy(receipt); altered['parsed_result']['verification']['actions'].pop()
+        self.assertEqual(validate_probe_output(altered, enforce_contract=True)['status'], 'invalid')
+
+    def test_candidate_correction_exhausted_stops_before_execution(self):
         from types import SimpleNamespace
         from backend.runtime.application_model import collect, prepare_inputs
         from backend.runtime.candidate_correction import correct_candidates, load_gate
@@ -340,9 +431,8 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         data = {'schema_version': 1, 'candidates': [{'id': 'C1', 'source_runs': ['fail-price']}]}
         (run / 'flows' / run.name / 'cross_flow_candidates.json').write_text(json.dumps(data))
         with patch('backend.runtime.candidate_correction.propose', return_value=data) as agent:
-            # Bounded retry runs (two proposals) but the run is NOT aborted: the
-            # candidate stays unverified with a precise reason; nothing executes.
-            self.assertEqual(asyncio.run(correct_candidates(SimpleNamespace(run_dir=self.root), run, run.name, {}, lambda _: None)), 0)
+            with self.assertRaisesRegex(ValueError, 'no valid AI candidates'):
+                asyncio.run(correct_candidates(SimpleNamespace(run_dir=self.root), run, run.name, {}, lambda _: None))
             self.assertEqual(agent.call_count, 2)
         gate = load_gate(run, self.root)
         self.assertEqual(gate['valid_candidate_ids'], [])
@@ -356,13 +446,14 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         run = self.recording('inventory', CHAINS['price'])
         prepare_endpoint_catalog(run, run.name, self.root)
         catalog = load_endpoint_catalog(run, self.root)
-        self.assertEqual(catalog['workflows']['refund'], CHAINS['refund'])
+        self.assertEqual(catalog['workflows'], {})
+        self.assertFalse(any(r['path'] == '/api/order/refund/request' for r in catalog['endpoints']))
         script = run / 'guess.py'
         code = "BASE = " + repr(self.origin) + "\nREFUND = f'{BASE}/api/order/refund'\nimport httpx\nhttpx.post(REFUND)\n"
         script.write_text(code, encoding='utf-8')
         self.assertIn('Endpoint selection error', preflight_endpoints(script, catalog))
         script.write_text(code.replace('/api/order/refund\'', '/api/order/refund/request\''), encoding='utf-8')
-        self.assertIsNone(preflight_endpoints(script, catalog))
+        self.assertIn('Endpoint selection error', preflight_endpoints(script, catalog))
         # Dynamic targets are independently enforced by the actual HTTP harness.
         from backend.runtime.probe_executor import execute
         script.write_text(code.replace("httpx.post(REFUND)", "httpx.post(''.join([REFUND]))"), encoding='utf-8')
@@ -371,7 +462,7 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         self.assertEqual(receipt['trace'], [])
         self.assertIn('Endpoint selection error', receipt['stderr'])
         path = run / 'endpoint_catalog.json'
-        path.write_text(path.read_text().replace('/refund/request', '/refund'), encoding='utf-8')
+        path.write_text(path.read_text().replace('/api/order/price-adjustment', '/unobserved'), encoding='utf-8')
         with self.assertRaisesRegex(ValueError, 'authentication'):
             load_endpoint_catalog(run, self.root)
 
@@ -382,12 +473,12 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         inputs = validate_recording_source(self.root, source.name)
         run = self.root / 'runs' / 'isolated-reanalysis'; run.mkdir()
         prepare_reanalysis_inputs(run, run.name, inputs, self.root)
-        application_identity.issue_identity(run, self.root, self.origin, inputs['application_identity'])
+        application_identity.issue_identity(run, self.root, self.origin, inputs.get('application_identity'))
         state = json.loads((source / 'flows' / source.name / 'state_map.json').read_text())
         state['flow_name'] = run.name
         (run / 'flows' / run.name / 'state_map.json').write_text(json.dumps(state), encoding='utf-8')
         report, receipts = self.execute_and_load(run)
         self.assertEqual(report['summary']['unique_vulnerabilities'], 1)
-        self.assertEqual(report['results'][0]['probe_origin'], 'BACKEND_COVERAGE')
+        self.assertEqual(report['results'][0]['probe_origin'], 'UNKNOWN')
         self.assertEqual(len(receipts), 1)
         self.assertEqual(original, {p: p.read_bytes() for p in original})

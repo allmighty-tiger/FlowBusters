@@ -11,14 +11,14 @@ class CrossFlowRequirementTests(unittest.TestCase):
         result_a, result_b = deepcopy(first), deepcopy(second)
         report = {'run_timestamp': '2026-09-18T00:00:00Z', 'findings': [first, second], 'results': [result_a, result_b]}
         apply_backend_requirements(report, trusted_run_id='cross-new', trusted_identity=NORTHSTAR)
-        self.assertEqual([classify(item)[0] for item in report['findings']], ['CONFIRMED', 'CONFIRMED'])
-        self.assertEqual([classify(item)[0] for item in report['results']], ['CONFIRMED', 'CONFIRMED'])
+        self.assertEqual([classify(item)[0] for item in report['findings']], ['INSUFFICIENT_EVIDENCE'] * 2)
+        self.assertEqual([classify(item)[0] for item in report['results']], ['INSUFFICIENT_EVIDENCE'] * 2)
 
     def test_mass_assignment_amount_bound_does_not_prove_input_control(self):
         record = finding(False); record['mutation_type'] = 'MASS_ASSIGNMENT'
         record['verification']['actions'][0]['request']['body'] = {'requestedAmount': 999999, 'status': 'completed'}
         status, reason = classify(record)
-        self.assertEqual(status, 'NEEDS_REVIEW'); self.assertIn('not proof', reason)
+        self.assertEqual(status, 'NEEDS_REVIEW'); self.assertIn('did not compare the submitted fields', reason)
 
     def test_negative_misleading_title_is_replaced_but_draft_is_preserved(self):
         record = finding(False)

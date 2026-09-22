@@ -1,5 +1,13 @@
 # Observed UI rule provenance contract
 
+For cross-flow state maps, every transition `ui_context` must include
+`source_run` equal to the `_source_run` on its referenced combined-demo UI states.
+`before_step` and `after_step` remain source-local: never use the combined run ID
+or combine states from different sources. Keep inferred multi-source sequences
+in the application model/candidates, not as observed state-map transitions.
+Bounded correction uses structured JSON output; the backend validates the full
+proposal and preserves rule/fact claims before permitting any probe execution.
+
 New `state_map.json` files use `schema_version: 2` and
 `observed_ui_rules_schema_version: 1`. The canonical JSON Schema is
 `backend/runtime/schemas/observed_ui_rules.v1.json`; the backend also resolves
@@ -12,9 +20,9 @@ Before saving, re-read the generated JSON and check exact field names:
   references that resolve. API facts may supplement such a rule; an API-only
   rule does not belong in `observed_ui_rules`. UI evidence in a different rule
   does not satisfy this requirement. An `inference` object is never a raw UI fact.
-- For example, HAR `totalReturned: 0 -> 100` and
+- For example, HAR `measuredValue: 0 -> 100` and
   `cancellation.status: none -> completed` show one reimbursement. They do NOT
-  establish a universal rule `totalReturned <= originalAmount`. Do not emit
+  establish a universal rule `measuredValue <= comparisonValue`. Do not emit
   that API-only cap hypothesis as a UIR. Never append an unrelated button or
   amount label merely to satisfy the raw-UI requirement; seeing a value or an
   available action does not prove a payout limit.
@@ -31,8 +39,8 @@ Before saving, re-read the generated JSON and check exact field names:
 - `transitions` is not an inventory of every HAR request. Initial GET/HEAD
   reads describe baseline state; keep them in the raw HAR and use their exact
   references as evidence, but do not emit a baseline read as an observed
-  transition with equal UI steps. For example, GET /api/order at step 1 is
-  baseline evidence; a recorded price-adjustment POST with snapshots 1 and 3
+  transition with equal UI steps. For example, GET /api/records at step 1 is
+  baseline evidence; a recorded record-update POST with snapshots 1 and 3
   is a transition with before_step 1 and after_step 3. Require
   `0 < before_step < after_step` for every observed transition. Never invent
   a later snapshot or relabel an observed baseline read as `inferred` to pass
@@ -128,7 +136,7 @@ Each rule separates raw facts from inference:
       "id": "UIR-001-F1",
       "type": "ui_element_transition",
       "provenance_type": "observed_ui_affordance",
-      "source_run": "price-adjustment",
+      "source_run": "record-update",
       "artifact": "demo.json",
       "before_step": 2,
       "after_step": 4,
@@ -143,7 +151,7 @@ Each rule separates raw facts from inference:
       "id": "UIR-001-F2",
       "type": "api_field_transition",
       "provenance_type": "api_state_fact",
-      "source_run": "price-adjustment",
+      "source_run": "record-update",
       "artifact": "recording.har",
       "field_path": ["order", "availableActions", "cancelOrder"],
       "before": true,
@@ -259,7 +267,7 @@ Mutation and cross-flow verification cite a rule structurally:
   "source": "observed_ui",
   "provenance": {
     "schema_version": 1,
-    "source_run": "price-adjustment",
+    "source_run": "record-update",
     "artifact": "state_map.json",
     "rule_id": "UIR-001",
     "fact_ids": ["UIR-001-F1"]
@@ -268,7 +276,7 @@ Mutation and cross-flow verification cite a rule structurally:
 ```
 
 At least one cited fact must be raw UI evidence. A prose path such as
-`price-adjustment/state_map.json observed_ui_rules[2]`, an API fact alone, or an
+`record-update/state_map.json observed_ui_rules[2]`, an API fact alone, or an
 agent inference cannot confirm a positive finding.
 
 Cross-flow candidates use the same `provenance` object for `source: api_state`
@@ -277,3 +285,17 @@ dereferenceable. An `api_state` reference may select only API facts; an
 `agent_inference` reference may select only facts named by that rule's
 `inference.derived_from`. These types can support prioritization and analysis
 but cannot promote a positive execution to CONFIRMED.
+# Pre-publication pointer check
+
+Resolve every explicit UI text pointer in `demo.json` before publishing the map.
+Compare exact text after whitespace normalization only (no fuzzy, substring, or
+case-insensitive matching). Search only the declared state's `elements`; use a
+corrected index only when exactly one element matches. For example, a fact claiming
+`generic : Eligible` must not point to `generic : "?"`. A fact claiming
+`paragraph : Price protection is not available while another order request is active.`
+must not point to `heading "Price protection" [level=2]`. Use the unique matching
+element index, not an estimated index. If none exists, omit that unsupported
+observation during initial generation and explain the evidence gap; never replace
+its text with whatever the wrong pointer happens to contain. Ambiguous matches
+cannot be repaired automatically. Backend correction preserves claims and stops
+after bounded attempts if they cannot be validated.

@@ -13,6 +13,28 @@ from backend.runtime.ui_provenance import UIProvenanceError, validate_state_map
 from backend.tests.recording_fixture import write_recording
 
 
+class CorrectionOutputTests(unittest.TestCase):
+    def test_structured_cli_output_is_used_even_when_result_is_empty(self):
+        from backend.runtime.state_map_correction import parse_proposal_output
+        proposal = {'state_map': {'transitions': []}, 'correction_notes': 'Exact source-local context'}
+        self.assertEqual(parse_proposal_output(json.dumps({
+            'result': '', 'structured_output': proposal}).encode()), proposal)
+
+    def test_single_json_fence_is_parsed_but_prose_is_not_guessed(self):
+        from backend.runtime.state_map_correction import parse_proposal_output
+        proposal = {'state_map': {}, 'correction_notes': 'Locator corrected'}
+        result = '```json\n' + json.dumps(proposal) + '\n```'
+        self.assertEqual(parse_proposal_output(json.dumps({'result': result}).encode()), proposal)
+        with self.assertRaisesRegex(UIProvenanceError, 'complete JSON'):
+            parse_proposal_output(json.dumps({'result': 'Here is a proposal: ' + result}).encode())
+
+    def test_empty_or_error_output_cannot_pass_the_gate(self):
+        from backend.runtime.state_map_correction import parse_proposal_output
+        for envelope in ({'result': ''}, {'is_error': True, 'structured_output': {'state_map': {}}}):
+            with self.assertRaises(UIProvenanceError):
+                parse_proposal_output(json.dumps(envelope).encode())
+
+
 TEXT = 'paragraph : This order has no actions requiring your attention.'
 # Default (model-path) saved fixture: the pointer is in the WRONG step-6 state
 # (state index 5, which only holds filler), so the uniquely correct element

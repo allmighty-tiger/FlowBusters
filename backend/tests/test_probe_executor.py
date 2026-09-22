@@ -165,11 +165,27 @@ asyncio.run(probe())
         self.assertEqual(receipt['trace'][-1]['response']['totalReturned'], 130)
         report = reconcile({'findings': [self.finding(receipt)], 'results': [{'status_code': 999}]}, self.reports, self.root)
         result = normalize_report(report)
-        self.assertEqual(result['findings'][0]['verification_status'], 'NEEDS_REVIEW')
-        self.assertIn('not backend-authenticated rule authority',
+        self.assertEqual(result['findings'][0]['verification_status'], 'INSUFFICIENT_EVIDENCE')
+        self.assertIn('validated AI-inferred invariant',
                       result['findings'][0]['verification_reason'])
         self.assertEqual(result['results'][0]['status_code'], 200)
         self.assertEqual(len(result['findings'][0]['evidence']['requests']), 5)
+
+    def test_pending_null_draft_uses_receipt_without_changing_raw_report(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        executed = deepcopy(finding['verification'])
+        finding['verification'] = {key: deepcopy(executed[key]) for key in ('predicate', 'invariant')}
+        finding['verification']['violation'] = {'observed': None, 'description': 'Pending execution'}
+        path = self.reports / 'findings.json'
+        path.write_text(json.dumps({'findings': [finding], 'results': []}))
+        original = path.read_bytes()
+        report = load_report(path)
+        row = report['findings'][0]
+        self.assertEqual(row['verification_status'], 'INSUFFICIENT_EVIDENCE')
+        self.assertIsNone(row['agent_draft_verification']['violation']['observed'])
+        self.assertTrue(row['verification']['violation']['observed'])
+        self.assertEqual(path.read_bytes(), original)
 
     def test_harness_sequence_accounts_for_reset_before_state_read(self):
         script = self.sequenced_httpx_script()
@@ -240,7 +256,7 @@ asyncio.run(probe())
             'actions'] = []
         validation = validate_probe_output(omitted, enforce_contract=True)
         self.assertEqual(validation['category'], 'evidence_contract_error')
-        self.assertIn('signed transport sequences [7] are not represented', validation['error'])
+        self.assertIn('authenticated HTTP trace sequences [7] are not represented', validation['error'])
 
         misplaced = deepcopy(receipt)
         moved = misplaced['parsed_result']['verification'].pop('supplementary_scenarios')
@@ -322,7 +338,7 @@ async def probe():
         receipt['parsed_result']['verification']['before']['request']['url'] += '?fabricated=1'
         validation = validate_probe_output(receipt, enforce_contract=True)
         self.assertEqual(validation['category'], 'evidence_contract_error')
-        self.assertIn('does not match its signed transport event', validation['error'])
+        self.assertIn('does not match its authenticated HTTP trace event', validation['error'])
 
     def test_new_contract_rejects_out_of_order_capture_sequences(self):
         receipt = self.run_script()
@@ -391,7 +407,7 @@ async def probe():
         self.assertEqual(report['summary']['finding_count'], 1)
         self.assertEqual(report['summary']['execution_attempts'], 2)
         self.assertEqual(report['summary']['completed_executions'], 2)
-        self.assertEqual(report['summary']['controls_held'], 2)
+        self.assertEqual(report['summary']['controls_held'], 0)
         self.assertEqual(report['summary']['deduplicated_execution_results'], 1)
 
     def test_missing_complete_cannot_be_invented_by_report(self):
@@ -418,7 +434,7 @@ async def probe():
         finding['_rule_provenance_valid'] = True
         result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
         self.assertIsNone(result['findings'][0]['_provenance_error'])
-        self.assertEqual(result['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertEqual(result['findings'][0]['verification_status'], 'INSUFFICIENT_EVIDENCE')
         self.assertFalse(result['findings'][0]['_rule_provenance_valid'])
 
     def test_negative_signed_execution_ignores_missing_rule_provenance(self):
@@ -446,11 +462,34 @@ async def probe():
         finding['execution'] = deepcopy(draft_verification['execution'])
         result = normalize_report(reconcile({'findings': [finding]}, self.reports, self.root))
         normalized = result['findings'][0]
-        self.assertEqual(normalized['verification_status'], 'NEEDS_REVIEW')
+        self.assertEqual(normalized['verification_status'], 'INSUFFICIENT_EVIDENCE')
         self.assertEqual(normalized['agent_draft_verification'], draft_verification)
         self.assertEqual(normalized['agent_draft_execution']['status'], 'NOT_EXECUTED')
         self.assertIn('before', normalized['verification'])
         self.assertNotIn('execution', normalized)
+
+    def test_authenticated_primary_omitted_from_saved_report_is_restored_in_memory(self):
+        receipt = self.run_script()
+        result = normalize_report(reconcile({'findings': []}, self.reports, self.root))
+        self.assertEqual(len(result['findings']), 1)
+        self.assertEqual(result['findings'][0]['execution_id'], receipt['execution_id'])
+        self.assertEqual(result['results'][0]['finding_id'], result['findings'][0]['id'])
+        self.assertEqual(result['summary']['unlinked_execution_results'], 0)
+
+    def test_capture_free_compatible_plan_is_replaced_but_different_invariant_is_not(self):
+        receipt = self.run_script()
+        finding = self.finding(receipt)
+        draft = {k: deepcopy(finding['verification'][k]) for k in ('predicate', 'invariant')}
+        finding['verification'] = deepcopy(draft)
+        result = reconcile({'findings': [finding]}, self.reports, self.root)
+        self.assertEqual(result['findings'][0]['agent_draft_verification'], draft)
+        self.assertIn('after', result['findings'][0]['verification'])
+        finding = self.finding(receipt)
+        draft['invariant']['limit'] = ['invented']
+        finding['verification'] = draft
+        result = reconcile({'findings': [finding]}, self.reports, self.root)
+        self.assertEqual(result['findings'][0]['_provenance_error'],
+                         'Finding verification differs from raw script output')
 
     def test_post_execution_contradiction_is_not_replaced_by_receipt(self):
         receipt = self.run_script()
@@ -461,6 +500,8 @@ async def probe():
         self.assertEqual(normalized['verification_status'], 'NEEDS_REVIEW')
         self.assertEqual(normalized['_provenance_error'],
                          'Finding verification differs from raw script output')
+        self.assertEqual(result['results'][0]['outcome'], 'NEEDS_REVIEW')
+        self.assertIn('different executed evidence', result['results'][0]['verification_reason'])
 
     def test_declared_supplement_without_invariant_is_partial_coverage(self):
         script = self.script(False)
@@ -611,7 +652,7 @@ async def probe():
         self.assertEqual(finding['analysis_source'], 'CROSS_FLOW')
         self.assertTrue(finding['execution_id'])
         report = normalize_report(reconcile(saved, self.reports, self.root))
-        self.assertEqual(report['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertEqual(report['findings'][0]['verification_status'], 'INSUFFICIENT_EVIDENCE')
 
     def test_legacy_cross_flow_report_links_only_unique_signed_receipt(self):
         receipt = self.run_script()
@@ -621,7 +662,7 @@ async def probe():
         report = normalize_report(reconcile({'findings': [legacy]}, self.reports, self.root))
         self.assertEqual(report['findings'][0]['execution_id'], receipt['execution_id'])
         self.assertEqual(report['findings'][0]['analysis_source'], 'CROSS_FLOW')
-        self.assertEqual(report['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertEqual(report['findings'][0]['verification_status'], 'INSUFFICIENT_EVIDENCE')
 
     def test_tampered_receipt_and_legacy_report_cannot_confirm(self):
         receipt = self.run_script()

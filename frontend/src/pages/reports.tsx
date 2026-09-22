@@ -2,8 +2,10 @@ import '../components/report.css';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiGet } from '../services/api';
+import { ReportLoadError } from '../components/ReportView';
 
 interface ReportSummary {
+  load_error?: string;
   flow_name: string;
   target_url: string;
   run_timestamp: string;
@@ -75,11 +77,13 @@ export default function ReportsIndexPage() {
         {reports.map(r => <article className="report-index-card" key={r.flow_name}>
           <div><p className="report-eyebrow">ASSESSMENT LOG</p><h2>{r.flow_name}</h2><p className="report-muted">{r.target_url}</p>
           <p className="report-muted">{r.run_timestamp ? `Run: ${r.run_timestamp}` : `File updated: ${r.modified}`}</p></div>
-          <div className="report-index-result"><strong>{r.finding_count ?? r.bugs_found} normalized finding{(r.finding_count ?? r.bugs_found) === 1 ? '' : 's'}</strong>
+          {r.load_error ? <div className="report-index-result"><ReportLoadError message={r.load_error} />
+            <button className="report-button" onClick={() => navigate(`/${encodeURIComponent(r.flow_name)}/report`)}>Validation details</button>
+          </div> : <div className="report-index-result"><strong>{r.finding_count ?? r.bugs_found} normalized finding{(r.finding_count ?? r.bugs_found) === 1 ? '' : 's'}</strong>
           {(r.critical_findings ?? 0) > 0 && <span className="report-severity severity-critical">{r.critical_findings} critical</span>}
           <p>{r.unique_vulnerabilities ?? r.confirmed ?? 0} unique vulnerabilities · {r.confirmed ?? 0} confirmed findings · {r.needs_review ?? r.bugs_found} findings need review · {r.coverage_gaps ?? 0} scenario coverage gaps{(r.not_executed ?? 0) > 0 ? ` · ${r.not_executed} not executed` : ''}</p><p>{r.execution_attempts ?? 0} execution attempts / {r.total_scripts} planned · {r.completed_executions ?? 0} completed · {r.pending_execution ?? 0} pending{(r.deduplicated_execution_results ?? 0) > 0 ? ` · ${r.deduplicated_execution_results} deduplicated checks` : ''}</p>
           <p className={(r.execution_errors ?? r.errors) > 0 ? 'report-notice' : 'report-muted'}>{(r.execution_attempts ?? 0) === 0 && (r.completed_executions ?? 0) === 0 ? (r.total_scripts === 0 ? '0 probes generated / no security checks executed' : 'No security checks executed') : (r.execution_errors ?? r.errors) > 0 ? `${r.process_errors ?? 0} process errors · ${r.evidence_contract_errors ?? 0} evidence-contract errors · ${r.trace_mismatches ?? 0} trace mismatches · incomplete coverage` : 'No process, evidence-contract, or trace errors reported'}</p>
-          <button className="report-button" onClick={() => navigate(`/${encodeURIComponent(r.flow_name)}/report`)}>Open report →</button></div>
+          <button className="report-button" onClick={() => navigate(`/${encodeURIComponent(r.flow_name)}/report`)}>Open report →</button></div>}
         </article>)}
       </div>}
     </div>

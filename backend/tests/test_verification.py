@@ -16,13 +16,9 @@ def example(status=200, removed=True):
 
 class VerificationTests(unittest.TestCase):
     def authorize(self, record):
-        record['_backend_requirement_valid'] = True
-        record['backend_requirement'] = {
-            'id': 'TEST-RULE', 'product': 'Test application',
-            'asserted_on': '2026-09-17', 'requirements_version': 'test-v1',
-            'retrospective': False, 'assertion_context': 'Controlled test fixture.',
-            'application_identity': {'application_id': 'test-app', 'identity_version': '1'},
-        }
+        # Unit-test the classification stage after backend provenance validation.
+        # Integration tests cover obtaining this flag from raw artifacts/receipts.
+        record['_inferred_rule_valid'] = True
         return record
 
     def business_rule(self, observed=True):
@@ -86,9 +82,8 @@ class VerificationTests(unittest.TestCase):
         negative_status, negative_reason = classify(self.business_rule(False))
         self.assertEqual(positive_status, 'CONFIRMED')
         self.assertEqual(negative_status, 'NOT_REPRODUCED')
-        self.assertIn('exact executable invariant', positive_reason)
-        self.assertEqual(negative_reason,
-                         'The captured final state did not violate the backend-evaluated invariant.')
+        self.assertIn('AI-inferred invariant', positive_reason)
+        self.assertIn('does not prove', negative_reason)
 
     def test_agent_description_cannot_add_race_claim_to_normalized_verdict(self):
         record = self.authorize(self.business_rule())
@@ -110,12 +105,12 @@ class VerificationTests(unittest.TestCase):
         record['verification']['rule'] = {'source': 'agent', 'reference': ''}
         self.assertEqual(classify(record)[0], 'NOT_REPRODUCED')
 
-    def test_positive_business_invariant_still_requires_rule_reference(self):
+    def test_positive_business_invariant_requires_validated_inference(self):
         record = self.business_rule(True)
         record['verification']['rule'] = {'source': 'agent', 'reference': ''}
         status, reason = classify(record)
-        self.assertEqual(status, 'NEEDS_REVIEW')
-        self.assertIn('user, specification, or validated observed-UI', reason)
+        self.assertEqual(status, 'INSUFFICIENT_EVIDENCE')
+        self.assertIn('validated AI-inferred invariant', reason)
 
     def test_positive_business_invariant_rejects_free_form_observed_ui(self):
         record = self.business_rule(True)
@@ -124,17 +119,16 @@ class VerificationTests(unittest.TestCase):
             'reference': 'price-adjustment/state_map.json observed_ui_rules[2]',
         }
         status, reason = classify(record)
-        self.assertEqual(status, 'NEEDS_REVIEW')
-        self.assertIn('did not validate', reason)
+        self.assertEqual(status, 'INSUFFICIENT_EVIDENCE')
+        self.assertIn('raw supporting observations', reason)
 
     def test_validated_observed_ui_facts_do_not_bind_an_arithmetic_rule(self):
         record = self.business_rule(True)
         record['verification']['rule'] = {'source': 'observed_ui', 'provenance': {}}
         record['_rule_provenance_valid'] = True
         status, reason = classify(record)
-        self.assertEqual(status, 'NEEDS_REVIEW')
-        self.assertIn('does not bind those facts to this arithmetic invariant', reason)
-        self.assertIn('UI action availability is not evidence', reason)
+        self.assertEqual(status, 'INSUFFICIENT_EVIDENCE')
+        self.assertIn('explicit required actions and terminal state', reason)
 
     def test_price_conservation_invariant_does_not_decide_client_input_trust(self):
         record = self.business_rule(False)
@@ -168,6 +162,30 @@ class VerificationTests(unittest.TestCase):
         self.assertIn('action response recorded adjustmentAmount=30', reason)
         self.assertIn('final state recorded adjustmentAmount=30', reason)
         self.assertIn('cannot determine whether the server trusted', reason)
+
+    def test_linked_input_trust_review_cannot_be_displayed_as_held_execution(self):
+        finding = self.business_rule(False)
+        finding['verification']['invariant'] = {'operator': 'sum_lte',
+            'terms': [['order', 'totalReturned']], 'limit': ['order', 'originalAmount']}
+        finding['verification']['after']['response'] = {'order': {'totalReturned': 30, 'originalAmount': 100}}
+        finding.update(id='F-1', title='Client-supplied amount tamper', mutation_type='PRICING_TAMPER')
+        result = deepcopy(finding)
+        result.update(title='Amount bound', mutation_type='FINANCIAL_BOUND', finding_id='F-1', outcome='NOT_REPRODUCED')
+        report = normalize_report({'findings': [finding], 'results': [result]})
+        self.assertEqual(report['findings'][0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertEqual(report['results'][0]['outcome'], 'NEEDS_REVIEW')
+        self.assertEqual(report['summary']['controls_held'], 0)
+
+    def test_confirmed_title_uses_evaluated_values_not_speculation(self):
+        from backend.runtime.verification import _normalize_presentation
+        finding = {'title': 'May double pay in a race', 'verification_status': 'CONFIRMED',
+                   'verification': {'after': {'response': {'order': {'totalReturned': 130, 'originalAmount': 100}}},
+                       'resolved_invariant': {'operator': 'sum_lte', 'terms': [['order', 'totalReturned']],
+                                              'limit': ['order', 'originalAmount']}}}
+        _normalize_presentation(finding)
+        self.assertIn('130 exceeds allowed maximum 100', finding['title'])
+        self.assertNotIn('race', finding['title'])
+        self.assertEqual(finding['original_hypothesis'], 'May double pay in a race')
 
     def test_incomplete_negative_evidence_does_not_bypass_validation(self):
         record = self.business_rule(False)
@@ -349,11 +367,11 @@ class VerificationTests(unittest.TestCase):
                                                    "missing_precondition": "isolated resource"}}}))
             (base / 'findings.json').write_text(json.dumps(report))
             out = load_report(base / 'findings.json')
-        probe = [f for f in out['findings'] if f.get('source') == 'STATE_LOCK_PROBE']
+        probe = [f for f in out['unexecuted_hypotheses'] if f.get('source') == 'STATE_LOCK_PROBE']
         self.assertTrue(probe, 'probe finding was lost by the evidence join')
         # Raw state evidence remains intact, but an unsigned legacy capture
         # cannot establish who executed it under the provenance contract.
-        self.assertEqual(probe[0]['verification_status'], 'NEEDS_REVIEW')
+        self.assertEqual(out['findings'], [])
         self.assertNotIn('execution', probe[0], 'crew NOT_EXECUTED stub must not overwrite probe')
         self.assertEqual(probe[0]['verification']['after']['item_ids'], [2])
 
@@ -378,8 +396,13 @@ class VerificationTests(unittest.TestCase):
             path.write_text(json.dumps(report), encoding='utf-8')
             with patch.dict('os.environ', {'SETUP_PATHS': ''}):
                 out = load_report(path)
-        self.assertEqual([finding['id'] for finding in out['findings']], ['F-REAL'])
-        self.assertEqual([item['id'] for item in out['excluded_setup_executions']],
-                         ['F-SETUP'])
+        self.assertEqual(out['findings'], [])
+        self.assertEqual({item['id'] for item in out['unexecuted_hypotheses']},
+                         {'F-REAL', 'F-SETUP'})
+        # Unexecuted drafts are not executions, including setup-path drafts.
+        self.assertEqual(out['excluded_setup_executions'], [])
+        from backend.runtime.verification import normalize_report
+        classified = normalize_report(dict(report, _setup_paths=['/api/demo/reset']))
+        self.assertEqual([item['id'] for item in classified['excluded_setup_executions']], ['F-SETUP'])
 
 if __name__ == '__main__': unittest.main()

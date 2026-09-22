@@ -287,6 +287,10 @@ def prepare_reanalysis_inputs(destination, destination_run, inputs, root):
     for name in _COPIED_ARTIFACTS:
         shutil.copy2(_source_path(inputs, name), output / name)
     shutil.copy2(_source_path(inputs, 'scope.json'), destination / 'scope.json')
+    if inputs.get('authorized_setup_paths'):
+        from backend.runtime.endpoint_catalog import issue_setup_authorization
+        issue_setup_authorization(destination, root, inputs['target_origin'],
+                                  inputs['authorized_setup_paths'])
     shutil.copy2(_source_path(inputs, 'recording_validated.marker'),
                  destination / 'recording_validated.marker')
 
@@ -343,6 +347,8 @@ def _parser():
     parser.add_argument('--source', required=True, help='Validated ordinary source run ID')
     parser.add_argument('--destination', required=True, help='New isolated destination run ID')
     parser.add_argument('--artifacts-dir', default='.', help='Artifact root containing runs/ (default: .)')
+    parser.add_argument('--setup-path', action='append', default=[],
+                        help='Explicitly authorize a POST fixture reset for this new run only')
     return parser
 
 
@@ -361,6 +367,7 @@ async def _run(args):
     root = Path(args.artifacts_dir).resolve()
     inputs = validate_recording_source(root, args.source)
     validate_destination(root, args.source, args.destination)
+    inputs['authorized_setup_paths'] = args.setup_path
     from backend.runtime.orchestrator import run_flowbusters
 
     def progress(event):
@@ -379,7 +386,10 @@ async def _run(args):
     if result.get('error'):
         print(result['error'], file=sys.stderr)
         return 1
-    print(f'Reanalysis complete: runs/{args.destination}', flush=True)
+    status = result.get('assessment_status', {}).get('status', 'FAILED')
+    print(f'Reanalysis {status}: runs/{args.destination}', flush=True)
+    if status == 'FAILED':
+        return 1
     return 0
 
 

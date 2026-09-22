@@ -56,13 +56,14 @@ class RunModeProgressTests(unittest.IsolatedAsyncioTestCase):
                      patch('backend.runtime.crew_runner.asyncio.create_subprocess_exec', new_callable=AsyncMock, return_value=proc), \
                      patch.object(ArtifactWatcher, 'check', side_effect=defect) as gate, \
                      patch('backend.runtime.crew_runner.execute_validated_probes', new_callable=AsyncMock) as execute, \
-                     patch('backend.runtime.crew_runner.load_report') as report:
+                     patch('backend.runtime.crew_runner.load_report', return_value={'summary': {}}) as report:
                     result = await asyncio.wait_for(run_crew(config, events.append), timeout=2)
                 proc.terminate.assert_called_once()
                 self.assertEqual(proc.wait.await_count, 2)
                 gate.assert_called_once()
                 execute.assert_not_awaited()
-                report.assert_not_called()
+                report.assert_called_once_with(draft)  # Read-only failed-queue accounting.
+                self.assertEqual(result['assessment_status']['status'], 'FAILED')
                 self.assertEqual(draft.read_bytes(), original_draft)
                 self.assertIn(str(defect), result['error'])
                 failures = [event for event in events if event.phase == Phase.FAILED]
@@ -193,7 +194,7 @@ class ProbeProgressTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('.py', events[0]['message'])
         self.assertIn('001_cancel_then_refund.py', events[0]['technical_detail'])
 
-    async def test_evidence_contract_failure_stops_before_remaining_probe(self):
+    async def test_evidence_contract_failure_does_not_stop_remaining_probe(self):
         second = self.run / 'mutations' / 'cross-flow-test' / '002_second.py'
         second.write_text('print("unused")', encoding='utf-8')
         invalid = {'version': 1, 'status': 'invalid',
@@ -206,11 +207,11 @@ class ProbeProgressTests(unittest.IsolatedAsyncioTestCase):
                 'backend.runtime.probe_executor.validate_probe_output', return_value=invalid):
             await execute_run(self.run, 'cross-flow-test', self.root,
                               lambda message: None, execution_progress=events.append)
-        self.assertEqual(mocked.await_count, 1)
+        self.assertEqual(mocked.await_count, 2)
         self.assertIn('evidence validation failed', events[1]['message'])
         self.assertEqual(events[-1]['message'],
-            'Execution stopped: 1/2 probes attempted; 1 authenticated terminal receipt; '
-            '0 process errors; 1 evidence-contract errors; 0 trace mismatches; 1 pending')
+            'Execution complete: 2/2 probes attempted; 2 authenticated terminal receipts; '
+            '0 process errors; 2 evidence-contract errors; 0 trace mismatches; 0 pending')
 
     def test_artifact_gate_rejects_literal_missing_invariant(self):
         broken = "verification = {'predicate': 'business_rule_must_hold'}\n"
@@ -219,8 +220,10 @@ class ProbeProgressTests(unittest.IsolatedAsyncioTestCase):
         for index in (2, 3):
             (self.run / 'mutations' / 'cross-flow-test' / f'00{index}_broken.py').write_text(
                 broken, encoding='utf-8')
-        with self.assertRaisesRegex(ProbeContractError, 'requires a supported executable invariant'):
-            ArtifactWatcher(self.run, 'cross-flow-test').check()
+        watcher = ArtifactWatcher(self.run, 'cross-flow-test')
+        watcher.check()
+        self.assertEqual(len(watcher.probe_errors), 3)
+        self.assertTrue(all('requires a supported executable invariant' in e for e in watcher.probe_errors.values()))
 
     def test_artifact_gate_rejects_literal_null_violation_before_execution(self):
         broken = (
@@ -234,10 +237,10 @@ class ProbeProgressTests(unittest.IsolatedAsyncioTestCase):
         for index in (2, 3):
             (self.run / 'mutations' / 'cross-flow-test' / f'00{index}_broken.py').write_text(
                 broken, encoding='utf-8')
-        with self.assertRaisesRegex(
-                ProbeContractError,
-                'literal violation.observed must be boolean, not NoneType'):
-            ArtifactWatcher(self.run, 'cross-flow-test').check()
+        watcher = ArtifactWatcher(self.run, 'cross-flow-test')
+        watcher.check()
+        self.assertEqual(len(watcher.probe_errors), 3)
+        self.assertTrue(all('literal violation.observed must be boolean, not NoneType' in e for e in watcher.probe_errors.values()))
 
 
 if __name__ == '__main__':

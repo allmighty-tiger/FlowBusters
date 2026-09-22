@@ -1,157 +1,125 @@
 # FlowBusters technical architecture
 
-## Bounded cross-flow candidate correction
+## New-run inference and isolation gate (2026-09-21)
 
-`candidate_correction.correct_candidates` checks hypotheses before probes. Each
-candidate must resolve exact state-changing HAR entries from at least two signed
-source snapshots, with matching method, URL and response status and an action in
-the candidate chain. Source IDs or shared GETs alone are insufficient. Existing
-rule-provenance validation remains mandatory. A fact authenticates an observation,
-not a normative business rule.
+`ui_provenance._validate_ui_text` resolves explicit text pointers and compares
+whitespace-normalized text, without fuzzy matching. `relocate_ui_pointers` can
+repair only a unique exact match in the declared UI state. `correct_state_map`
+preserves the rejected map, validates the entire proposal and publishes only before
+execution. Ambiguous or unsupported facts cannot pass by guessing a pointer.
 
-`application_model.prepare_inputs` enumerates `source_action_facts.json` from
-the selected HARs to avoid guessed source-local indexes. This convenience index
-is not independent authority: each cited entry is resolved again against the
-authenticated snapshots. Correction uses CLI JSON Schema structured output;
-each of the two proposals has a maximum 300-second process deadline (also capped
-by phase_timeout). A unique legacy candidate name may be used as its diagnostic
-ID; this does not upgrade source provenance.
+`generated_probes.validate_plan` requires supported security plans to declare
+`rule_origin=AI_INFERRED`, `inferred_invariant` (statement, exact executable predicate,
+required actions, terminal state), `supporting_observations`, and `state_read`.
+`validate_plan_set` validates every plan before the first HTTP request, including
+raw observation pointers via `inferred_invariants.validate_support`. Unsupported
+predicates are explicitly reviewable coverage, not a route to confirmation.
+`generated_probes.validate_recorded_operand_paths` also rejects numeric operand
+paths absent from the recorded HAR schema before execution; it never guesses a
+replacement path. Actual AFTER operands are still checked at runtime.
+`probe_plan_correction.correct_probe_setups` permits one pre-execution proposal for
+setup/inference metadata and recorded numeric-path nesting. Actions, claim and
+operand names are preserved; the backend revalidates before publication.
 
-**Deterministic candidate → script binding.** Before any retry, the backend
-recovers the exact endpoint paths each AI probe sends — `_script_endpoint_paths`
-reads both the leading `CONFIG = {...}` literal (the `render_probe` / coverage
-template puts its actions there, so the URLs are not otherwise resolvable) and
-any direct resolvable `httpx`/`requests` calls — and binds each candidate to the
-unique probe whose sent endpoints cover the candidate's cross-source action chain
-(the declared action paths, named `action_endpoints`, and the exact endpoints its
-per-source facts demonstrate). Binding is by verified action chain, never by a
-random basename or file order. A unique match is authoritative; a zero- or
-multi-way match is left **unverified with the precise reason** (ambiguous or no
-covering probe) instead of guessed. When a correction agent re-proposes, its
-script names are discarded and the deterministic binding is restored, so a
-renamed-script draft can never silently drop a candidate. `validate_candidate`
-also enforces that every declared action and every cited fact path is actually
-sent by a bound probe.
+Each plan requires authorized setup, then before GET, actions, and final GET.
+`reanalyze --setup-path` uses `endpoint_catalog.issue_setup_authorization` to record
+operator fixture permission separately from copied recording evidence. This is not
+a product rule. The harness computes the violation boolean from that plan's AFTER.
+`probe_executor.reconcile` validates observations and terminal completion again;
+`verification._classify_business_rule` confirms only a validated violation of the
+declared AI inference. This is not business-owner approval of its business meaning.
 
-At most two read-only Analyst proposals receive structured per-candidate errors
-and copied evidence. IDs, claims and action chains cannot change. The backend
-revalidates proposals, preserves correction audit records (including
-`candidate_corrections/binding.json`) and signs the execution allowlist.
-Invalid, ambiguous, or uncorrectable hypotheses remain unverified candidate
-coverage (recorded in `candidate_gate.json.unverified_coverage` with their reason),
-not findings — the run is not aborted, and no fabricated second source or
-weakened signature is ever used to force a pass. Backend coverage plans remain
-independent from AI candidates and have separately labelled receipts. This is
-evidence-link validation, not proof of all inferred causality.
+## Pending drafts and review explanations (2026-09-21)
 
-Sources: [`candidate_correction.py`](../backend/runtime/candidate_correction.py)
-(`_script_endpoint_paths`, `_candidate_action_endpoints`, `_bind_candidate_scripts`,
-`validate_candidate`, `propose`, `correct_candidates`, `load_gate`),
-[`crew_runner.py`](../backend/runtime/crew_runner.py) (`run_crew`),
-[`probe_executor.py`](../backend/runtime/probe_executor.py) (`execute_run`, `reconcile`).
+`probe_executor._is_stale_unexecuted_draft` accepts a capture-free draft with
+`violation.observed: null` as pending when its predicate/invariant agree with the
+receipt. `reconcile` retains `agent_draft_verification` and uses authenticated
+execution verification in memory. Boolean claims, declared captures, and different
+predicates remain subject to strict comparison; raw reports are not rewritten.
+An explicitly unexecuted hypothesis with no planned script is `NOT_EXECUTED`.
+`verification._claim_coverage_error` keeps duplicate-effect claims reviewable when
+only an amount limit was tested. ReportView explains review limitations separately
+from execution failures and collapses unverified draft remediation.
 
-## Semantic coverage gate
+## Probe setup preflight (2026-09-21)
 
-Probe plan preflight resolves unambiguous helper-return dictionary shapes,
-including awaited calls and dictionary unpacking, without executing agent code.
-The complete plan is checked before the first probe. Runtime validation still
-checks actual emitted invariants, numeric values, signatures and traces; static
-shape acceptance is not execution proof. Unresolvable or incomplete generation
-fails explicitly; this path has no automatic probe rewrite/retry.
-Source: [`probe_executor.py`](../backend/runtime/probe_executor.py),
-`preflight_script_contract`, `execute_run`, `validate_probe_output`.
+The single-flow reanalysis CLI accepts repeatable `--setup-path /fixture/reset`
+as explicit operator permission for the new destination only. It writes a
+run-scoped HMAC `setup_authorization.json` separately from copied recording
+evidence. `issue_setup_authorization` / `load_setup_authorization` in
+`backend/runtime/endpoint_catalog.py` authenticate this permission when building
+the endpoint catalog. Original and copied scope files remain byte-identical;
+transport domain/path restrictions still apply.
 
-Before negative business-rule classification, the normalizer checks claim coverage.
-A non-violating amount bound with an explicit pending child workflow in the final
-response remains NEEDS_REVIEW: settlement and a subsequent final read are missing.
-A negative pricing/input-tamper bound cannot establish request-field correctness;
-that requires a request-to-expected-state predicate, currently unsupported. These
-primary checks remain visible as review findings and execution results, contribute
-to coverage gaps, and do not count as controls held. This conservative gate is not
-a complete natural-language proof engine and does not alter receipt authentication,
-trace matching or invariant arithmetic.
-Source: [`verification.py`](../backend/runtime/verification.py),
-`_claim_coverage_error`, `_classify_business_rule`, `_normalize_presentation`, `normalize_report`.
+`endpoint_catalog.prepare_endpoint_catalog` includes exact operator-configured
+POST setup routes. `preflight_endpoints` resolves declarative PROBE_PLAN requests
+as well as static legacy calls. A recorded GET route cannot authorize a POST reset.
+`generated_probes.validate_plan_set` checks the whole queue before execution;
+multiple declarative probes require authorized setup to restore independent state.
+`probe_plan_correction.correct_probe_setups` allows one model proposal when a
+configured setup exists. Setup, explicit inference metadata and recorded operand
+nesting can be corrected; actions and operand meaning are preserved, source hashes
+are rechecked, and originals are archived before
+publication. No available setup means an explicit missing-precondition failure,
+with no probe execution. Existing executed scripts are never corrected.
 
+## Queue completion and accounting (2026-09-22)
 
-Scenario-local numeric validation: primary and explicitly declared supplementary
-invariants are recomputed against their own matched AFTER GET. Reset-separated
-states are not aggregated. Contradictions identify the scenario, AFTER transport
-sequence, operand paths/values, limit, and claimed/recomputed booleans.
-Supplementary evidence still does not create an independent security verdict.
-([`probe_executor.py` — `trace_error`, `validate_probe_output`](../backend/runtime/probe_executor.py);
-[`EXECUTION.md`](../crew/skills/probe-flow/EXECUTION.md))
+`probe_executor.execute_run` validates every plan before HTTP execution, records
+rejected plans in an HMAC-protected `preflight_rejections.json`, and continues
+independent admitted plans after a process or evidence-contract error. Actual
+attempts retain terminal HTTP receipts; a preflight rejection is not an attempt.
+`queue_status.load_rejections` checks the signature, run binding and script hash.
+`probe_executor.reconcile` maps these decisions to CHECK_ERROR findings and moves
+unscripted drafts to `unexecuted_hypotheses`, outside finding/result counts.
 
-## Product requirement identity, 2026-09-17
+`queue_status.assessment_status` and `crew_runner.run_crew` distinguish COMPLETED
+(queue exhausted without errors), COMPLETED_WITH_ERRORS (exhausted with rejected
+or failed probes), and FAILED (unfinished queue or orchestration failure). Final
+progress includes planned, executed, skipped, failed and pending probe counts.
+`ReportView` displays this status and the separate unexecuted coverage notes.
+No verdict is inferred from a clean process exit alone.
 
-The Northstar Market owner asserted `NSM-TOTAL-RETURN-CAP-2026-09-17`: after any operation, `order.totalReturned` must not exceed `order.originalAmount`. The rule is independent of probe output. Before creating a recorded run, `discover_application_identity` requests the registry-controlled `/.well-known/flowbusters-identity` endpoint and requires its exact `application_id` and `identity_version` response plus an allowed origin. A missing, failing, malformed, or mismatched endpoint leaves the run unbound. The backend then writes a locally HMAC-signed `application_identity.json`; rule application additionally requires the accepted identity version, exact requirements version, and exact executable predicate. This endpoint is a deterministic check for the controlled local Northstar demo, not cryptographic proof of which process owns the port. HMAC protects the saved identity from later local artifact substitution; it cannot authenticate the serving process or correct a wrongly configured registry. URL, run name, display name, agent prose, HAR fields, and UI affordances cannot establish the identity or financial rule. Evidence captured before the assertion date may be evaluated only with an explicit retrospective label. ([`application_identity.py` — `discover_application_identity`, `issue_identity`, `validate_identity`](../backend/runtime/application_identity.py); [application registry](../backend/runtime/applications.json); [requirement registry](../backend/runtime/business_requirements.json); [`main.py` — `start_assessment`](../backend/api/main.py); [`business_requirements.py` — `apply_backend_requirements`](../backend/runtime/business_requirements.py))
-
-Mass-assignment claims evaluated only by `sum_lte` remain NEEDS_REVIEW even when the numeric bound holds. A bound cannot establish input-field authorization or a status-transition rule; the signed request and response remain visible. Confirmed remediation Issue/Evidence use executed invariant data instead of speculative agent prose. ([`verification.py` — `_claim_coverage_error`](../backend/runtime/verification.py); [`ReportView.tsx` — `remediationFor`](../frontend/src/components/ReportView.tsx))
+Correction can also downgrade an invalid non-`amount_bound` claim using the
+monetary predicate to `unsupported_business_rule`, with an agent-supplied specific
+reason. The backend preserves title, claim type and actions and refuses upgrades
+or changes to supported monetary predicates. For example, request uniqueness
+cannot be disproved by `requestedAmount <= originalAmount`; those captures stay
+reviewable rather than becoming a successful uniqueness check.
 
 ## System purpose
 
-Each observed UI rule must independently contain a validated raw UI fact from
-`demo.json`; API-only facts and inference do not satisfy that gate, even when
-another rule contains UI evidence. A recorded reimbursement of 100 does not
-establish a universal compensation cap. Analyst instructions omit API-only rule
-definitions and allow useful unverified hypotheses in `critical_endpoints[].why`
-as analysis, never as verified provenance. The gate names the offending rule ID.
-([`ui_provenance.py` — `validate_observed_ui_rule`](../backend/runtime/ui_provenance.py);
-[`crew_runner.py` — `build_system_prompt`](../backend/runtime/crew_runner.py);
-[`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
-
-Analyst instructions distinguish initial GET/HEAD baseline reads from action
-transitions: baseline requests remain in HAR evidence and are not emitted as
-equal-step observed transitions. The schema gate requires strictly increasing
-UI steps for observed transitions; equal steps apply only to inferred actions
-with no observed response status.
-([`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md);
-[`ui_provenance.py` — `validate_state_map`](../backend/runtime/ui_provenance.py))
-
-The post-recording Analyst prompt embeds the full `OBSERVED_UI_RULES.md`
-contract, including its canonical rule example and field-name checklist,
-before Saboteur instructions. Root schema declarations do not replace each
-rule's own `schema_version: 1`; shortened aliases remain invalid. Missing
-contract files fail prompt assembly.
-([`crew_runner.py` — `build_system_prompt`](../backend/runtime/crew_runner.py);
-[`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
-
-Semantic `appeared` validation requires absence in the before-state elements
-and unique presence in the after state and its appeared delta. Enabled/disabled
-validation instead requires a unique element in both states and pointers into
-both `elements` arrays, with a matching `[disabled]` change.
-([`ui_provenance.py` — `_validate_ui_transition`](../backend/runtime/ui_provenance.py);
-[`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
-
-Transition role/name matching uses the quoted semantic name, such as
-`button "Request price adjustment"`. `generic : Eligible` supplies text but
-no accessible name in this representation. Analyst must use a supported named
-element transition, or an `explicit_ui_text` fact with the full raw string to
-prove text presence at a single step; the latter does not prove a transition.
-([`ui_provenance.py` — `_semantic_element`, `_validate_ui_transition`, `_validate_ui_text`](../backend/runtime/ui_provenance.py);
-[`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
-
-API transition facts require unequal values at the exact HAR field path;
-unchanged values such as `eligible -> eligible` are rejected even when another
-field or UI affordance changes. Analyst instructions require omitting such
-facts and removing their inference references; the schema has no static API
-field fact type. ([`ui_provenance.py` — `_validate_api_transition`](../backend/runtime/ui_provenance.py);
-[`OBSERVED_UI_RULES.md` — API fact contract](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
-
 FlowBusters records an authorized business workflow, asks an AI crew to model its states and propose adversarial scenarios, executes the resulting probes under backend ownership, and derives report verdicts from authenticated HTTP evidence rather than from the AI's claims. It also combines two to eight compatible recorded flows to identify interactions that no single recording exercised. The implementation is intentionally evidence-oriented: agent output is a hypothesis or draft until backend receipt authentication, trace matching, invariant evaluation, provenance validation, and report normalization succeed. ([`backend/runtime/orchestrator.py` — `run_flowbusters`](../backend/runtime/orchestrator.py), [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py), [`backend/runtime/probe_executor.py` — `execute`, `reconcile`](../backend/runtime/probe_executor.py), [`backend/runtime/verification.py` — `load_report`, `normalize_report`](../backend/runtime/verification.py))
+
+## Reading guide
+
+Start with the component map and assessment sequences. Trust boundaries separate
+signed observations, requirements and verdicts. Detailed contracts follow operations.
+For the two-run presentation, use [DEMO-CHEATSHEET.md](DEMO-CHEATSHEET.md).
+For engineering review questions and explicit limitations, use
+[TECHNICAL-DEFENSE.md](TECHNICAL-DEFENSE.md).
+
+- [Component map](#component-map)
+- [Recorded flow](#recorded-single-flow-assessment)
+- [Cross-flow](#cross-flow-assessment)
+- [Artifacts](#artifact-reference)
+- [Trust boundaries](#trust-boundaries-and-verdict-semantics)
+- [Operations](#operations)
+- [Implementation details](#implementation-details)
+- [Limitations](#known-limitations)
 
 ## Component map
 
 | Component | Current responsibility | Implementation reference |
 |---|---|---|
-| React frontend | Starts recorded assessments, lists/selects source runs for cross-flow analysis, consumes SSE progress, requests normalized reports, and renders evidence and verdicts. | [`frontend/src/pages/portal.tsx` — `PortalPage`, `handleSubmit`](../frontend/src/pages/portal.tsx); [`frontend/src/pages/applications.tsx` — `ApplicationsPage`, `start`](../frontend/src/pages/applications.tsx); [`frontend/src/pages/progress.tsx` — `ProgressPage`](../frontend/src/pages/progress.tsx); [`frontend/src/pages/report.tsx` — `ReportPage`](../frontend/src/pages/report.tsx) |
+| React frontend | Starts recorded assessments, lists/selects source runs for cross-flow analysis, consumes SSE progress, requests normalized reports, and renders evidence and verdicts. Fixture reset remains authenticated in the receipt but is omitted from the human-facing reproduction and application trace. | [`frontend/src/pages/portal.tsx` — `PortalPage`, `handleSubmit`](../frontend/src/pages/portal.tsx); [`frontend/src/pages/applications.tsx` — `ApplicationsPage`, `start`](../frontend/src/pages/applications.tsx); [`frontend/src/pages/progress.tsx` — `ProgressPage`](../frontend/src/pages/progress.tsx); [`frontend/src/pages/report.tsx` — `ReportPage`](../frontend/src/pages/report.tsx); [`frontend/src/components/ReportView.tsx` — `traceViews`, `manualReproductionFor`](../frontend/src/components/ReportView.tsx) |
 | FastAPI API and SSE | Enforces one active assessment per process, starts both run modes, fans `ProgressEvent` objects out to subscribers, keeps a 100-event replay buffer, and serves normalized reports. | [`backend/api/main.py` — `start_assessment`, `start_cross_flow`, `_broadcast`, `stream_progress`, `get_report`](../backend/api/main.py) |
 | Orchestrator | Converts API arguments into `CrewConfig`, assigns `RECORDED_FLOW` or `CROSS_FLOW`, invokes the crew runner, and returns findings/remediation in the legacy-compatible result shape. | [`backend/runtime/orchestrator.py` — `RunMode`, `ProgressEvent`, `run_flowbusters`](../backend/runtime/orchestrator.py) |
 | Recorder and Playwright MCP | The backend starts a stdio Playwright MCP server without the Anthropic key, opens the target, samples accessibility snapshots, dumps request details and bodies, synthesizes HAR, writes `demo.json`, closes the browser, and marks the recording validated. | [`backend/runtime/recorder.py` — `record`, `optional_snapshot`, `compact_snapshot`, `add_ui_state`, `dump_capture`](../backend/runtime/recorder.py) |
 | AI crew / Analyst | One Claude Code subprocess reads the validated recording or authenticated cross-flow snapshots. The Analyst creates a schema-v2 state map with transitions, roles, endpoints, semantic capture metadata, and structured observed-UI rules. | [`backend/runtime/crew_runner.py` — `build_system_prompt`, `run_crew`](../backend/runtime/crew_runner.py); [`crew/agents/analyst/charter.md` — Analyst process and output contract](../crew/agents/analyst/charter.md); [`crew/skills/analyze-har/OBSERVED_UI_RULES.md` — structured rule contract](../crew/skills/analyze-har/OBSERVED_UI_RULES.md) |
 | Application model / cross-flow analysis | Catalogs ordinary runs by target origin, loads two to eight source runs, hashes their data, copies immutable snapshots into the new run, signs the source manifest, and gates agent-authored cross-flow candidates against those sources. The AI produces the application model and candidate hypotheses; the backend authenticates their inputs and references. | [`backend/runtime/application_model.py` — `catalog`, `collect`, `prepare_inputs`, `validate_cross_flow_candidates`](../backend/runtime/application_model.py); [`backend/runtime/ui_provenance.py` — `validate_cross_flow_manifest`, `_verify_cross_flow_snapshot`](../backend/runtime/ui_provenance.py) |
 | Saboteur | Reads the state map and authors 5–8 self-contained mutation scripts. Generated HTTPX captures copy the transport sequence assigned by the backend harness, represent setup/reset traffic separately, and use a supported response-root invariant or explicitly declare an unsupported business-rule predicate. It does not own execution. | [`crew/agents/saboteur/charter.md` — Saboteur process and constraints](../crew/agents/saboteur/charter.md); [`crew/skills/mutate-flow/SKILL.md` — mutation workflow](../crew/skills/mutate-flow/SKILL.md); [`crew/skills/probe-flow/EXECUTION.md` — execution-output contract](../crew/skills/probe-flow/EXECUTION.md) |
-| Agent report authoring | Before execution, the AI crew writes `findings.json` and `remediation.md` as drafts. The runtime prompt explicitly forbids the crew from executing probes and tells it to leave verification to backend-owned execution. | [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py); [`crew/agents/prober/charter.md` — report shape, superseded at runtime for execution ownership](../crew/agents/prober/charter.md) |
+| Agent report authoring | Before execution, the AI crew writes `findings.json` and `remediation.md` as drafts. The runtime prompt explicitly forbids the crew from executing probes and tells it to leave verification to backend-owned execution. A mandatory business-readable reporting contract requires the business object, action sequence, expected behavior, actual result, concrete impact, reproducible requests, CWE explanation, and implementable remediation; verifier jargon cannot be the primary issue description. | [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py); [`crew/agents/prober/charter.md` — report shape, superseded at runtime for execution ownership](../crew/agents/prober/charter.md); [`crew/skills/probe-flow/REPORTING.md` — business-readable reporting contract](../crew/skills/probe-flow/REPORTING.md) |
 | Backend probe executor | Performs a conservative static contract preflight, copies each saved script to a temporary snapshot, executes it once through the capture harness, records a terminal receipt, then validates parsed output against the signed transport. A contract-invalid terminal receipt is retained and remaining generated probes are not started. | [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `execute`, `validate_probe_output`, `execute_run`](../backend/runtime/probe_executor.py) |
 | HTTP capture harness | Intercepts in-process HTTPX, Requests, and urllib calls, enforces `scope.json`, assigns one monotonic transport sequence to every request, exposes that sequence on the returned response, records ordered requests/responses to temporary JSONL, and rejects subprocess-based HTTP transports. It explicitly is not an operating-system sandbox for hostile Python. | [`backend/runtime/probe_capture.py` — `main`](../backend/runtime/probe_capture.py) |
 | Signed execution receipts | Stores an append-only JSON receipt per execution containing the script snapshot/hash, command, timestamps, exit code, exact stdout/stderr, parsed JSON result, captured HTTP trace, backend contract-validation result, error, and an HMAC signature. Invalid signatures are ignored during loading. This is a local pipeline-integrity mechanism, not third-party attestation. | [`backend/runtime/probe_executor.py` — `key_for`, `execute`, `validate_probe_output`, `load_receipts`](../backend/runtime/probe_executor.py) |
@@ -226,9 +194,9 @@ Diagram references: [`frontend/src/pages/portal.tsx` — `PortalPage.handleSubmi
 | Start / prepare | Target URL, flow name, root `scope.json`, crew configuration | `runs/{flow}/` working tree, copied crew files, run-scoped `scope.json` | Backend | Flow name/scope are checked before navigation; configured setup paths are merged into the copied scope. | Existing finish evidence, invalid scope, blocked production, or an out-of-scope target stops recording before analysis. | [`backend/runtime/crew_runner.py` — `prepare_run_dir`](../backend/runtime/crew_runner.py); [`backend/runtime/recorder.py` — `check_scope`, `record`](../backend/runtime/recorder.py) |
 | Record | Authorized user interaction in the Playwright-controlled browser | `flows/{flow}/demo.json`, `recording.har`, raw `har_data/`, validation markers | Backend recorder + Playwright MCP | Backend-captured source evidence is trusted as recording input, not as proof that a later adversarial probe ran. HAR synthesis checks entry count/body availability; `validate_har` checks HAR 1.2 structure. | Missing required MCP tools, lost browser, missing request details/bodies, invalid HAR, or timeout produces `RecordingError`; the AI subprocess is not launched. Some detached response bodies are tolerated only within the bounded rule in `dump_capture`. | [`backend/runtime/recorder.py` — `record`, `dump_capture`](../backend/runtime/recorder.py); [`backend/runtime/crew_runner.py` — `validate_har`, `run_crew`](../backend/runtime/crew_runner.py) |
 | Analyze | Validated `demo.json`, `recording.har`, copied scope and Analyst instructions | `flows/{flow}/state_map.json` | AI Analyst | The whole map is an agent interpretation. `ArtifactWatcher` and the final gate enforce schema versions, transition types/statuses, semantic step references, roles, endpoints, capture count, rule/fact IDs and exact raw pointers. After draft generation exits, a rejected map first receives a deterministic relocation pass that re-points an in-state locator to the unique matching element (off-by-N slips only); if that does not make it valid, at most two dedicated read-only Analyst correction attempts follow with structured validator feedback. The backend independently validates every proposal and preserves claims. | Probes remain blocked until a map passes. Uncorrectable/ambiguous evidence, exhausted attempts or deadline, changed source bytes, dropped facts/rules, or changed claims fail the run with the precise diagnostic. Original map, feedback and proposals remain in correction audit files. | [`crew/agents/analyst/charter.md` — Verification Gate](../crew/agents/analyst/charter.md); [`crew_runner.py` — `ArtifactWatcher.check`, `run_crew`, `execute_validated_probes`](../backend/runtime/crew_runner.py); [`state_map_correction.py` — `correct_state_map`, `analyst_proposal`](../backend/runtime/state_map_correction.py); [`ui_provenance.py` — `validate_state_map`](../backend/runtime/ui_provenance.py) |
-| Mutate | Validated state map, endpoints, roles, UI-rule references and scope | `mutations/{flow}/*.py` | AI Saboteur | Scripts are untrusted executable inputs. Agent instructions require syntax checking and a structured execution contract. After at least three scripts exist, `ArtifactWatcher.check` runs conservative static checks, including a missing invariant, a literal non-boolean `violation.observed`, and result-root supplementary scenarios, before accepting the mutation phase. Supplementary evidence is a named object only at `verification.supplementary_scenarios`. | Missing scripts cause the mutation phase timeout. A statically detectable contract defect stops the agent and fails the assessment; it is not sent back as a correction request. Dynamic defects are caught from the first terminal receipt, which is preserved before remaining probes are stopped. Scripts are never evidence by themselves. | [`crew/agents/saboteur/charter.md` — Process and Verification Gate](../crew/agents/saboteur/charter.md); [`backend/runtime/crew_runner.py` — `ProbeContractError`, `ArtifactWatcher.check`, `run_crew`](../backend/runtime/crew_runner.py); [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `validate_probe_output`, `execute_run`](../backend/runtime/probe_executor.py) |
+| Mutate | Validated state map, endpoints, roles, UI-rule references and scope | `mutations/{flow}/*.py` | AI Saboteur | Scripts are untrusted executable inputs. Agent instructions require syntax checking and a structured execution contract. After at least three scripts exist, `ArtifactWatcher.check` runs conservative static checks, including a missing invariant, a literal non-boolean `violation.observed`, and result-root supplementary scenarios, as draft diagnostics; queue admission happens after generation. Supplementary evidence is a named object only at `verification.supplementary_scenarios`. | Missing scripts cause the mutation phase timeout. Draft static diagnostics do not terminate generation. The final plan gate supplies one bounded correction request; a still-invalid plan is individually rejected before HTTP. Dynamic defects are recorded in that probe's terminal receipt and independent probes continue. Scripts are never evidence by themselves. | [`crew/agents/saboteur/charter.md` — Process and Verification Gate](../crew/agents/saboteur/charter.md); [`backend/runtime/crew_runner.py` — `ProbeContractError`, `ArtifactWatcher.check`, `run_crew`](../backend/runtime/crew_runner.py); [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `validate_probe_output`, `execute_run`](../backend/runtime/probe_executor.py) |
 | Draft report | State map and proposed scenarios | Pre-execution `reports/{flow}/findings.json` and `remediation.md` | AI crew | Both are drafts. Runtime instructions forbid AI-owned execution and do not accept draft verdicts as proof. Before execution, `execute_run` preserves a separate `agent-draft-*.json`; later normalization may retain stale draft verification under `agent_draft_verification`/`agent_draft_execution` while using authenticated receipt verification for the executed view. | Invalid/missing report JSON causes backend execution/report loading to fail; absence of a final findings file prevents successful completion. | [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py); [`backend/runtime/probe_executor.py` — `execute_run`, `_is_stale_unexecuted_draft`, `reconcile`](../backend/runtime/probe_executor.py); [`crew/agents/prober/charter.md` — Output contract](../crew/agents/prober/charter.md) |
-| Execute | Saved mutation and optional verification scripts plus copied `scope.json` | `reports/{flow}/executions/{execution_id}.json`; updated working `findings.json`; preserved `agent-draft-*.json` | Backend | Static preflight catches literal missing-invariant/non-boolean contracts and misplaced supplementary scenarios where possible. A probe must compute a boolean from its captured AFTER response; backend recomputation verifies agreement rather than filling in `null`. The capture harness records every request, while output validation requires the union of primary setup/scenario captures and named supplementary scenario captures to represent every signed sequence exactly once. | A preflight error prevents that script from starting. After execution, timeout/non-zero exit is a process error; malformed output, misplaced/omitted scenario captures, or sequence/invariant defects are evidence-contract errors; contradictory signed transport is a trace mismatch. The terminal receipt is retained and a contract-invalid result stops later generated probes. | [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `_all_declared_captures`, `execute`, `validate_probe_output`, `execute_run`](../backend/runtime/probe_executor.py); [`backend/runtime/probe_capture.py` — `main`](../backend/runtime/probe_capture.py) |
+| Execute | Saved mutation and optional verification scripts plus copied `scope.json` | `reports/{flow}/executions/{execution_id}.json`; updated working `findings.json`; preserved `agent-draft-*.json` | Backend | Static preflight catches literal missing-invariant/non-boolean contracts and misplaced supplementary scenarios where possible. A probe must compute a boolean from its captured AFTER response; backend recomputation verifies agreement rather than filling in `null`. The capture harness records every request, while output validation requires the union of primary setup/scenario captures and named supplementary scenario captures to represent every signed sequence exactly once. | A preflight error prevents that script from starting. After execution, timeout/non-zero exit is a process error; malformed output, misplaced/omitted scenario captures, or sequence/invariant defects are evidence-contract errors; contradictory signed transport is a trace mismatch. The terminal receipt is retained; independent admitted probes continue. | [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `_all_declared_captures`, `execute`, `validate_probe_output`, `execute_run`](../backend/runtime/probe_executor.py); [`backend/runtime/probe_capture.py` — `main`](../backend/runtime/probe_capture.py) |
 | Verify / report | Working findings, evidence files, signed receipts, setup-path configuration | Normalized security findings, primary execution results, partial coverage, excluded setup executions, derived accounting, and API report response | Backend verifier and loader | Receipt HMAC, attribution, request/response equality, complete ordering, action coverage, supported invariant, and rule provenance are recomputed. A stale `NOT_EXECUTED` draft without captures is preserved but cannot outrank an authenticated receipt; a post-execution contradiction still fails trace verification. Deduplication requires equivalent action chains and invariants. | Untrusted receipts are ignored; incomplete/mismatched evidence becomes `NEEDS_REVIEW` or `CHECK_ERROR`; supplementary evidence without an independent invariant becomes partial coverage; a setup-centered probe is retained in the execution log but excluded from security-finding counts. | [`backend/runtime/probe_executor.py` — `load_receipts`, `trace_error`, `_is_stale_unexecuted_draft`, `_partial_coverage_for`, `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/verification.py` — `load_report`, `_dedup_key`, `_is_setup_path_centered`, `classify`, `normalize_report`](../backend/runtime/verification.py); [`backend/api/main.py` — `get_report`](../backend/api/main.py) |
 
 ## Cross-flow assessment
@@ -288,7 +256,7 @@ Diagram references: [`frontend/src/pages/applications.tsx` — `ApplicationsPage
 | Build application model | Authenticated source copies and their source-attributed UI/HAR entries | `flows/{cross-flow}/application_state_map.json` and schema-v2 aggregate `state_map.json` | AI Analyst | Agent-authored model relationships remain hypotheses. The aggregate state map passes `validate_state_map`; its `source_runs` and each transition's `ui_context.source_run` must match the signed manifest and source-local step set. | Missing/invalid application model fails completion; malformed aggregate state map waits for correction and then fails on timeout/final validation. | [`backend/runtime/application_model.py` — `CROSS_FLOW_INSTRUCTIONS`](../backend/runtime/application_model.py); [`backend/runtime/ui_provenance.py` — `validate_state_map`](../backend/runtime/ui_provenance.py); [`backend/runtime/crew_runner.py` — `ArtifactWatcher.check`, `run_crew`](../backend/runtime/crew_runner.py) |
 | Identify conflicts | Authenticated sources and agent application model | `flows/{cross-flow}/cross_flow_candidates.json` | AI Analyst, backend gate | Candidate prose is not evidence. The backend requires schema version 1, at least two distinct source runs, a supported structured rule source, valid structured fact IDs, and membership in the signed manifest. | Invalid candidate schema, source set, rule source, rule reference, fact reference, or provenance stops execution. | [`backend/runtime/application_model.py` — `validate_cross_flow_candidates`](../backend/runtime/application_model.py); [`backend/runtime/ui_provenance.py` — `validate_rule_reference`, `validate_supporting_rule_reference`](../backend/runtime/ui_provenance.py) |
 | Mutate and draft | Validated cross-flow candidates and aggregate state map | Cross-flow mutation scripts plus draft `findings.json` and `remediation.md` | AI Saboteur / crew | Same trust status as the single-flow path: executable scripts and report prose are untrusted drafts. The progress API labels pre-execution findings/remediation as drafts. | Missing scripts/drafts time out or fail later parsing; no draft can become a verified finding without backend execution. | [`backend/runtime/crew_runner.py` — `_cross_flow_artifact_events`, `run_crew`](../backend/runtime/crew_runner.py); [`crew/agents/saboteur/charter.md` — Process](../crew/agents/saboteur/charter.md) |
-| Execute | Validated candidate set and saved scripts | Terminal signed receipt and trace for every attempted script | Backend | Per-probe progress is emitted from actual executor start/return times. Backend output validation separates process errors, evidence-contract errors, and trace mismatches. A zero exit with invalid evidence is not reported as a successful check. | Executor failure is preserved; a contract-invalid terminal receipt is preserved and stops later generated probes; an unattempted planned probe remains pending. | [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `execute`, `validate_probe_output`, `execute_run`, `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py) |
+| Execute | Validated candidate set and saved scripts | Terminal signed receipt and trace for every attempted script | Backend | Per-probe progress is emitted from actual executor start/return times. Backend output validation separates process errors, evidence-contract errors, and trace mismatches. A zero exit with invalid evidence is not reported as a successful check. | Executor failure is preserved; a contract-invalid terminal receipt is preserved and independent probes continue; a still-invalid preflight plan is explicitly rejected, not pending. | [`backend/runtime/probe_executor.py` — `preflight_script_contract`, `execute`, `validate_probe_output`, `execute_run`, `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py) |
 | Verify / normalize | Draft report, signed receipts, source manifest, raw source copies | Atomic security findings, primary execution results, partial coverage, excluded setup executions, and final accounting | Backend | The verifier re-authenticates source snapshots when observed-UI provenance is used, replaces capture-free stale `NOT_EXECUTED` draft verification with receipt verification in memory, matches each primary finding to its signed trace, evaluates supported invariants, checks that the executable predicate addresses the stated claim, applies verdict precedence, and deduplicates only equivalent chains/invariants. Every authenticated terminal receipt remains an execution result even if its presentation is excluded from security findings. | Positive violations with invalid, legacy, or semantically insufficient rule provenance cannot be confirmed. A negative invariant is `NOT_REPRODUCED` only for the claim that invariant expresses; an input-trust claim backed only by a final-state bound remains `NEEDS_REVIEW`. Incomplete supplementary scenarios remain non-verdict partial coverage; setup-centered executions remain visible but excluded; trace/executor failures remain visible. | [`backend/runtime/ui_provenance.py` — `validate_rule_reference`](../backend/runtime/ui_provenance.py); [`backend/runtime/probe_executor.py` — `_is_stale_unexecuted_draft`, `_partial_coverage_for`, `trace_error`, `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/verification.py` — `_claim_coverage_error`, `_classify_business_rule`, `_dedup_key`, `_is_setup_path_centered`, `normalize_report`](../backend/runtime/verification.py) |
 
 ## Artifact reference
@@ -477,9 +445,9 @@ This repository contains the verifier/UI contract and regression fixture for the
 ## Current readiness
 
 - Cross-flow scenario execution, HTTP capture, signed terminal receipts, trace matching, invariant evaluation, and normalized reporting are implemented and working in the current pipeline. ([`backend/runtime/probe_executor.py` — `execute`, `trace_error`, `execute_run`, `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/verification.py` — `load_report`, `normalize_report`](../backend/runtime/verification.py))
-- The currently reused Northstar source maps are legacy maps. `normalize_observed_ui_rules` keeps their rules readable but marks them `legacy_unverified`; they cannot supply the validated raw UI fact required to confirm a positive observed-UI rule. ([`backend/runtime/ui_provenance.py` — `normalize_observed_ui_rules`, `validate_rule_reference`](../backend/runtime/ui_provenance.py); [`backend/runtime/verification.py` — `_classify_business_rule`](../backend/runtime/verification.py))
-- A read-only local validation of `cross-flow-2780a8952c78` performed on 2026-09-15 produced five normalized security findings: zero `CONFIRMED`, one `NEEDS_REVIEW`, and four `NOT_REPRODUCED`. It separately showed two partial-coverage scenarios, one excluded setup-path execution, and six authenticated terminal receipts whose primary execution results were two `NEEDS_REVIEW` and four `NOT_REPRODUCED`. The extra review execution is the excluded setup-path probe, so it remains visible in execution accounting without becoming a security finding. This is a dated local validation observation, not a repository artifact or permanent fixture; the run ID is plain context and is not linked as an architectural dependency. ([`backend/runtime/probe_executor.py` — `_partial_coverage_for`, `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/verification.py` — `_is_setup_path_centered`, `_classify_business_rule`, `normalize_report`](../backend/runtime/verification.py); [`backend/runtime/crew_runner.py` — `_cross_flow_final_message`](../backend/runtime/crew_runner.py); [`frontend/src/components/ReportView.tsx` — `ReportView`](../frontend/src/components/ReportView.tsx))
-- The final verified-UI demonstration still requires fresh schema-v2 source recordings whose structured `observed_ui_rules` resolve to their raw sampled `demo.json` states. Re-running cross-flow over legacy sources alone cannot upgrade them. ([`backend/runtime/ui_provenance.py` — `validate_state_map`, `normalize_observed_ui_rules`, `validate_rule_reference`](../backend/runtime/ui_provenance.py); [`backend/runtime/application_model.py` — `prepare_inputs`](../backend/runtime/application_model.py))
+- Legacy source maps remain supported only as unverified provenance. `normalize_observed_ui_rules` keeps their rules readable but marks them `legacy_unverified`; they cannot supply the validated raw UI fact required to confirm a positive observed-UI rule. ([`backend/runtime/ui_provenance.py` — `normalize_observed_ui_rules`, `validate_rule_reference`](../backend/runtime/ui_provenance.py); [`backend/runtime/verification.py` — `_classify_business_rule`](../backend/runtime/verification.py))
+- A read-only local validation of `cross-flow-f9dbb26f37e2` performed on 2026-09-18 produced six normalized security findings: one `CONFIRMED`, zero `NEEDS_REVIEW`, and five `NOT_REPRODUCED`. Seven authenticated terminal receipts remained visible as primary execution results: two `CONFIRMED` and five `NOT_REPRODUCED`. The two positive executions reproduced an equivalent ordered chain and predicate, so the report retained both execution records while presenting one deduplicated finding and one grouped vulnerability. Six results came from AI-generated probes and one from a backend coverage plan. Two additional AI scripts were excluded as unverified candidate coverage before execution. This is a dated local validation observation, not a permanent fixture or evidence that the defect is unique to cross-flow mode. ([`backend/runtime/probe_executor.py` — `reconcile`](../backend/runtime/probe_executor.py); [`backend/runtime/verification.py` — `_dedup_key`, `_collapse_duplicate_findings`, `_unique_vulnerabilities`, `normalize_report`](../backend/runtime/verification.py); [`backend/runtime/candidate_correction.py` — `correct_candidates`](../backend/runtime/candidate_correction.py); [`frontend/src/components/ReportView.tsx` — `ReportView`](../frontend/src/components/ReportView.tsx))
+- New cross-flow sources require validated schema-v2 state maps whose structured `observed_ui_rules` resolve to their raw sampled `demo.json` states. Re-running cross-flow over legacy sources alone cannot upgrade them. ([`backend/runtime/ui_provenance.py` — `validate_state_map`, `normalize_observed_ui_rules`, `validate_rule_reference`](../backend/runtime/ui_provenance.py); [`backend/runtime/application_model.py` — `prepare_inputs`](../backend/runtime/application_model.py))
 
 ## Operations
 
@@ -488,7 +456,7 @@ This repository contains the verifier/UI contract and regression fixture for the
 | Process | Current configuration | Source |
 |---|---|---|
 | FlowBusters FastAPI | Start with `uvicorn backend.api.main:app --port 8000`; `/health` returns `{"status":"ok"}`. | [`backend/api/main.py` — `app`, `health`](../backend/api/main.py); [`README.md` — “Start the backend”](../README.md) |
-| FlowBusters React/Vite UI | From `frontend/`, `npm run dev`; Vite is configured for port `3000` and proxies `/api` and `/health` to port `8000`. | [`frontend/vite.config.ts` — `defineConfig`](../frontend/vite.config.ts); [`frontend/package.json` — `scripts.dev`](../frontend/package.json) |
+| FlowBusters React/Vite UI | From `frontend/`, `npm run dev -- --host 127.0.0.1 --port 3001 --strictPort`; the demo overrides Vite's default port `3000` and proxies `/api` and `/health` to port `8000`. | [`frontend/vite.config.ts` — `defineConfig`](../frontend/vite.config.ts); [`frontend/package.json` — `scripts.dev`](../frontend/package.json) |
 | Playwright MCP / Chrome | Spawned on demand by `record` from `mcp.json`; the example configuration uses the repository-local `playwright-mcp` command and installed Chrome. It is not a separately started long-running service. | [`backend/runtime/recorder.py` — `record`](../backend/runtime/recorder.py); [`mcp.json.example` — Playwright MCP configuration](../mcp.json.example) |
 | Claude Code crew | Spawned per assessment by `run_crew` using `CLAUDE_CODE_BIN`; it is not a persistent server. | [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py); [`.env.example` — `CLAUDE_CODE_BIN`](../.env.example) |
 | Northstar | No Northstar server source, package script, or launcher exists in this repository, so there is no code-backed Northstar start command here. Start the authorized Northstar environment from its own project, choose a port that does not collide with the portal, enter its URL as `target_url`, and allow it in `scope.json`. | [`frontend/src/pages/portal.tsx` — `PortalPage.handleSubmit`](../frontend/src/pages/portal.tsx); [`backend/runtime/recorder.py` — `check_scope`](../backend/runtime/recorder.py); [`backend/runtime/probe_capture.py` — `main`](../backend/runtime/probe_capture.py) |
@@ -496,8 +464,8 @@ This repository contains the verifier/UI contract and regression fixture for the
 ### Start order
 
 1. Start the external authorized target first and confirm its URL. FlowBusters records and probes the URL supplied by the UI, subject to `scope.json`. ([`frontend/src/pages/portal.tsx` — `PortalPage.handleSubmit`](../frontend/src/pages/portal.tsx); [`backend/runtime/recorder.py` — `check_scope`](../backend/runtime/recorder.py))
-2. From the repository root, activate the existing Python environment and run `uvicorn backend.api.main:app --port 8000`. Do not use `--reload` during an assessment because backend process replacement loses the in-memory active run and can terminate its child process. ([`backend/api/main.py` — `_active_run`, `start_assessment`, `start_cross_flow`](../backend/api/main.py); [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py); [`README.md` — backend start warning](../README.md))
-3. From `frontend/`, run `npm run dev` and open the Vite URL. The frontend defaults API calls and SSE to `http://localhost:8000`, unless `VITE_API_BASE_URL` overrides it. ([`frontend/package.json` — `scripts.dev`](../frontend/package.json); [`frontend/src/services/api.ts` — `API_BASE`](../frontend/src/services/api.ts); [`frontend/src/pages/progress.tsx` — `ProgressPage`](../frontend/src/pages/progress.tsx))
+2. From the repository root, run `.\.venv\Scripts\python.exe -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8000`. Do not use `--reload` during an assessment because backend process replacement loses the in-memory active run and can terminate its child process. ([`backend/api/main.py` — `_active_run`, `start_assessment`, `start_cross_flow`](../backend/api/main.py); [`backend/runtime/crew_runner.py` — `run_crew`](../backend/runtime/crew_runner.py); [`README.md` — backend start warning](../README.md))
+3. From the repository root, run `npm --prefix frontend run dev -- --host 127.0.0.1 --port 3001 --strictPort` and open `http://127.0.0.1:3001`. The frontend defaults API calls and SSE to `http://localhost:8000`, unless `VITE_API_BASE_URL` overrides it. ([`frontend/package.json` — `scripts.dev`](../frontend/package.json); [`frontend/src/services/api.ts` — `API_BASE`](../frontend/src/services/api.ts); [`frontend/src/pages/progress.tsx` — `ProgressPage`](../frontend/src/pages/progress.tsx))
 4. For a recorded assessment use **Start Assessment**; for cross-flow use **Application Model**, select two to eight eligible runs, confirm environment compatibility, and choose **Analyze**. ([`frontend/src/pages/portal.tsx` — `PortalPage`](../frontend/src/pages/portal.tsx); [`frontend/src/pages/applications.tsx` — `ApplicationsPage`](../frontend/src/pages/applications.tsx))
 
 ### Reanalyze a validated single-flow recording
@@ -505,7 +473,7 @@ This repository contains the verifier/UI contract and regression fixture for the
 From the repository root on Windows, use a new destination ID:
 
 ```powershell
-.\.venv\Scripts\python.exe -m backend.runtime.reanalyze --source northstar-refund-v4 --destination northstar-refund-v4-reanalysis
+.\.venv\Scripts\python.exe -m backend.runtime.reanalyze --source demo-ready-refund-v1 --destination demo-ready-refund-v1-reanalysis-new
 ```
 
 The command accepts only an ordinary backend-validated recording. It validates the source marker, schema-v2 recorder `demo.json`, HAR 1.2 structure and same target origin, source scope, capture manifest, request counts, and sampled UI timeline before creating the destination. It then copies only `demo.json`, `recording.har`, the validated marker, and source scope; writes the authenticated `recording_source.json`; disables Playwright; and enters the same single-flow Analyst → state-map gate → mutation → backend execution → report path. The source ID remains the provenance origin, while all newly generated state-map facts use the destination run ID because they resolve against the destination's independent evidence copies. A final source/copy/manifest check and unconditional state-map validation run immediately before any probe. ([`backend/runtime/reanalyze.py` — `main`, `validate_recording_source`, `validate_destination`, `prepare_reanalysis_inputs`, `validate_reanalysis_copy`](../backend/runtime/reanalyze.py); [`backend/runtime/crew_runner.py` — `prepare_recording_evidence`, `validate_final_state_map`, `execute_validated_probes`, `run_crew`](../backend/runtime/crew_runner.py))
@@ -517,6 +485,208 @@ Progress originates in actual backend transitions in `run_crew` and `execute_run
 Artifacts live beneath `${ARTIFACTS_DIR:-.}/runs/{flow-name}/`, with flow data, mutations, reports and receipts in the paths described above. Cross-flow source copies are under `cross_flow_sources/`, and the local signing key is under the artifact root's `execution_keys/`; the key is not a report artifact. ([`backend/runtime/crew_runner.py` — `prepare_run_dir`](../backend/runtime/crew_runner.py); [`backend/runtime/application_model.py` — `prepare_inputs`](../backend/runtime/application_model.py); [`backend/runtime/probe_executor.py` — `key_for`, `execute`](../backend/runtime/probe_executor.py))
 
 Safe restart procedure: wait until SSE reaches `complete` or `failed`; do not restart the target or backend while probes are running; stop the frontend; stop FastAPI; restart the target if required; start FastAPI without `--reload`; then restart the frontend. Use a new flow name for a new recorded run because `record` rejects a run directory that already contains finish/recording evidence. Existing run files and receipts should remain in place. ([`backend/api/main.py` — `stream_progress`, `start_assessment`](../backend/api/main.py); [`backend/runtime/recorder.py` — `record`](../backend/runtime/recorder.py); [`backend/runtime/probe_executor.py` — `execute`](../backend/runtime/probe_executor.py))
+
+## Implementation details
+
+## Report loading failures
+
+An invalid imported candidate-gate signature does not authorize re-signing or
+confirmation. The report index keeps an explicit unavailable row with the error,
+without fabricated verdict counts, while other reports remain readable. The
+detail endpoint returns HTTP 422 with the validation reason.
+([`backend/api/main.py` — `list_reports`, `get_report`](../backend/api/main.py);
+[`ReportView.tsx` — `ReportLoadError`](../frontend/src/components/ReportView.tsx);
+[`reports.tsx` — `ReportsIndexPage`](../frontend/src/pages/reports.tsx).)
+
+## Atomic AI probe compilation
+
+The cross-flow catalog accepts an isolated reanalysis only after validating its
+original recording and HMAC-authenticated copy manifest. It does not require a
+fabricated duplicate recorder capture manifest; changed copied bytes fail closed.
+([`application_model.py` — `validated_source`](../backend/runtime/application_model.py);
+[`endpoint_catalog.py` — `validate_recorded_input`](../backend/runtime/endpoint_catalog.py).)
+
+For new probes, the agent selects an ordered atomic `PROBE_PLAN`; the backend
+compiles its authorized setup, before GET, every action and final GET. Sequence
+IDs come from the transport harness and `violation.observed` is computed from
+that chain's final response. The plan draft is preserved before compilation;
+compilation is refused after any execution receipt exists. Unsupported claims
+remain explicitly reviewable rather than borrowing a financial predicate.
+This is AI-selected coverage, distinct from backend-configured coverage plans.
+([`generated_probes.py` — `validate_plan`, `render_plan`, `compile_plans`](../backend/runtime/generated_probes.py);
+[`crew_runner.py` — `run_crew`, `execute_validated_probes`](../backend/runtime/crew_runner.py).)
+
+Cross-flow binding requires a unique exact execution contract: ordered methods,
+paths, request bodies, setup/state reads and invariant. Endpoint subsets,
+supersets, filenames and singleton fallback are insufficient. Source facts must
+still resolve to authenticated state-changing HAR entries from two or more
+sources. Two correction attempts are allowed; no valid AI candidate fails the
+assessment before probes, rather than allowing a configured coverage plan to
+masquerade as completed AI cross-flow analysis.
+([`candidate_correction.py` — `_script_contract`, `_bind_candidate_scripts`,
+`validate_candidate`, `correct_candidates`](../backend/runtime/candidate_correction.py).)
+
+A capture-free, predicate-compatible pre-execution draft may be replaced by the
+authenticated receipt verification without requiring a literal NOT_EXECUTED
+marker. The original draft remains in `agent_draft_verification`. Claimed
+captures, violations or a different invariant are not silently replaced and
+still undergo strict receipt comparison.
+([`probe_executor.py` — `_is_stale_unexecuted_draft`, `reconcile`, `trace_error`](../backend/runtime/probe_executor.py).)
+If a linked draft claims different executed evidence, its receipt stays visible
+but the primary execution result also requires review for conflicting attribution;
+it cannot retain a contradictory CONFIRMED headline.
+([`verification.py` — `normalize_report`](../backend/runtime/verification.py).)
+Likewise, when a linked hypothesis needs review because its predicate does not
+cover the claim, its execution cannot be counted as a held control merely because
+the arithmetic bound was not violated. Confirmed titles use evaluated final
+values rather than speculative draft language.
+([`verification.py` — `normalize_report`, `_normalize_presentation`](../backend/runtime/verification.py).)
+On reload, authenticated receipt-backed primary rows omitted by an earlier
+presentation deduplication are reconstructed in memory before deduplication is
+recomputed. This includes backend coverage rows absent from the agent draft;
+their receipts remain linked and counted, without rewriting saved artifacts.
+([`probe_executor.py` — `reconcile`](../backend/runtime/probe_executor.py).)
+
+## Bounded cross-flow candidate correction
+
+State-map correction requests CLI JSON Schema output and reads
+`structured_output` (with complete plain/single-fenced JSON compatibility).
+Empty output or prose is rejected; valid JSON still must pass the strict state
+map gate and claim-preservation checks. Cross-flow correction instructions retain
+source-local UI numbering and require `ui_context.source_run` from raw
+`_source_run`, never the combined run ID.
+([`state_map_correction.py` — `analyst_proposal`, `parse_proposal_output`,
+`correct_state_map`](../backend/runtime/state_map_correction.py);
+[`application_model.py` — `CROSS_FLOW_INSTRUCTIONS`](../backend/runtime/application_model.py).)
+
+`candidate_correction.correct_candidates` checks hypotheses before probes. Each
+candidate must resolve exact state-changing HAR entries from at least two signed
+source snapshots, with matching method, URL and response status and an action in
+the candidate chain. Source IDs or shared GETs alone are insufficient. Existing
+rule-provenance validation remains mandatory. A fact authenticates an observation,
+not a normative business rule.
+
+`application_model.prepare_inputs` enumerates `source_action_facts.json` from
+the selected HARs to avoid guessed source-local indexes. This convenience index
+is not independent authority: each cited entry is resolved again against the
+authenticated snapshots. Correction uses CLI JSON Schema structured output;
+each of the two proposals has a maximum 300-second process deadline (also capped
+by phase_timeout). A unique legacy candidate name may be used as its diagnostic
+ID; this does not upgrade source provenance.
+
+**Deterministic candidate → script binding.** `_script_contract` recognizes only
+the exact backend-compiled `PROBE_PLAN` template. `_bind_candidate_scripts` requires
+one matching ordered action/body/predicate contract, never an endpoint set,
+superset, basename or file order. A zero- or multi-way match stays unverified
+with its precise reason. Correction proposals cannot rename their way into a
+binding; the backend recomputes the match. `validate_candidate` independently
+checks the declared endpoints and authenticated source facts.
+
+At most two read-only Analyst proposals receive structured per-candidate errors
+and copied evidence. IDs, claims and action chains cannot change. The backend
+revalidates proposals, preserves correction audit records (including
+`candidate_corrections/binding.json`) and signs the execution allowlist.
+Invalid, ambiguous, or uncorrectable hypotheses remain unverified candidate
+coverage (recorded in `candidate_gate.json.unverified_coverage` with their reason),
+not findings. If none validate, the run stops before probes; if some validate,
+only their bound AI probes are admitted. No fabricated second source or
+weakened signature is ever used to force a pass. Backend coverage plans remain
+independent from AI candidates and have separately labelled receipts. This is
+evidence-link validation, not proof of all inferred causality.
+
+Sources: [`candidate_correction.py`](../backend/runtime/candidate_correction.py)
+(`_script_endpoint_paths`, `_candidate_action_endpoints`, `_bind_candidate_scripts`,
+`validate_candidate`, `propose`, `correct_candidates`, `load_gate`),
+[`crew_runner.py`](../backend/runtime/crew_runner.py) (`run_crew`),
+[`probe_executor.py`](../backend/runtime/probe_executor.py) (`execute_run`, `reconcile`).
+
+## Semantic coverage gate
+
+Probe plan preflight resolves unambiguous helper-return dictionary shapes,
+including awaited calls and dictionary unpacking, without executing agent code.
+The complete plan is checked before the first probe. Runtime validation still
+checks actual emitted invariants, numeric values, signatures and traces; static
+shape acceptance is not execution proof. Unresolvable or incomplete generation
+fails explicitly; this path has no automatic probe rewrite/retry.
+Source: [`probe_executor.py`](../backend/runtime/probe_executor.py),
+`preflight_script_contract`, `execute_run`, `validate_probe_output`.
+
+Before negative business-rule classification, the normalizer checks claim coverage.
+A non-violating amount bound with an explicit pending child workflow in the final
+response remains NEEDS_REVIEW: settlement and a subsequent final read are missing.
+A negative pricing/input-tamper bound cannot establish request-field correctness;
+that requires a request-to-expected-state predicate, currently unsupported. These
+primary checks remain visible as review findings and execution results, contribute
+to coverage gaps, and do not count as controls held. This conservative gate is not
+a complete natural-language proof engine and does not alter receipt authentication,
+trace matching or invariant arithmetic.
+Source: [`verification.py`](../backend/runtime/verification.py),
+`_claim_coverage_error`, `_classify_business_rule`, `_normalize_presentation`, `normalize_report`.
+
+
+Scenario-local numeric validation: primary and explicitly declared supplementary
+invariants are recomputed against their own matched AFTER GET. Reset-separated
+states are not aggregated. Contradictions identify the scenario, AFTER transport
+sequence, operand paths/values, limit, and claimed/recomputed booleans.
+Supplementary evidence still does not create an independent security verdict.
+([`probe_executor.py` — `trace_error`, `validate_probe_output`](../backend/runtime/probe_executor.py);
+[`EXECUTION.md`](../crew/skills/probe-flow/EXECUTION.md))
+
+## Product requirement identity, 2026-09-17
+
+The Northstar Market owner asserted `NSM-TOTAL-RETURN-CAP-2026-09-17`: after any operation, `order.totalReturned` must not exceed `order.originalAmount`. The rule is independent of probe output. Before creating a recorded run, `discover_application_identity` requests the registry-controlled `/.well-known/flowbusters-identity` endpoint and requires its exact `application_id` and `identity_version` response plus an allowed origin. A missing, failing, malformed, or mismatched endpoint leaves the run unbound. The backend then writes a locally HMAC-signed `application_identity.json`; rule application additionally requires the accepted identity version, exact requirements version, and exact executable predicate. This endpoint is a deterministic check for the controlled local Northstar demo, not cryptographic proof of which process owns the port. HMAC protects the saved identity from later local artifact substitution; it cannot authenticate the serving process or correct a wrongly configured registry. URL, run name, display name, agent prose, HAR fields, and UI affordances cannot establish the identity or financial rule. Evidence captured before the assertion date may be evaluated only with an explicit retrospective label. ([`application_identity.py` — `discover_application_identity`, `issue_identity`, `validate_identity`](../backend/runtime/application_identity.py); [application registry](../backend/runtime/applications.json); [requirement registry](../backend/runtime/business_requirements.json); [`main.py` — `start_assessment`](../backend/api/main.py); [`business_requirements.py` — `apply_backend_requirements`](../backend/runtime/business_requirements.py))
+
+Mass-assignment claims evaluated only by `sum_lte` remain NEEDS_REVIEW even when the numeric bound holds. A bound cannot establish input-field authorization or a status-transition rule; the signed request and response remain visible. Confirmed remediation Issue/Evidence use executed invariant data instead of speculative agent prose. ([`verification.py` — `_claim_coverage_error`](../backend/runtime/verification.py); [`ReportView.tsx` — `remediationFor`](../frontend/src/components/ReportView.tsx))
+
+## Analyst semantic fact contract
+
+Each observed UI rule must independently contain a validated raw UI fact from
+`demo.json`; API-only facts and inference do not satisfy that gate, even when
+another rule contains UI evidence. A recorded reimbursement of 100 does not
+establish a universal compensation cap. Analyst instructions omit API-only rule
+definitions and allow useful unverified hypotheses in `critical_endpoints[].why`
+as analysis, never as verified provenance. The gate names the offending rule ID.
+([`ui_provenance.py` — `validate_observed_ui_rule`](../backend/runtime/ui_provenance.py);
+[`crew_runner.py` — `build_system_prompt`](../backend/runtime/crew_runner.py);
+[`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
+
+Analyst instructions distinguish initial GET/HEAD baseline reads from action
+transitions: baseline requests remain in HAR evidence and are not emitted as
+equal-step observed transitions. The schema gate requires strictly increasing
+UI steps for observed transitions; equal steps apply only to inferred actions
+with no observed response status.
+([`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md);
+[`ui_provenance.py` — `validate_state_map`](../backend/runtime/ui_provenance.py))
+
+The post-recording Analyst prompt embeds the full `OBSERVED_UI_RULES.md`
+contract, including its canonical rule example and field-name checklist,
+before Saboteur instructions. Root schema declarations do not replace each
+rule's own `schema_version: 1`; shortened aliases remain invalid. Missing
+contract files fail prompt assembly.
+([`crew_runner.py` — `build_system_prompt`](../backend/runtime/crew_runner.py);
+[`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
+
+Semantic `appeared` validation requires absence in the before-state elements
+and unique presence in the after state and its appeared delta. Enabled/disabled
+validation instead requires a unique element in both states and pointers into
+both `elements` arrays, with a matching `[disabled]` change.
+([`ui_provenance.py` — `_validate_ui_transition`](../backend/runtime/ui_provenance.py);
+[`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
+
+Transition role/name matching uses the quoted semantic name, such as
+`button "Request price adjustment"`. `generic : Eligible` supplies text but
+no accessible name in this representation. Analyst must use a supported named
+element transition, or an `explicit_ui_text` fact with the full raw string to
+prove text presence at a single step; the latter does not prove a transition.
+([`ui_provenance.py` — `_semantic_element`, `_validate_ui_transition`, `_validate_ui_text`](../backend/runtime/ui_provenance.py);
+[`OBSERVED_UI_RULES.md`](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
+
+API transition facts require unequal values at the exact HAR field path;
+unchanged values such as `eligible -> eligible` are rejected even when another
+field or UI affordance changes. Analyst instructions require omitting such
+facts and removing their inference references; the schema has no static API
+field fact type. ([`ui_provenance.py` — `_validate_api_transition`](../backend/runtime/ui_provenance.py);
+[`OBSERVED_UI_RULES.md` — API fact contract](../crew/skills/analyze-har/OBSERVED_UI_RULES.md))
 
 ## Known limitations
 
@@ -595,15 +765,12 @@ read are explicit backend-owned plan inputs. (`prepare_coverage_probes` in
 [`coverage_plans.py`](../backend/runtime/coverage_plans.py);
 `_verify_cross_flow_snapshot` in [`ui_provenance.py`](../backend/runtime/ui_provenance.py).)
 
-After state-map validation, plans add `backend_coverage/{flow}/00_coverage_*` scripts before agent
-scripts; existing different content is never overwritten. Each captures reset,
-before GET, every action and final GET, computing the boolean from its own AFTER
-using the registry's exact predicate. The same executor signs transport/receipts,
-compares captures, recomputes invariants and stops the remaining queue on a
-contract failure. Unsupported identities/versions receive no configured coverage.
-This is explicit deterministic coverage **in addition to AI discovery**, not a
-claim that AI independently found every configured scenario. (`render_probe`,
-`prepare_coverage_probes` in [`coverage_plans.py`](../backend/runtime/coverage_plans.py);
+Product-specific automatic coverage is disabled: `prepare_coverage_probes` adds
+no scripts. New AI plans use the generic compiler and their recorded inference,
+not a product registry. Each independent plan captures setup, before GET, actions
+and final GET; its comparison is recomputed from its own AFTER state. Per-probe
+contract failures retain their receipts and do not stop independent plans.
+(`prepare_coverage_probes` in [`coverage_plans.py`](../backend/runtime/coverage_plans.py);
 `execute_validated_probes`, `run_crew` in [`crew_runner.py`](../backend/runtime/crew_runner.py);
 `execute_run`, `validate_probe_output` in [`probe_executor.py`](../backend/runtime/probe_executor.py).)
 
@@ -632,6 +799,9 @@ recording browser or AI assessment or write repository run artifacts.
 - The capture harness is not an OS sandbox. It instruments HTTPX, Requests and urllib and blocks subprocess creation through an audit hook, but generated Python must still be treated as untrusted and run only against disposable authorized targets. ([`backend/runtime/probe_capture.py` — module contract and `main`](../backend/runtime/probe_capture.py))
 - Generic numeric invariant execution currently supports only `sum_lte`. It expresses a final-state upper bound, not whether a server trusted, ignored, clamped, or recomputed a request field; `_claim_coverage_error` keeps such input-trust claims in `NEEDS_REVIEW` while preserving the signed request/response observations. A scenario that cannot be expressed honestly uses `unsupported_business_rule`; omitting or fabricating the invariant under `business_rule_must_hold` fails the evidence contract. Path resolution is exact with one narrow single-object-envelope compatibility fallback and rejects ambiguous/non-finite values. ([`backend/runtime/probe_executor.py` — `SUPPORTED_BUSINESS_INVARIANTS`, `validate_probe_output`, `resolve_numeric_path`, `trace_error`](../backend/runtime/probe_executor.py); [`backend/runtime/verification.py` — `_claim_coverage_error`, `classify`](../backend/runtime/verification.py))
 - FastAPI stores one `_active_run` and latest report fields in process memory, so the current service is single-assessment and not a durable distributed job queue. ([`backend/api/main.py` — `start_assessment`, `start_cross_flow`, `_progress_writer`](../backend/api/main.py))
-- Cross-flow compatibility is partly a user assertion: the UI requires confirmation and the backend enforces matching normalized origin, but the code cannot prove two recordings came from the same deployed application version. ([`frontend/src/pages/applications.tsx` — `ApplicationsPage`](../frontend/src/pages/applications.tsx); [`backend/api/main.py` — `start_cross_flow`](../backend/api/main.py); [`backend/runtime/application_model.py` — `collect`](../backend/runtime/application_model.py))
+- Cross-flow compatibility includes user confirmation, matching normalized origin and, when identities are present, matching authenticated application identities and versions. Mixed or conflicting identities are rejected. Matching signed metadata is not external deployment attestation: the local identity endpoint does not cryptographically prove which process serves the application. ([`frontend/src/pages/applications.tsx` — `ApplicationsPage`](../frontend/src/pages/applications.tsx); [`backend/api/main.py` — `start_cross_flow`](../backend/api/main.py); [`backend/runtime/application_model.py` — `collect`](../backend/runtime/application_model.py))
+- The demonstrated price-adjustment plus completed-refund overpayment is a combined-workflow defect, but it is not exclusive to cross-flow mode: ordinary-run probes can also execute multi-endpoint chains. Cross-flow's implemented distinction is authenticated composition of facts from at least two source recordings before executing a new candidate. It is not a proof that single-flow analysis could not find the same behavior. ([`backend/runtime/candidate_correction.py` — `validate_candidate`, `correct_candidates`](../backend/runtime/candidate_correction.py); [`backend/runtime/verification.py` — `_dedup_key`, `_unique_vulnerabilities`](../backend/runtime/verification.py))
+- `summary.unique_vulnerabilities` is a presentation grouping, not a proven source-code root cause. The grouping uses application/rule context, resource identifiers, ordered endpoint methods/paths, concurrency overlap and invariant, while retaining request payload variants in the individual evidence. ([`backend/runtime/verification.py` — `_unique_vulnerabilities`](../backend/runtime/verification.py))
+- The current Northstar confirmed-card explanation in `ReportView` assumes a price-adjustment plus completed-refund sequence. That is appropriate for the saved cross-flow example but too specific for every confirmed amount-tamper or replay chain. The ordered trace and normalized predicate remain the evidence; this prose should not be generalized beyond the displayed actions. ([`frontend/src/components/ReportView.tsx` — `ReportView`](../frontend/src/components/ReportView.tsx))
 - The AI may infer unobserved CRUD endpoints from response shapes. Those endpoints are labelled inferred in the state map and are hypotheses until a backend-owned probe produces authenticated evidence. ([`crew/agents/analyst/charter.md` — Process step 8](../crew/agents/analyst/charter.md); [`backend/runtime/ui_provenance.py` — `validate_state_map`](../backend/runtime/ui_provenance.py))
 - HTTP status alone never establishes a vulnerability or a held control; supported state evidence and provenance determine the verdict. ([`backend/runtime/verification.py` — `classify`, `_classify_business_rule`](../backend/runtime/verification.py))

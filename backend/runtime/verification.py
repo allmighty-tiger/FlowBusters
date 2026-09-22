@@ -139,36 +139,18 @@ def load_report(path):
         apply_backend_requirements,
         trusted_report_run_id,
     )
-    from backend.runtime.application_identity import (
-        ApplicationIdentityError,
-        validate_identity,
-    )
     from backend.runtime.probe_executor import reconcile
     # Production reports are gated using backend-signed receipts, including
     # legacy reports. Never accept provenance flags stored in agent JSON.
     root = next((parent.parent for parent in path.parents if parent.name == 'runs'), path.parent)
     reconciled = reconcile(data, path.parent, root)
     trusted_run_id = trusted_report_run_id(path)
-    trusted_identity = None
-    if trusted_run_id:
-        try:
-            trusted_identity = validate_identity(run_dir, root)
-        except ApplicationIdentityError:
-            # A malformed/tampered identity fails closed just like no identity.
-            trusted_identity = None
-    apply_backend_requirements(reconciled, trusted_run_id=trusted_run_id,
-                               trusted_identity=trusted_identity)
+    apply_backend_requirements(reconciled)
     if trusted_run_id:
         reconciled['normalized_run_id'] = trusted_run_id
     else:
         reconciled.pop('normalized_run_id', None)
-    if trusted_identity:
-        reconciled['application_identity'] = {
-            key: trusted_identity[key]
-            for key in ('application_id', 'identity_version', 'requirements_version', 'product')
-        }
-    else:
-        reconciled.pop('application_identity', None)
+    reconciled.pop('application_identity', None)
     # A zero-probe report may be only {findings: []}. Never invent a run date
     # or trust an agent-supplied metadata-source label. Enrich in memory only.
     reconciled.pop('recording_metadata', None)
@@ -360,6 +342,8 @@ def _classify_auth(record, linked_results=()):
 
 
 def classify(record, linked_results=()):
+    if record.get('_preflight_error'):
+        return 'CHECK_ERROR', 'Preflight rejected; no HTTP execution: ' + record['_preflight_error']
     if record.get('_provenance_error'):
         v = record.get('verification')
         return ('CHECK_ERROR' if record.get('error_message') or isinstance(v, dict) and v.get('error') else 'NEEDS_REVIEW', record['_provenance_error'])
@@ -369,7 +353,7 @@ def classify(record, linked_results=()):
         return 'CHECK_ERROR', 'State verification failed: ' + str(record.get('error_message') or v['error'])
     coverage_error = _endpoint_coverage_error(v)
     if coverage_error:
-        return 'NEEDS_REVIEW', coverage_error
+        return 'INSUFFICIENT_EVIDENCE', coverage_error
     # Credential/authorization (and broken-access-control) findings verify from
     # a re-read / request-response trail rather than the state-removal
     # predicate. Error cases above still take precedence; everything else for an
@@ -381,11 +365,14 @@ def classify(record, linked_results=()):
             return 'NEEDS_REVIEW', 'Execution status conflicts with captured action; review evidence.'
         reason = execution.get('missing_precondition')
         if isinstance(reason, str) and reason.strip():
-            return 'NOT_EXECUTED', reason
+            return 'INSUFFICIENT_EVIDENCE', reason
         return 'NEEDS_REVIEW', 'Not-executed status lacks a missing precondition.'
     if isinstance(v, dict) and v.get('predicate') == 'business_rule_must_hold':
         return _classify_business_rule(record, v)
     if isinstance(v, dict) and v.get('predicate') == 'unsupported_business_rule':
+        missing = v.get('missing_evidence')
+        if isinstance(missing, dict) and str(missing.get('reason', '')).strip():
+            return 'INSUFFICIENT_EVIDENCE', str(missing['reason'])
         reason = str(v.get('unsupported_reason') or '').strip()
         return ('NEEDS_REVIEW', 'Unsupported business-rule predicate: ' + reason
                 if reason else 'Unsupported business-rule predicate lacks an explanation.')
@@ -466,62 +453,18 @@ def _classify_business_rule(record, verification):
     coverage_reason = _claim_coverage_error(record, verification)
     if coverage_reason:
         return 'NEEDS_REVIEW', coverage_reason
-    # The description is an agent/script-authored contract field. It must be
-    # present, but it cannot add unverified scheduling, causality, or impact
-    # claims to the normalized verdict. The backend-owned view describes only
-    # the invariant result that trace_error independently recomputed.
-    evaluated_reason = (
-        'The captured final state violated the backend-evaluated invariant.'
-        if violation['observed'] else
-        'The captured final state did not violate the backend-evaluated invariant.'
-    )
-    # A complete authenticated negative execution is conclusive about this
-    # attempted scenario even when the proposed rule came from weak analysis.
-    # Rule provenance gates promotion of a violation, not recognition that the
-    # control held and the invariant remained within bounds.
-    if not violation['observed']:
-        return 'NOT_REPRODUCED', evaluated_reason
-    requirement = record.get('backend_requirement')
-    if record.get('_backend_requirement_valid') is True and isinstance(requirement, dict):
-        application = requirement.get('application_identity') or {}
-        mode = ('retrospectively to evidence captured before the assertion date'
-                if requirement.get('retrospective') else
-                'under the requirement version applicable at execution time')
-        return ('CONFIRMED',
-                f"Backend-controlled requirement {requirement.get('id')} for "
-                f"{requirement.get('product')} was asserted on {requirement.get('asserted_on')} "
-                f"and is being applied {mode}. Application identity "
-                f"{application.get('application_id')} version {application.get('identity_version')}; "
-                f"requirements version {requirement.get('requirements_version')}. "
-                f"{requirement.get('assertion_context')} The captured final state violated "
-                "its exact executable invariant.")
-    rule = verification.get('rule')
-    if not isinstance(rule, dict):
-        return 'NEEDS_REVIEW', 'The business rule needs verified provenance.'
-    source = rule.get('source')
-    if source in ('user', 'specification') and str(rule.get('reference') or '').strip():
-        return ('NEEDS_REVIEW',
-                'A free-form user/specification reference in agent or probe output is not '
-                'backend-authenticated rule authority. Register the requirement independently '
-                'and match it through the signed application identity and exact predicate.')
-    if source == 'observed_ui':
-        if record.get('_rule_provenance_valid') is True:
-            # Schema v1 authenticates raw UI/API facts and keeps inference
-            # separate, but it has no machine-verifiable binding from those
-            # facts to an arithmetic sum_lte rule. An affordance can motivate a
-            # probe; it cannot establish a financial limit.
-            return ('NEEDS_REVIEW',
-                    'The structured observed-UI provenance validates its cited raw facts, '
-                    'but schema v1 does not bind those facts to this arithmetic invariant. '
-                    'UI action availability is not evidence that combined compensation must '
-                    'not exceed originalAmount; an explicit user/specification rule or a '
-                    'future structured executable-rule binding is required.')
-        detail = str(record.get('_rule_provenance_error') or '').strip()
-        reason = 'Observed-UI rule provenance did not validate against immutable source artifacts.'
-        return 'NEEDS_REVIEW', reason + (f' {detail}' if detail else '')
-    if source in ('api_state', 'agent_inference'):
-        return 'NEEDS_REVIEW', 'API state and agent inference cannot serve as observed-UI business-rule provenance.'
-    return 'NEEDS_REVIEW', 'The business rule needs a user, specification, or validated observed-UI reference.'
+    if record.get('_inferred_rule_error'):
+        return 'INSUFFICIENT_EVIDENCE', record['_inferred_rule_error']
+    if violation['observed']:
+        if record.get('_inferred_rule_valid') and not record.get('_provenance_error'):
+            return 'CONFIRMED', ('The executed action chain reached its declared terminal state '
+                'and violated the recorded AI-inferred invariant. This confirms the tested '
+                'unsafe outcome under that inference, not business-owner approval of the rule.')
+        return 'INSUFFICIENT_EVIDENCE', ('The amount violation was observed, but this evidence does not '
+            'contain a validated AI-inferred invariant with raw supporting observations and '
+            'explicit required actions and terminal state.')
+    return 'NOT_REPRODUCED', ('The final response did not match the test condition. '
+                                'This does not prove that a business rule was met or that the app is safe.')
 
 
 def _endpoint_coverage_error(verification):
@@ -574,7 +517,7 @@ def _claim_coverage_error(record, verification):
 
     ``sum_lte`` can evaluate a final-state bound. It cannot establish whether a
     server trusted, ignored, clamped, or recomputed an attacker-controlled
-    request field. Preserve the useful signed request/response observation, but
+    request field. Preserve the useful authenticated request/response observation, but
     keep that input-trust hypothesis reviewable until a predicate explicitly
     relates the request value to independently derived expected state.
     """
@@ -583,10 +526,18 @@ def _claim_coverage_error(record, verification):
     invariant = verification.get('invariant')
     if not isinstance(invariant, dict) or invariant.get('operator') != 'sum_lte':
         return None
+    if any(word in title for word in ('idempoten', 'duplicate', 'double-submit', 'double submit')):
+        statuses = [str(action.get('status_code')) for action in verification.get('actions', [])]
+        return ('Requests completed with HTTP statuses ' + ', '.join(statuses) + '. '
+                'The check compared a final amount with a limit; it did not check whether '
+                'duplicate requests created duplicate records or effects. Review the recorded '
+                'responses and add a check for the specific repeated effect.')
     # A final amount bound cannot settle a payout claim while a workflow is
     # still pending. Inspect explicit response-root state, never search values.
     body = _capture_response_body(verification.get('after'))
-    state = body.get('order', body) if isinstance(body, dict) else {}
+    state = body if isinstance(body, dict) else {}
+    if len(state) == 1 and isinstance(next(iter(state.values())), dict):
+        state = next(iter(state.values()))
     pending = [key for key, value in state.items()
                if isinstance(value, dict) and value.get('status') == 'pending']
     fallback = None
@@ -601,7 +552,7 @@ def _claim_coverage_error(record, verification):
             fallback = ((fallback + ' ') if fallback else '') + ('Partial coverage: sum_lte evaluates only the final amount bound, not '
                     'whether a client-supplied amount was accepted, ignored or recomputed. '
                     'This amount-tamper claim requires an executable request-to-expected-state '
-                    'predicate; a non-violating totalReturned is not a held input-trust control.')
+                    'predicate; a non-violating the measured total is not a held input-trust control.')
     if mutation not in ('PRICING_TAMPER', 'MASS_ASSIGNMENT') and not (
             ('client-supplied' in title or 'client supplied' in title)
             and ('trust' in title or 'tamper' in title)):
@@ -610,12 +561,10 @@ def _claim_coverage_error(record, verification):
     if not isinstance(invariant, dict) or invariant.get('operator') != 'sum_lte':
         return None
     if mutation == 'MASS_ASSIGNMENT':
-        return ('The signed captures preserve the submitted body, action response and final state. '
-                'The sum_lte predicate evaluates only an amount bound; it does not test whether '
-                'client-supplied fields were assigned, ignored, or recomputed, and does not '
-                'evaluate the requested status transition. A non-violated amount bound is not '
-                'proof that the mass-assignment control held. This claim needs an executable '
-                'request-to-expected-state predicate and remains reviewable.')
+        return ('The requests ran and the responses were recorded. The check only compared '
+                'an amount with a limit; it did not compare the submitted fields with the '
+                'fields the server actually changed. That comparison is needed to decide '
+                'whether the field-tampering attempt succeeded.')
     actions = verification.get('actions')
     if not isinstance(actions, list):
         actions = []
@@ -642,7 +591,7 @@ def _claim_coverage_error(record, verification):
             if candidate is not None:
                 action_value = candidate
                 break
-        observed = (f'The signed request supplied {field}={supplied}; the action response recorded '
+        observed = (f'The backend-captured request supplied {field}={supplied}; the action response recorded '
                     f'{field}={action_value}, and the final state recorded {field}={final_value}. ')
         return (observed + 'These are authenticated observations, but sum_lte evaluates only a '
                 'final-state bound and cannot determine whether the server trusted, clamped, '
@@ -720,7 +669,7 @@ def _dedup_key(finding, setup_paths=()):
     return (tuple(action_chain), invariant)
 
 
-_DUP_RANK = {'CONFIRMED': 4, 'NEEDS_REVIEW': 3, 'NOT_REPRODUCED': 2, 'NOT_EXECUTED': 1, 'CHECK_ERROR': 0}
+_DUP_RANK = {'REPRODUCED': 4, 'CONFIRMED': 4, 'NEEDS_REVIEW': 3, 'NOT_REPRODUCED': 2, 'NOT_EXECUTED': 1, 'CHECK_ERROR': 0}
 
 
 def _collapse_duplicate_findings(findings, setup_paths=()):
@@ -790,15 +739,29 @@ def _normalize_presentation(record):
                                       'the tested predicate. This does not establish broader '
                                       'application security.')
         record.pop('remediation', None)
+    elif status == 'REPRODUCED':
+        record['title'] = f'{chain} — test condition reproduced'
+        record['severity'] = 'Not assessed'
+        record['normalized_issue'] = ('The recorded final response matches the AI-proposed test condition. '
+                                      'Business meaning and impact require user review.')
+        record.pop('remediation', None)
     elif status == 'NEEDS_REVIEW' and observed is True:
         record['title'] = f'{chain} — invariant violation requires rule review'
         record['severity'] = (f'Unconfirmed {draft_severity}'
                               if draft_severity not in ('', 'Not assessed') else 'Unconfirmed')
-        record['normalized_issue'] = ('Signed state evidence violated the executable predicate, '
+        record['normalized_issue'] = ('The backend-verified final state violated the executable predicate, '
                                       'but the applicable normative rule is not verified.')
     elif status == 'CONFIRMED':
-        record['normalized_issue'] = ('Signed state evidence violated the exact executable '
-                                      'predicate of an applicable backend-controlled requirement.')
+        resolved = verification.get('resolved_invariant') if isinstance(verification, dict) else None
+        if isinstance(resolved, dict) and resolved.get('operator') == 'sum_lte':
+            final_body = _capture_response_body(verification.get('after'))
+            values = [_exact_value(final_body, p) for p in resolved.get('terms', [])]
+            maximum = _exact_value(final_body, resolved.get('limit', []))
+            if values and all(type(v) in (int, float) for v in [*values, maximum]):
+                record['title'] = (f'{chain} — final evaluated amount {sum(values):g} '
+                                   f'exceeds allowed maximum {maximum:g}')
+        record['normalized_issue'] = ('The completed request sequence violated the recorded AI-inferred '
+                                      'condition, as evaluated from the final application state.')
         requirement = record.get('backend_requirement')
         if isinstance(requirement, dict):
             record['remediation'] = (
@@ -812,10 +775,10 @@ def _normalize_presentation(record):
 def _unique_vulnerabilities(findings, results, setup_paths):
     """Group confirmed reproductions; retain atomic findings and all receipts.
 
-    Same product/version/rule, resource, ordered endpoint chain and predicate
+    Same validated inference, origin, resource, ordered endpoint chain and predicate
     describe one issue family. Request amounts are evidence variants, never
     discarded. Different chains/predicates and concurrent schedules stay apart.
-    No rule-bound identity means no inference of equivalence.
+    Grouping is report-local, not proof of equivalence between applications.
     """
     groups = {}
     for finding in findings:
@@ -842,16 +805,19 @@ def _unique_vulnerabilities(findings, results, setup_paths):
                       and type(a.get('completed_ns')) is int and type(b.get('completed_ns')) is int
                       and max(a['started_ns'], b['started_ns']) < min(a['completed_ns'], b['completed_ns'])
                       for i, a in enumerate(timing) for b in timing[i + 1:])
-        if requirement.get('id') and requirement.get('application_identity') and exact_chain:
-            key = json.dumps([requirement['application_identity'], requirement.get('requirements_version'),
-                              requirement['id'], [(method, path) for method, path, _ in exact_chain[0]],
+        if finding.get('_inferred_rule_valid') and exact_chain:
+            inferred = verification.get('inferred_invariant') or {}
+            key = json.dumps(['AI_INFERRED', inferred.get('statement'),
+                              [urlsplit(a.get('request', {}).get('url', '')).netloc for a in actions],
+                              inferred.get('required_actions'), inferred.get('terminal_state'),
+                              [(method, path) for method, path, _ in exact_chain[0]],
                               exact_chain[1], identifiers(before), overlap], sort_keys=True)
         else:
             key = 'single:' + str(finding.get('id'))
         group = groups.setdefault(key, {'id': 'VULN-' + hashlib.sha256(key.encode()).hexdigest()[:12],
             'representative_finding_id': finding['id'], 'finding_ids': [], 'execution_ids': [],
             'rule_id': requirement.get('id'),
-            'grouping_basis': 'Same authenticated application, requirement, resource, endpoint chain, scheduling and invariant; payload variants retained.'})
+            'grouping_basis': 'Within this report: same validated inference, resource, endpoint chain, scheduling and invariant; payload variants retained.'})
         group['finding_ids'].append(finding['id'])
         finding['vulnerability_id'] = group['id']
         linked_ids = {finding['id'], *finding.get('deduplicated_from', [])}
@@ -927,6 +893,21 @@ def normalize_report(report):
             result['verification_reason'] = linked_finding.get('verification_reason')
         else:
             result['outcome'], result['verification_reason'] = classify(result)
+        if (linked_finding and linked_finding.get('verification_status') == 'NEEDS_REVIEW'
+                and result['outcome'] in ('CONFIRMED', 'REPRODUCED', 'NOT_REPRODUCED')):
+            # A financial bound alone cannot settle a broader linked claim.
+            # Keep the atomic finding and its execution in the same review queue.
+            result['outcome'] = 'NEEDS_REVIEW'
+            result['verification_reason'] = linked_finding['verification_reason']
+        if (linked_finding and linked_finding.get('_provenance_error') ==
+                'Finding verification differs from raw script output'):
+            # The receipt remains authentic, but a conflicting primary claim
+            # cannot share a contradictory headline verdict with that receipt.
+            result['attribution_error'] = linked_finding['_provenance_error']
+            result['outcome'] = 'NEEDS_REVIEW'
+            result['verification_reason'] = (
+                'Authenticated execution is preserved, but the linked finding claims '
+                'different executed evidence; resolve claim attribution before confirmation.')
         _normalize_presentation(result)
         duplicate_target = deduplicated_into.get(result.get('finding_id'))
         if duplicate_target:
@@ -952,7 +933,11 @@ def normalize_report(report):
             result['presentation_status'] = 'EXCLUDED_SETUP_PATH'
             result['presentation_reason'] = ('Excluded setup-path scenario: the central tested behavior '
                                              'is authorized fixture setup, not application attack surface.')
-    counts = {s: sum(f['verification_status'] == s for f in findings) for s in ('CONFIRMED', 'NEEDS_REVIEW', 'NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR')}
+    for finding in findings:
+        finding['security_verdict'] = finding['verification_status']
+    for result in results:
+        result['security_verdict'] = result['outcome']
+    counts = {s: sum(f['verification_status'] == s for f in findings) for s in ('CONFIRMED', 'REPRODUCED', 'NEEDS_REVIEW', 'INSUFFICIENT_EVIDENCE', 'NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR')}
     excluded_setup = [{
         'id': finding.get('id'),
         'title': finding.get('title'),
@@ -973,7 +958,7 @@ def normalize_report(report):
         identifier for finding in findings for identifier in finding.get('deduplicated_from', [])
         if identifier
     }
-    controls_held = sum(result.get('outcome') == 'NOT_REPRODUCED' for result in results)
+    controls_held = 0  # Observed results do not establish business policy.
     # A deduplicated result remains an authenticated execution attempt. This
     # count describes presentation mapping, not discarded receipts.
     deduplicated_results = sum(bool(result.get('deduplicated_into')) for result in results)
@@ -1005,23 +990,25 @@ def normalize_report(report):
         'potential_critical_findings': sum(f['verification_status'] == 'NEEDS_REVIEW'
                                            and str(f.get('severity') or '').lower() == 'critical'
                                            for f in findings),
-        'needs_review': counts['NEEDS_REVIEW'], 'not_reproduced': counts['NOT_REPRODUCED'],
+        'reproduced': counts['REPRODUCED'], 'needs_review': counts['NEEDS_REVIEW'], 'not_reproduced': counts['NOT_REPRODUCED'],
+        'insufficient_evidence': counts['INSUFFICIENT_EVIDENCE'],
         'not_executed': counts['NOT_EXECUTED'] + sum(r['outcome'] == 'NOT_EXECUTED' and r.get('finding_id') not in {f['id'] for f in findings} for r in results),
-        'rejected': controls_held, 'controls_held': controls_held,
+        'rejected': counts['NOT_REPRODUCED'], 'controls_held': controls_held,
         'deduplicated_findings': len(deduplicated_ids),
         'deduplicated_execution_results': deduplicated_results,
         'deduplicated_primary_chains': len(deduplicated_ids),
         'partial_coverage': len(partial_coverage),
+        'unexecuted_hypotheses': len(data.get('unexecuted_hypotheses') or []),
         'excluded_setup_executions': len(excluded_setup),
         'unlinked_execution_results': sum(not result.get('finding_id') for result in results),
         'execution_result_counts': {
             status.lower(): sum(result.get('outcome') == status for result in results)
-            for status in ('CONFIRMED', 'NEEDS_REVIEW', 'NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR')
+            for status in ('CONFIRMED', 'REPRODUCED', 'NEEDS_REVIEW', 'INSUFFICIENT_EVIDENCE', 'NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR')
         },
         'errors': sum(r['outcome'] == 'CHECK_ERROR' and r.get('finding_id') not in {f['id'] for f in findings} for r in results) + counts['CHECK_ERROR'],
         **{key: execution_summary.get(key, 0) for key in (
             'planned_executions', 'execution_attempts', 'completed_executions',
-            'pending_execution', 'missing_receipts', 'process_errors',
+            'pending_execution', 'preflight_rejected', 'missing_receipts', 'process_errors',
             'evidence_contract_errors', 'execution_errors',
             'trace_mismatches', 'untrusted_receipts')},
     }

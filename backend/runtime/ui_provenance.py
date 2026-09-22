@@ -22,6 +22,11 @@ _FACT_PROVENANCE = {
 }
 
 
+def _normalized_ui_text(value):
+    # Whitespace only: preserve labels, punctuation, case and monetary values.
+    return ' '.join(value.split()) if isinstance(value, str) else None
+
+
 class UIProvenanceError(ValueError):
     def __init__(self, message, *, details=None):
         super().__init__(message)
@@ -192,10 +197,11 @@ def relocate_ui_pointers(state, artifact_dir):
                     current = resolve_json_pointer(demo, pointer)
                 except UIProvenanceError:
                     current = None  # unresolvable (e.g. out-of-bounds): provably wrong
-                if current == text:
+                if _normalized_ui_text(current) == _normalized_ui_text(text):
                     continue
                 new_pointer = _relocate_elements_pointer(
-                    demo, pointer, _ui_state_index(pointer), lambda value: value == text)
+                    demo, pointer, _ui_state_index(pointer),
+                    lambda value: _normalized_ui_text(value) == _normalized_ui_text(text))
                 if new_pointer and new_pointer != pointer:
                     fact['json_pointer'] = new_pointer
                     changes.append({'rule_id': rule.get('id'), 'fact_id': fact.get('id'),
@@ -338,7 +344,7 @@ def _validate_ui_text(fact, source_run, artifact_dir):
              'changes_from_previous is only for the corresponding UI transition')
     demo = _read_json(_artifact(artifact_dir, 'demo.json'))
     state, value = _state_for_pointer(demo, pointer, fact['step'], ['elements'])
-    if value != fact['text']:
+    if _normalized_ui_text(value) != _normalized_ui_text(fact['text']):
         raise UIProvenanceError(
             f'UI text differs from the pointed semantic element: {pointer} resolves to {value!r}; '
             f'claimed {fact["text"]!r}', details={
@@ -346,7 +352,9 @@ def _validate_ui_text(fact, source_run, artifact_dir):
             'step': fact['step'], 'json_pointer': pointer,
             'claimed_text': fact['text'], 'pointed_element': value,
         })
-    _require(state.get('elements', []).count(value) == 1, 'UI text fact is ambiguous in its state')
+    _require(sum(_normalized_ui_text(item) == _normalized_ui_text(fact['text'])
+                 for item in state.get('elements', [])) == 1,
+             'UI text fact is ambiguous in its state')
 
 
 def _validate_ui_transition(fact, source_run, artifact_dir):

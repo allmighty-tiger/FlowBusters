@@ -10,6 +10,34 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 
+def issue_setup_authorization(run, root, origin, paths):
+    """Persist explicit CLI operator permission separately from copied evidence."""
+    from backend.runtime.probe_executor import canonical, key_for
+    for path in paths:
+        if (not isinstance(path, str) or not path.startswith('/') or path.startswith('//')
+                or urlsplit(path).query or urlsplit(path).fragment):
+            raise ValueError('Setup authorization requires exact root paths')
+    data = {'schema_version': 1, 'run_id': Path(run).name, 'origin': origin,
+            'setup_paths': list(dict.fromkeys(paths))}
+    data['signature'] = hmac.new(key_for(root), canonical(data), hashlib.sha256).hexdigest()
+    with (Path(run) / 'setup_authorization.json').open('x', encoding='utf-8') as stream:
+        json.dump(data, stream, indent=2)
+
+
+def load_setup_authorization(run, root):
+    from backend.runtime.probe_executor import canonical, key_for
+    path = Path(run) / 'setup_authorization.json'
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text(encoding='utf-8'))
+    signature = data.pop('signature', None)
+    expected = hmac.new(key_for(root), canonical(data), hashlib.sha256).hexdigest()
+    if (not isinstance(signature, str) or not hmac.compare_digest(signature, expected)
+            or data.get('schema_version') != 1 or data.get('run_id') != Path(run).name):
+        raise ValueError('Setup authorization authentication failed')
+    return data
+
+
 def validate_recorded_input(run, flow, root):
     from backend.runtime.reanalyze import validate_recording_source, validate_reanalysis_copy
     manifest = Path(run) / 'recording_source.json'
@@ -18,12 +46,11 @@ def validate_recorded_input(run, flow, root):
         inputs = validate_recording_source(root, source)
         validate_reanalysis_copy(run, flow, inputs, root)
     else:
-        validate_recording_source(root, flow)
+        inputs = validate_recording_source(root, flow)
+    return inputs
 
 
 def prepare_endpoint_catalog(run, flow, root):
-    from backend.runtime.application_identity import validate_identity
-    from backend.runtime.coverage_plans import PLAN_PATH
     from backend.runtime.probe_executor import canonical, key_for
     run = Path(run)
     entries = []
@@ -47,17 +74,22 @@ def prepare_endpoint_catalog(run, flow, root):
     for entry in entries:
         if entry['response'].get('status') not in (404, 405):
             add(entry['request']['method'], entry['request']['url'], 'validated_recording')
-    identity = validate_identity(run, root)
+    # Setup is operator configuration, never an endpoint inferred by the agent.
+    scope = json.loads((run / 'scope.json').read_text(encoding='utf-8'))
+    origins = {row['origin'] for row in endpoints.values()}
+    authorization = load_setup_authorization(run, root)
+    if authorization:
+        if authorization['origin'] not in origins:
+            raise ValueError('Setup authorization target contradicts recording')
+        for path in authorization['setup_paths']:
+            add('POST', authorization['origin'] + path, 'configured_setup')
+    for path in scope.get('setup_paths', []):
+        if (not isinstance(path, str) or not path.startswith('/')
+                or path.startswith('//') or urlsplit(path).query or urlsplit(path).fragment):
+            raise ValueError('Configured setup_paths must be exact root paths')
+        for target in origins:
+            add('POST', target + path, 'configured_setup')
     workflows = {}
-    if identity:
-        for profile in json.loads(PLAN_PATH.read_text(encoding='utf-8'))['profiles']:
-            if all(profile[key] == identity[key] for key in ('application_id', 'identity_version', 'requirements_version')):
-                workflows = profile['workflows']
-                for chain in workflows.values():
-                    for path in chain:
-                        add('POST', identity['target_origin'] + path, 'backend_application_contract')
-                add('POST', identity['target_origin'] + profile['setup'], 'backend_application_contract')
-                add('GET', identity['target_origin'] + profile['state_read'], 'backend_application_contract')
     catalog = {'schema_version': 1, 'flow_name': flow,
                'endpoints': [endpoints[key] for key in sorted(endpoints)], 'workflows': workflows}
     catalog['signature'] = hmac.new(key_for(root, create=True), canonical(catalog), hashlib.sha256).hexdigest()
@@ -96,6 +128,23 @@ def preflight_endpoints(script, catalog):
     if catalog is None:
         return None
     allowed = {(row['method'], row['origin'], row['path']) for row in catalog['endpoints']}
+    from backend.runtime.generated_probes import read_plan
+    try:
+        plan = read_plan(script)
+    except (ValueError, SyntaxError, TypeError, KeyError, OSError) as exc:
+        return f'Probe plan validation failed: {exc}'
+    if plan is not None:
+        setup = plan.get('setup')
+        if setup and not any(row['method'] == 'POST' and row['origin'] == plan['origin']
+                             and row['path'] == setup and row['authority'] == 'configured_setup'
+                             for row in catalog['endpoints']):
+            return f'Unauthorized setup: POST {setup}; select an explicitly configured setup endpoint.'
+        requests = [('GET', plan['state_read'])]
+        requests += [(a['method'], a['path']) for a in plan['actions']]
+        for method, path in requests:
+            if endpoint_key(method, plan['origin'] + path) not in allowed:
+                return f'Endpoint selection error: {method} {path} is absent from the authenticated endpoint catalog.'
+        return None
     tree = ast.parse(Path(script).read_text(encoding='utf-8'))
     names = {}
     def value(node):

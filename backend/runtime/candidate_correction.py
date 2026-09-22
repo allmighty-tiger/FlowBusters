@@ -34,6 +34,10 @@ def _script_endpoint_paths(script: Path) -> set[str]:
         tree = ast.parse(script.read_text(encoding='utf-8'))
     except (OSError, ValueError, SyntaxError):
         return set()
+    from backend.runtime.generated_probes import read_plan
+    plan = read_plan(script)
+    if plan is not None:
+        return {plan['setup'], plan['state_read'], *(a['path'] for a in plan['actions'])}
     paths: set[str] = set()
 
     def add(value) -> None:
@@ -133,11 +137,24 @@ def validate_candidate(candidate, run, root, scripts=None):
                              f'expected {request["method"]} {request["url"]} status={entry["response"]["status"]}')
         if request['method'] == 'GET' or path not in actions:
             raise ValueError('Source fact must support a state-changing candidate action, not just a shared GET')
+        contract = candidate.get('execution_contract')
+        if isinstance(contract, dict) and not any(
+                a.get('method') == request['method'] and a.get('path') == path
+                for a in contract.get('actions', []) if isinstance(a, dict)):
+            raise ValueError('Source fact method/path is absent from the exact execution contract')
         covered.add(source)
     if covered != set(candidate['source_runs']) or len(covered) < 2:
         raise ValueError('Every declared source needs a resolved action fact; at least two distinct sources required')
     if scripts is None:
         scripts = candidate.get('scripts')
+    contract = candidate.get('execution_contract')
+    if not isinstance(contract, dict):
+        raise ValueError('Candidate needs an exact execution_contract')
+    declared_actions = candidate.get('actions')
+    if (isinstance(contract, dict) and isinstance(declared_actions, list) and declared_actions
+            and all(isinstance(a, str) and a.startswith('/') for a in declared_actions)
+            and declared_actions != [a.get('path') for a in contract.get('actions', [])]):
+        raise ValueError('Candidate ordered action paths differ from its execution contract')
     if not isinstance(scripts, list) or not scripts:
         raise ValueError('Candidate needs explicit scripts filenames linking its executable probes')
     script_paths = []
@@ -147,6 +164,8 @@ def validate_candidate(candidate, run, root, scripts=None):
         path = run / 'mutations' / run.name / script
         if not path.is_file():
             raise ValueError('Candidate script does not exist: ' + script)
+        if _script_contract(path) != contract:
+            raise ValueError('Candidate script does not implement its exact execution contract')
         script_paths.append(path)
     # Deterministic action-chain coverage: every state-changing endpoint the
     # candidate declares (and every cited source fact) must be sent by a bound
@@ -193,6 +212,10 @@ source, drop an invalid hypothesis or edit evidence. Include scripts filenames f
 mutations for each candidate. No shell, HTTP, writes, browser or probe execution.
 For logical named actions, add action_endpoints with exact paths from those scripts
 instead of changing the original actions. Read the actual HAR indexes; never guess.
+Include execution_contract with origin, setup, state_read, ordered actions (method,
+path, body), predicate, invariant, unsupported_reason and claim_type from the matching
+PROBE_PLAN. A missing optional plan field is null. Never match a subset or a superset
+of a chain. If no exact plan represents the original hypothesis, leave it unverified.
 If a candidate cannot be justified, leave it unchanged for backend coverage reporting.
 '''
         (workspace / 'prompt.txt').write_text(prompt, encoding='utf-8')
@@ -259,32 +282,30 @@ def _candidate_action_endpoints(candidate) -> set[str]:
     return endpoints
 
 
-def _bind_candidate_scripts(candidate, script_actions: dict[str, set[str]]):
+def _script_contract(script):
+    from backend.runtime.generated_probes import read_plan, render_plan, binding_contract
+    plan = read_plan(script)
+    if plan is not None and script.read_text(encoding='utf-8') == render_plan(plan):
+        return binding_contract(plan)
+    return None  # Arbitrary Python is not a statically proven ordered chain.
+
+
+def _bind_candidate_scripts(candidate, script_actions):
     """Bind a candidate to probe scripts by its verified action chain, not basename.
 
-    Returns ``(scripts, reason)``. An exact, unique binding (one probe whose sent
-    endpoints cover the candidate's cross-source action chain; or the single
-    non-setup probe when the chain is not statically resolvable) is authoritative.
+    Returns ``(scripts, reason)``. Only an exact, unique compiled plan binding is
+    authoritative: ordered methods, paths, bodies, state reads and predicate.
     A zero- or multi-way match is ambiguous: the candidate is left unverified with
     the precise reason instead of being guessed, renamed, or dropped."""
-    targets = _candidate_action_endpoints(candidate)
-    if targets:
-        matches = [name for name, actions in script_actions.items() if targets <= actions]
-        if len(matches) == 1:
-            return [matches[0]], None
-        if len(matches) == 0:
-            return [], ('no bound probe exercises the full cross-source action chain %s'
-                        % sorted(targets))
-        return [], ('ambiguous: %d probe scripts each cover the action chain %s; '
-                    'exactly one must own it' % (len(matches), sorted(matches)))
-    non_setup = [name for name, actions in script_actions.items()
-                 if any(a != '/api/demo/reset' for a in actions)]
-    if len(non_setup) == 1:
-        return non_setup, None
-    if not non_setup:
-        return [], 'no non-setup probe script available to bind to this candidate'
-    return [], ('ambiguous: action chain not statically resolvable and %d non-setup '
-                'scripts could own it; exactly one must be named' % len(non_setup))
+    expected = candidate.get('execution_contract')
+    if not isinstance(expected, dict):
+        return [], 'Missing execution_contract: ordered method/path/body actions and predicate required'
+    matches = [name for name, contract in script_actions.items()
+               if isinstance(contract, dict) and contract == expected]
+    if len(matches) == 1:
+        return matches, None
+    return [], ('Ambiguous exact execution contract: multiple probes match' if matches else
+                'No probe matches ordered actions, setup/state reads and executable predicate')
 
 
 async def correct_candidates(config, run, flow, env, progress):
@@ -311,9 +332,9 @@ async def correct_candidates(config, run, flow, env, progress):
         raise ValueError('Candidate correction refused after execution')
     # Static action chains of every AI probe in this run, used for deterministic
     # candidate -> script binding. Computed once; it never touches source evidence.
-    script_actions: dict[str, set[str]] = {}
+    script_actions: dict[str, dict | None] = {}
     for script in sorted((run / 'mutations' / flow).glob('*.py')):
-        script_actions[script.name] = _script_endpoint_paths(script)
+        script_actions[script.name] = _script_contract(script)
     errors: list[dict] = []
     # Deterministic binding pass: run before any retry so candidates whose only
     # problem is a missing/renamed script link are fixed directly, without trusting
@@ -340,7 +361,11 @@ async def correct_candidates(config, run, flow, env, progress):
         valid, errors = [], []
         for c in data['candidates']:
             try:
-                validate_candidate(c, run, root, scripts=c.get('scripts'))
+                scripts, reason = _bind_candidate_scripts(c, script_actions)
+                if reason:
+                    raise ValueError(reason)
+                c['scripts'] = scripts
+                validate_candidate(c, run, root, scripts=scripts)
                 valid.append(c)
             except (ValueError, KeyError, TypeError, OSError, AttributeError) as exc:
                 errors.append({'candidate_id': c['id'], 'code': 'INVALID_SOURCE_PROVENANCE',
@@ -387,6 +412,9 @@ async def correct_candidates(config, run, flow, env, progress):
             'allowed_scripts': allowed, 'unverified_coverage': errors}
     gate['signature'] = hmac.new(key_for(root), canonical(gate), hashlib.sha256).hexdigest()
     (run / 'candidate_gate.json').write_text(json.dumps(gate, indent=2))
+    if not valid:
+        raise ValueError('Cross-flow could not be checked: no valid AI candidates; ' +
+                         '; '.join(e['candidate_id'] + ': ' + e['message'] for e in errors))
     # Ambiguous or uncorrectable candidates stay in the report as unverified
     # candidate coverage (gate.unverified_coverage) with their precise reason;
     # backend coverage plans still run independently and are labelled separately.

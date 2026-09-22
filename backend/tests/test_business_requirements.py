@@ -19,11 +19,7 @@ def finding(observed=True):
 
 class BusinessRequirementTests(unittest.TestCase):
     def test_registry_records_product_versioned_requirement(self):
-        rule = load_business_requirements()[0]
-        self.assertEqual(rule['id'], 'NSM-TOTAL-RETURN-CAP-2026-09-17')
-        self.assertEqual(rule['application_id'], 'northstar-market')
-        self.assertEqual(rule['requirements_version'], '2026-09-17')
-        self.assertNotIn('allowed_run_ids', rule)
+        self.assertEqual(load_business_requirements(), [])
 
     def test_multiple_runs_of_same_authenticated_application_match(self):
         for run_id in ('northstar-a', 'northstar-cross-flow-b'):
@@ -31,15 +27,15 @@ class BusinessRequirementTests(unittest.TestCase):
             report = {'run_timestamp': '2026-09-18T00:00:00Z', 'findings': [record], 'results': [result]}
             apply_backend_requirements(report, trusted_run_id=run_id, trusted_identity=NORTHSTAR)
             for item in (record, result):
-                self.assertEqual(classify(item)[0], 'CONFIRMED')
-                self.assertEqual(item['backend_requirement']['application_mode'], 'prospective_evaluation')
+                self.assertEqual(classify(item)[0], 'INSUFFICIENT_EVIDENCE')
+                self.assertNotIn('backend_requirement', item)
 
     def test_other_application_on_same_origin_does_not_match(self):
         record = finding()
         apply_backend_requirements({'target_url': 'http://localhost:3000', 'findings': [record], 'results': []},
                                    trusted_run_id='other-run', trusted_identity={'application_id': 'other-app', 'identity_version': '1', 'requirements_version': '2026-09-17'})
         self.assertNotIn('backend_requirement', record)
-        self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
+        self.assertEqual(classify(record)[0], 'INSUFFICIENT_EVIDENCE')
 
     def test_missing_or_agent_spoofed_identity_fails_closed(self):
         for report in ({'findings': [finding()], 'results': []},
@@ -61,8 +57,8 @@ class BusinessRequirementTests(unittest.TestCase):
     def test_earlier_evidence_is_explicitly_retrospective(self):
         record = finding(); report = {'run_timestamp': '2026-09-16T12:00:00Z', 'findings': [record], 'results': []}
         apply_backend_requirements(report, trusted_run_id='migrated-run', trusted_identity=NORTHSTAR)
-        self.assertTrue(record['backend_requirement']['retrospective'])
-        self.assertEqual(record['backend_requirement']['application_mode'], 'retrospective_evidence_evaluation')
+        self.assertNotIn('backend_requirement', record)
+        self.assertEqual(classify(record)[0], 'INSUFFICIENT_EVIDENCE')
 
     def test_agent_flag_is_removed(self):
         record = finding(); record['_backend_requirement_valid'] = True; record['backend_requirement'] = {'id': 'FAKE'}
@@ -75,7 +71,7 @@ class BusinessRequirementTests(unittest.TestCase):
         for source in ('user', 'specification'):
             record = finding(); record['verification']['rule'] = {
                 'source': source, 'reference': 'agent-written link or sentence'}
-            self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
+            self.assertEqual(classify(record)[0], 'INSUFFICIENT_EVIDENCE')
 
     def test_trusted_run_id_requires_canonical_matching_report_path(self):
         self.assertEqual(trusted_report_run_id('runs/example/reports/example/findings.json'), 'example')

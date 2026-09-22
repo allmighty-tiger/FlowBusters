@@ -77,8 +77,8 @@ class ApplicationIdentityEndToEndSmokeTests(unittest.IsolatedAsyncioTestCase):
         return (normalized['findings'][0]['verification_status'],
                 normalized['results'][0]['outcome'])
 
-    async def test_signed_violation_confirms_finding_and_execution_result(self):
-        self.assertEqual(self.normalize(130, True), ('CONFIRMED', 'CONFIRMED'))
+    async def test_identity_does_not_confirm_unvalidated_inference(self):
+        self.assertEqual(self.normalize(130, True), ('INSUFFICIENT_EVIDENCE', 'INSUFFICIENT_EVIDENCE'))
 
     async def test_signed_non_violation_is_negative_for_both_units(self):
         self.assertEqual(self.normalize(100, False),
@@ -88,13 +88,13 @@ class ApplicationIdentityEndToEndSmokeTests(unittest.IsolatedAsyncioTestCase):
         other = {'operator': 'sum_lte', 'terms': [['order', 'currentPrice']],
                  'limit': ['order', 'originalAmount']}
         self.assertEqual(self.normalize(130, True, invariant=other),
-                         ('NEEDS_REVIEW', 'NEEDS_REVIEW'))
+                         ('INSUFFICIENT_EVIDENCE', 'INSUFFICIENT_EVIDENCE'))
 
     async def test_wrong_or_missing_version_cannot_inherit_rule(self):
-        for identity in ({}, {**self.identity, 'requirements_version': '2099-01-01'}):
+        for identity in ({}, {'application_id': 'test-app', 'requirements_version': '2099-01-01'}):
             with self.subTest(identity=identity):
                 self.assertEqual(self.normalize(130, True, identity=identity),
-                                 ('NEEDS_REVIEW', 'NEEDS_REVIEW'))
+                                 ('INSUFFICIENT_EVIDENCE', 'INSUFFICIENT_EVIDENCE'))
 
     async def test_other_app_on_same_port_cannot_obtain_northstar_identity(self):
         transport = httpx.MockTransport(lambda request: httpx.Response(200, json={
@@ -123,8 +123,7 @@ class ApplicationIdentityEndToEndSmokeTests(unittest.IsolatedAsyncioTestCase):
             'identity_endpoint': '/.well-known/flowbusters-identity',
             'allowed_origins': [origin],
         }]}), encoding='utf-8')
-        self.assertEqual((await discover_application_identity(
-            origin, registry_path=registry))['application_id'], 'northstar-market')
+        self.assertIsNone(await discover_application_identity(origin, registry_path=registry))
         Handler.payload = {'application_id': 'other-app', 'identity_version': '1'}
         self.assertIsNone(await discover_application_identity(origin, registry_path=registry))
 

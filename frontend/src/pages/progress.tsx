@@ -14,7 +14,7 @@ const CROSS_FLOW_STEPS = [
   { key: 'analyze', label: 'Application model', detail: 'Authenticating evidence and mapping state' },
   { key: 'mutate', label: 'Conflict scenarios', detail: 'Identifying cross-flow interactions' },
   { key: 'probe', label: 'Probe execution', detail: 'Running backend-owned executable probes' },
-  { key: 'report', label: 'Verification', detail: 'Verifying signed evidence and final verdicts' },
+  { key: 'report', label: 'Verification', detail: 'Verifying captured HTTP evidence and final verdicts' },
 ];
 
 type RunMode = 'RECORDED_FLOW' | 'CROSS_FLOW';

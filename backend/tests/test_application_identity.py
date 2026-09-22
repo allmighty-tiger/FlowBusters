@@ -25,13 +25,13 @@ class ApplicationIdentityTests(unittest.IsolatedAsyncioTestCase):
         return await discover_application_identity(
             'http://localhost:3000/orders', transport=transport)
 
-    async def test_backend_issues_and_validates_identity(self):
+    async def test_legacy_identity_issuance_is_disabled(self):
         selection = await self.selection()
         issue_identity(self.run, self.root, 'http://localhost:3000/orders', selection)
         identity = validate_identity(self.run, self.root)
-        self.assertEqual(identity['application_id'], 'northstar-market')
-        self.assertEqual(identity['identity_version'], '2')
-        self.assertEqual(identity['requirements_version'], '2026-09-17')
+        self.assertIsNone(identity)
+        self.assertIsNone(selection)
+        self.assertFalse((self.run / 'application_identity.json').exists())
 
     async def test_same_origin_is_not_an_identity(self):
         self.assertIsNone(validate_identity(self.run, self.root))
@@ -48,10 +48,10 @@ class ApplicationIdentityTests(unittest.IsolatedAsyncioTestCase):
         selection = await self.selection()
         issue_identity(self.run, self.root, 'http://localhost:3000', selection)
         path = self.run / 'application_identity.json'
-        data = json.loads(path.read_text(encoding='utf-8')); data['application_id'] = 'other-application'
+        data = {'application_id': 'other-application', 'signature': 'forged'}
         path.write_text(json.dumps(data), encoding='utf-8')
-        with self.assertRaisesRegex(ApplicationIdentityError, 'signature'):
-            validate_identity(self.run, self.root)
+        self.assertIsNone(validate_identity(self.run, self.root))
+        self.assertEqual(json.loads(path.read_text()), data)
 
     def test_unsigned_manifest_fails_closed(self):
         (self.run / 'application_identity.json').write_text(json.dumps({
@@ -60,8 +60,7 @@ class ApplicationIdentityTests(unittest.IsolatedAsyncioTestCase):
             'product': 'Northstar Market', 'target_origin': 'http://localhost:3000',
             'issuer': 'flowbusters_backend',
         }), encoding='utf-8')
-        with self.assertRaisesRegex(ApplicationIdentityError, 'invalid'):
-            validate_identity(self.run, self.root)
+        self.assertIsNone(validate_identity(self.run, self.root))
 
 if __name__ == '__main__':
     unittest.main()

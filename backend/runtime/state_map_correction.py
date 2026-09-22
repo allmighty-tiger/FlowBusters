@@ -14,6 +14,24 @@ from backend.runtime.ui_provenance import UIProvenanceError, relocate_ui_pointer
 MAX_CORRECTION_ATTEMPTS = 2
 
 
+def parse_proposal_output(stdout):
+    envelope = json.loads(stdout.decode('utf-8'))
+    if not isinstance(envelope, dict) or envelope.get('is_error'):
+        raise UIProvenanceError('Analyst correction returned an invalid/error CLI result')
+    if isinstance(envelope.get('structured_output'), dict):
+        return envelope['structured_output']
+    result = envelope.get('result')
+    if not isinstance(result, str) or not result.strip():
+        raise UIProvenanceError('Analyst correction returned no structured proposal')
+    result = result.strip()
+    if result.startswith('```json\n') and result.endswith('```'):
+        result = result[len('```json\n'):-3].strip()
+    try:
+        return json.loads(result)
+    except ValueError as exc:
+        raise UIProvenanceError('Analyst correction did not return a complete JSON proposal') from exc
+
+
 def evidence_hashes(run_dir, flow):
     run_dir = Path(run_dir)
     paths = [run_dir / 'flows' / flow / name for name in ('demo.json', 'recording.har')]
@@ -82,10 +100,22 @@ string explaining exact old/new pointers or other field corrections and their ev
 The backend independently validates the proposal before publishing it. A duplicate text
 match is ambiguous; never pick one arbitrarily.
 '''
+        if (run_dir / 'cross_flow_inputs.json').exists():
+            prompt += '''
+This is a CROSS_FLOW map. Combined demo.json UI states retain source-local steps.
+Each transition.ui_context requires source_run exactly equal to the _source_run
+of its referenced before/after raw UI states. The combined run ID is NOT a source.
+Do not combine before from one source with after from another, or invent global
+step numbers. Use exact observed source transitions; inferred cross-flow chains
+are hypotheses, not observed transitions. Keep existing rule/fact claims intact.
+'''
         (workspace / 'analyst_contract.txt').write_text(prompt, encoding='utf-8')
         (workspace / 'mcp.json').write_text('{"mcpServers": {}}', encoding='utf-8')
         proc = await asyncio.create_subprocess_exec(
             config.claude_bin, '--print', '--bare', '--setting-sources', '', '--output-format', 'json',
+            '--json-schema', json.dumps({'type': 'object', 'required': ['state_map', 'correction_notes'],
+                'properties': {'state_map': {'type': 'object'},
+                               'correction_notes': {'type': 'string', 'minLength': 1}}}),
             '--tools', 'Read', '--mcp-config', str(workspace / 'mcp.json'),
             '--strict-mcp-config', '--system-prompt-file', str(workspace / 'analyst_contract.txt'),
             '--model', config.model, '--effort', env.get('CREW_EFFORT', 'medium'),
@@ -103,12 +133,7 @@ match is ambiguous; never pick one arbitrarily.
             raise
         if proc.returncode != 0:
             raise UIProvenanceError(f'Analyst correction process exited with code {proc.returncode}')
-        envelope = json.loads(stdout.decode('utf-8'))
-        if not isinstance(envelope, dict):
-            raise UIProvenanceError('Analyst correction CLI result must be an object')
-        if envelope.get('is_error'):
-            raise UIProvenanceError('Analyst correction returned an error result')
-        return json.loads(envelope['result'])
+        return parse_proposal_output(stdout)
 
 
 async def correct_state_map(config, run_dir, flow, env, progress, *, expected_hashes, deadline):

@@ -1,6 +1,13 @@
 
 // Raw per-script execution log entry
-export interface ScriptResult {
+interface EvidenceAxes {
+  execution_status?: string;
+  security_verdict?: string;
+  rule_origin?: string;
+  inferred_invariant?: { statement: string } | null;
+  supporting_observations?: unknown[];
+}
+export interface ScriptResult extends EvidenceAxes {
   probe_origin?: string;
   script: string;
   mutation_type: string;
@@ -21,7 +28,8 @@ export interface ScriptResult {
 }
 
 // A reported finding; confirmation requires independent evidence.
-export interface Finding {
+export interface Finding extends EvidenceAxes {
+  evidence_validation_status?: string;
   probe_origin?: string;
   coverage_status?: string;
   verification?: { before?: Capture; actions?: Capture[]; action?: Capture; after?: Capture; resolved_invariant?: ResolvedInvariant };
@@ -69,6 +77,9 @@ interface ResolvedInvariant { operator: string; terms: string[][]; limit: string
 interface InvariantView { operands: { label: string; value: number; path: string }[]; total: number; totalLabel: string; maximum: number; maximumLabel: string; statement: string; }
 interface RemediationView { cwe: string; severity: string; endpoints: string[]; issue: string; evidence: string; fixes: string[]; }
 interface TraceView { label: string; role: string; summary: string; capture: Capture; }
+interface CweView { id: string; name: string; description: string; url: string; }
+interface ManualStep { label: string; method: string; path: string; body?: unknown; note: string; }
+interface RequestExample { label: string; curl: string; rawHttp: string; }
 interface PartialCoverage {
   id: string; title: string; source_finding_id?: string; candidate_id?: string;
   execution_id?: string; script?: string; status: 'PARTIAL_COVERAGE'; reason: string;
@@ -108,6 +119,8 @@ export interface FindingsReport {
   findings?: Finding[];
   results: ScriptResult[];
   partial_coverage?: PartialCoverage[];
+  unexecuted_hypotheses?: {id?: string; title?: string; description?: string; verification?: {execution?: {missing_precondition?: string}}}[];
+  assessment_status?: {status: string; planned: number; executed: number; skipped: number; failed: number; pending: number};
   validated_ai_candidates?: number;
   unverified_candidates?: {candidate_id: string; message: string}[];
   excluded_setup_executions?: ExcludedSetupExecution[];
@@ -126,6 +139,7 @@ export interface FindingsReport {
     execution_attempts?: number;
     completed_executions?: number;
     pending_execution?: number;
+    preflight_rejected?: number;
     missing_receipts?: number;
     process_errors?: number;
     evidence_contract_errors?: number;
@@ -141,6 +155,11 @@ export interface FindingsReport {
     execution_result_counts?: Record<string, number>;
   };
   additional_observations?: LegacyObservation[];
+}
+
+export function ReportLoadError({ message }: { message: string }) {
+  return <div className="report-notice" role="alert"><strong>Report unavailable: evidence validation failed.</strong>
+    <p>{message}</p><p>No security verdict or counts can be established from this report.</p></div>;
 }
 
 const SEVERITY_RANK: Record<string, number> = { Critical: 0, High: 1, Medium: 2, Low: 3 };
@@ -184,10 +203,24 @@ function normalizeFindings(report: FindingsReport): Finding[] {
 
 const pretty = (value: unknown) => typeof value === 'string' ? value : JSON.stringify(value, null, 2);
 const titleKey = (value: string) => value.toLowerCase().replace(/^finding\s+\d+[:.\s-]*|^\d+[.)]\s*/g, '').replace(/[^a-z0-9]+/g, '');
-const pathLabels: Record<string, string> = { adjustmentAmount: 'price adjustment', completedAmount: 'completed refund', reimbursementAmount: 'cancellation reimbursement', requestedAmount: 'requested refund', originalAmount: 'original order amount', totalReturned: 'total returned' };
-const labelForPath = (path: string[]) => pathLabels[path.at(-1) || ''] || (path.at(-1) || 'value').replace(/([A-Z])/g, ' $1').toLowerCase();
+const labelForPath = (path: string[]) => (path.at(-1) || 'value').replace(/([A-Z])/g, ' $1').toLowerCase();
 const readPath = (root: unknown, path: string[]) => path.reduce<unknown>((value, key) => value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>)[key] : undefined, root);
-const money = (value: number) => `$${value.toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
+const money = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 6 });
+const CWE_DETAILS: Record<string, Omit<CweView, 'id' | 'url'>> = {
+  'CWE-841': {
+    name: 'Improper Enforcement of Behavioral Workflow',
+    description: 'The server permits an action sequence that leaves the business workflow in a state its rules should prevent.',
+  },
+};
+
+export function cweViews(finding: Finding): CweView[] {
+  return (finding.cwe || []).filter(id => /^CWE-\d+$/.test(id)).map(id => ({
+    id,
+    name: CWE_DETAILS[id]?.name || 'Common Weakness Enumeration entry',
+    description: CWE_DETAILS[id]?.description || 'Open the official CWE entry for the weakness definition and mapping guidance.',
+    url: `https://cwe.mitre.org/data/definitions/${id.slice(4)}.html`,
+  }));
+}
 
 export function invariantFor(finding: Finding): InvariantView | null {
   const invariant = finding.verification?.resolved_invariant;
@@ -198,54 +231,35 @@ export function invariantFor(finding: Finding): InvariantView | null {
   if (operands.some(x => typeof x.value !== 'number' || !Number.isFinite(x.value)) || typeof maximum !== 'number' || !Number.isFinite(maximum)) return null;
   const typed = operands as { path: string; label: string; value: number }[];
   const total = typed.reduce((sum, item) => sum + item.value, 0);
-  const leaves = invariant.terms.map(path => path.at(-1));
-  const totalLabel = leaves.some(leaf => ['completedAmount', 'reimbursementAmount', 'totalReturned'].includes(leaf || ''))
-    && !leaves.some(leaf => ['currentPrice', 'requestedAmount'].includes(leaf || ''))
-    ? 'returned' : 'evaluated total';
+  const totalLabel = 'measured total';
   const maximumLabel = labelForPath(invariant.limit);
   return { operands: typed, total, totalLabel, maximum, maximumLabel,
-    statement: totalLabel === 'returned'
-      ? `${typed.map(x => `${money(x.value)} ${x.label}`).join(' + ')} = ${money(total)} returned against a ${money(maximum)} ${maximumLabel}.`
-      : `${typed.map(x => `${money(x.value)} ${x.label}`).join(' + ')} = ${money(total)} evaluated total; allowed maximum: ${money(maximum)} ${maximumLabel}.` };
+    statement: `${typed.map(x => `${money(x.value)} ${x.label}`).join(' + ')} = ${money(total)}; comparison value: ${money(maximum)} ${maximumLabel}.` };
 }
 
 const responseBody = (value: unknown) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length === 1 && 'actual' in value ? (value as Record<string, unknown>).actual : value;
-const orderFrom = (capture?: Capture) => {
-  const body = responseBody(capture?.response);
-  return body && typeof body === 'object' && !Array.isArray(body) && (body as Record<string, unknown>).order && typeof (body as Record<string, unknown>).order === 'object'
-    ? (body as Record<string, unknown>).order as Record<string, unknown> : null;
-};
 const endpoint = (url: unknown) => { try { return new URL(String(url)).pathname; } catch { return String(url || ''); } };
-const nested = (value: Record<string, unknown> | null, ...keys: string[]) => keys.reduce<unknown>((current, key) => current && typeof current === 'object' ? (current as Record<string, unknown>)[key] : undefined, value);
+const flatValues = (value: unknown, prefix = '', depth = 0): Record<string, unknown> => {
+  if (depth > 6 || value === null || typeof value !== 'object') return prefix ? { [prefix]: value } : {};
+  return Object.fromEntries(Object.entries(value).flatMap(([key, child]) =>
+    Object.entries(flatValues(child, prefix ? prefix + '.' + key : key, depth + 1))).slice(0, 200));
+};
 const conciseChange = (previous: Capture | undefined, current: Capture, label: string) => {
-  if (label === 'Test setup') return 'Reset the authorized test fixture; this is setup, not an attack action.';
-  const before = orderFrom(previous), after = orderFrom(current);
-  if (!after) return label === 'After state' ? 'Captured the final signed response.' : 'Captured signed HTTP evidence.';
-  const fields: [string, string[], boolean][] = [
-    ['totalReturned', ['totalReturned'], true], ['refund.status', ['refund', 'status'], false],
-    ['refund.completedAmount', ['refund', 'completedAmount'], true], ['price adjustment', ['priceProtection', 'adjustmentAmount'], true],
-    ['cancellation reimbursement', ['cancellation', 'reimbursementAmount'], true],
-  ];
-  const changes = fields.flatMap(([name, path, currency]) => {
-    const from = nested(before, ...path), to = nested(after, ...path);
-    if (from === undefined || to === undefined || from === to) return [];
-    const format = (v: unknown) => currency && typeof v === 'number' ? money(v) : String(v);
-    return [`${name}: ${format(from)} → ${format(to)}`];
-  });
-  if (changes.length) return changes.join(' · ');
-  return label === 'Before state' ? 'Captured the signed pre-action order state.' : label === 'After state' ? 'Confirmed the final state; no additional change.' : 'Request completed without a tracked order-state change.';
+  const before = flatValues(responseBody(previous?.response));
+  const after = flatValues(responseBody(current.response));
+  const changes = Object.entries(after).filter(([key, value]) => key in before && before[key] !== value)
+    .slice(0, 8).map(([key, value]) => `${key}: ${String(before[key])} → ${String(value)}`);
+  return changes.length ? changes.join(' · ') : `${label}: recorded the response.`;
 };
 
 export function traceViews(finding: Finding): TraceView[] {
-  const chain = evidenceCaptures(finding);
+  const chain = evidenceCaptures(finding).filter(capture => !(capture.request?.method === 'POST' && endpoint(capture.request?.url) === '/api/demo/reset'));
   const getIndexes = chain.map((c, i) => c.request?.method === 'GET' ? i : -1).filter(i => i >= 0);
   let action = 0;
   return chain.map((capture, i) => {
     const method = String(capture.request?.method || '');
-    const path = endpoint(capture.request?.url);
     let label: string;
-    if (method === 'POST' && path === '/api/demo/reset') label = 'Test setup';
-    else if (method === 'GET' && i === getIndexes[0]) label = 'Before state';
+    if (method === 'GET' && i === getIndexes[0]) label = 'Before state';
     else if (method === 'GET' && i === getIndexes.at(-1)) label = 'After state';
     else if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) label = `Action ${++action}`;
     else label = 'Verification read';
@@ -254,28 +268,67 @@ export function traceViews(finding: Finding): TraceView[] {
   });
 }
 
-export function transitionSummary(finding: Finding) {
-  const states = evidenceCaptures(finding).map(orderFrom).filter((x): x is Record<string, unknown> => !!x);
-  const series = (path: string[], format: (value: unknown) => string) => states.map(state => nested(state, ...path)).filter(value => value !== undefined).filter((value, i, all) => i === 0 || value !== all[i - 1]).map(format);
+export function transitionSummary(finding: Finding): Record<string, string[]> {
+  const states = evidenceCaptures(finding).map(c => flatValues(responseBody(c.response)));
+  const keys = [...new Set(states.flatMap(Object.keys))];
+  return Object.fromEntries(keys.map((key): [string, string[]] => [key, states.map(s => s[key])
+    .filter(v => v !== undefined).filter((v, i, all) => i === 0 || v !== all[i - 1]).map(String)])
+    .filter(([, values]) => values.length > 1));
+}
+
+export function manualReproductionFor(finding: Finding, invariant: InvariantView | null): { steps: ManualStep[]; secure: string; observed: string } | null {
+  if (!['CONFIRMED', 'REPRODUCED'].includes(finding.verification_status || '')) return null;
+  const captures = evidenceCaptures(finding);
+  const requestIndexes = captures.map((capture, index) => capture.request?.method ? index : -1).filter(index => index >= 0);
+  if (!requestIndexes.length) return null;
+  const getIndexes = captures.map((capture, index) => capture.request?.method === 'GET' ? index : -1).filter(index => index >= 0);
+  let action = 0;
+  const steps = captures.flatMap((capture, index): ManualStep[] => {
+    const method = String(capture.request?.method || '');
+    if (!method) return [];
+    const path = endpoint(capture.request?.url);
+    if (method === 'POST' && path === '/api/demo/reset') return [];
+    if (method === 'GET' && index === getIndexes[0] && index !== getIndexes.at(-1)) return [{ label: 'Confirm the starting state', method, path,
+      note: 'Read the relevant fields before the actions.' }];
+    if (method === 'GET' && index === getIndexes.at(-1)) return [{ label: 'Read the final state', method, path,
+      note: invariant ? `Verify ${invariant.operands.map(item => item.path).join(' + ')} against ${invariant.maximumLabel}.` : 'Inspect the final response.' }];
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) return [{ label: `Perform action ${++action}`, method, path,
+      body: capture.request?.body, note: `The recorded backend execution received HTTP ${capture.status_code ?? '—'}.` }];
+    return [{ label: 'Verification read', method, path, note: 'Inspect the returned state.' }];
+  });
   return {
-    totalReturned: series(['totalReturned'], value => typeof value === 'number' ? money(value) : String(value)),
-    refundStatus: series(['refund', 'status'], String),
+    steps,
+    secure: 'The user must review the expected business behavior.',
+    observed: invariant ? invariant.statement : 'The recorded requests produced the final response shown below.',
   };
 }
 
-const confirmedTitle = (finding: Finding, invariant: InvariantView | null) => invariant && finding.verification_status === 'CONFIRMED'
-  ? `${invariant.operands.map((x, i) => `${i === 0 ? x.label.replace(/^./, c => c.toUpperCase()) : x.label} (${money(x.value)})`).join(' plus ')} exceeds the ${invariant.maximumLabel} (${money(invariant.maximum)}).`
-  : finding.title;
+const requestBodyText = (body: unknown) => body === undefined || body === null || body === '' ? '' : typeof body === 'string' ? body : JSON.stringify(body);
+const isEmptyRequestBody = (body: unknown) => body === undefined || body === null || body === '' || (typeof body === 'object' && !Array.isArray(body) && Object.keys(body as Record<string, unknown>).length === 0);
+export function requestExamplesFor(finding: Finding): RequestExample[] {
+  return evidenceCaptures(finding).flatMap((capture): RequestExample[] => {
+    const method = String(capture.request?.method || '');
+    const rawUrl = String(capture.request?.url || '');
+    if (!method || (method === 'POST' && endpoint(rawUrl) === '/api/demo/reset')) return [];
+    let parsed: URL;
+    try { parsed = new URL(rawUrl); } catch { return []; }
+    const body = requestBodyText(capture.request?.body);
+    const hasBody = !!body && !['GET', 'HEAD', 'OPTIONS'].includes(method);
+    const escapedBody = body.replace(/'/g, "''");
+    const curl = hasBody
+      ? `curl.exe -i -X ${method} "${rawUrl}" -H "Content-Type: application/json" --data-raw '${escapedBody}'`
+      : method === 'GET' ? `curl.exe -i "${rawUrl}"` : `curl.exe -i -X ${method} "${rawUrl}"`;
+    const headers = [`${method} ${parsed.pathname}${parsed.search} HTTP/1.1`, `Host: ${parsed.host}`, 'Connection: close'];
+    if (hasBody) headers.push('Content-Type: application/json', `Content-Length: ${new TextEncoder().encode(body).length}`);
+    return [{ label: `${method} ${parsed.pathname}${parsed.search}`, curl, rawHttp: `${headers.join('\r\n')}\r\n\r\n${hasBody ? body : ''}` }];
+  });
+}
 
-const actionNames: Record<string, string> = { '/api/order/price-adjustment': 'price adjustment', '/api/order/refund/request': 'refund request', '/api/order/refund/complete': 'refund completion', '/api/order/cancel': 'order cancellation' };
-const displayTitleFor = (finding: Finding, invariant: InvariantView | null) => {
-  if (finding.verification_status === 'CONFIRMED') return confirmedTitle(finding, invariant);
-  if (finding.verification_status !== 'NOT_REPRODUCED') return finding.title;
-  const actions = evidenceCaptures(finding).filter(c => !['GET', 'HEAD', 'OPTIONS'].includes(String(c.request?.method || '')) && endpoint(c.request?.url) !== '/api/demo/reset').map(c => actionNames[endpoint(c.request?.url)] || endpoint(c.request?.url));
-  if (!actions.length) return 'Tested scenario — control held.';
-  const sequence = actions.join(' followed by ');
-  return `${sequence.charAt(0).toUpperCase()}${sequence.slice(1)} — control held.`;
-};
+function CopyBlock({ text, label }: { text: string; label: string }) {
+  return <div className="copyable-request"><div><strong>{label}</strong><button type="button" onClick={() => navigator.clipboard?.writeText(text)}>Copy</button></div><pre>{text}</pre></div>;
+}
+
+const displayTitleFor = (finding: Finding, _invariant: InvariantView | null) => finding.title;
 
 // Never attach guidance by array position: severity sorting changes that order.
 export function guidanceFor(finding: Finding, markdown: string | null): string | undefined {
@@ -290,25 +343,19 @@ export function guidanceFor(finding: Finding, markdown: string | null): string |
   return matches.length === 1 ? matches[0]?.[2]?.trim() : undefined;
 }
 
-export function remediationFor(finding: Finding, markdown: string | null, invariant: InvariantView | null, normalizedRunId?: string): RemediationView {
+export function remediationFor(finding: Finding, markdown: string | null, invariant: InvariantView | null, _normalizedRunId?: string): RemediationView {
   const text = guidanceFor(finding, markdown) || '';
   const field = (name: string) => text.match(new RegExp(`^- \\*\\*${name}:\\*\\*\\s*([\\s\\S]*?)(?=\\n- \\*\\*[A-Z][^:]*:\\*\\*|$(?![\\s\\S]))`, 'm'))?.[1]?.trim() || '';
   const recordedEndpoints = [...field('Endpoints').matchAll(/`([^`]+)`/g)].map(match => match[1] || '').filter(Boolean);
   const executedEndpoints = evidenceCaptures(finding).filter(c => !['GET', 'HEAD', 'OPTIONS'].includes(String(c.request?.method || '')) && endpoint(c.request?.url) !== '/api/demo/reset').map(c => `${c.request?.method} ${endpoint(c.request?.url)}`);
-  const verified = finding.verification_status === 'CONFIRMED' && invariant;
-  const executionKind = normalizedRunId === 'northstar-refund-v4-reanalysis'
-    ? 'recorded-flow reanalysis' : 'backend execution';
-  const verifiedFixes = invariant ? [
-    `Before committing ${invariant.operands.map(x => x.label).join(' or ')}, atomically recompute their combined amount and reject the state transition if it would exceed ${invariant.maximumLabel}.`,
-    'Perform the limit check and compensation-state update in the same transaction, with idempotency or version enforcement on both state-changing endpoints.',
-  ] : [];
+  const verified = ['CONFIRMED', 'REPRODUCED'].includes(finding.verification_status || '') && invariant;
   return {
     cwe: field('CWE') || finding.cwe?.join(', ') || 'Not recorded',
     severity: verified ? finding.severity || 'Not assessed' : field('Severity') || finding.severity || 'Not assessed',
     endpoints: [...new Set(verified ? executedEndpoints : recordedEndpoints)],
-    issue: finding.normalized_issue || (verified ? `A signed ${executionKind} demonstrated that combined compensation exceeded the permitted order amount.` : field('Issue') || finding.title),
-    evidence: verified ? `${invariant.statement} Verified by execution ${finding.execution_id || 'receipt not shown'}.` : invariant?.statement || finding.verification_reason || 'No verified evidence summary available.',
-    fixes: verified ? verifiedFixes : [...field('Fix').matchAll(/^\s*-\s+(.+)$/gm)].map(match => (match[1] || '').trim()).filter(Boolean),
+    issue: finding.normalized_issue || field('Issue') || finding.title,
+    evidence: invariant?.statement || finding.verification_reason || 'No checked result available.',
+    fixes: [...field('Fix').matchAll(/^\s*-\s+(.+)$/gm)].map(match => (match[1] || '').trim()).filter(Boolean),
   };
 }
 
@@ -323,17 +370,17 @@ export function ReportRunMeta({ report }: { report: FindingsReport }) {
 
 export default function ReportView({ report, remediation }: { report: FindingsReport; remediation: string | null }) {
   const findings = normalizeFindings(report);
-  const confirmed = findings.filter(f => f.verification_status === 'CONFIRMED');
-  const vulnerabilities = report.vulnerabilities || confirmed.map((finding, index) => ({
+  const confirmed = findings.filter(f => ['CONFIRMED', 'REPRODUCED'].includes(f.verification_status || ''));
+  const vulnerabilities = report.vulnerabilities ?? confirmed.map((finding, index) => ({
     id: finding.id || `legacy-${index}`, representative_finding_id: finding.id,
     finding_ids: [finding.id], execution_ids: finding.execution_id ? [finding.execution_id] : [], grouping_basis: '',
   }));
-  const uniqueVulnerabilities = report.summary.unique_vulnerabilities ?? vulnerabilities.length;
+  const uniqueVulnerabilities = vulnerabilities.length;
   const coverageGaps = report.summary.coverage_gaps || 0;
   const review = findings.filter(f => !f.verification_status || f.verification_status === 'NEEDS_REVIEW');
-  const coverage = findings.filter(f => ['NOT_REPRODUCED', 'NOT_EXECUTED', 'CHECK_ERROR'].includes(f.verification_status || ''));
+  const coverage = findings.filter(f => ['NOT_REPRODUCED', 'NOT_EXECUTED', 'INSUFFICIENT_EVIDENCE', 'CHECK_ERROR'].includes(f.verification_status || ''));
   const notExecuted = report.summary.not_executed ?? findings.filter(f => f.verification_status === 'NOT_EXECUTED').length;
-  const errors = Math.max(report.summary.errors, report.results.filter(r => (r.outcome === 'ERROR' || r.outcome === 'CHECK_ERROR')).length);
+  const errors = Math.max(report.summary.errors ?? 0, report.results.filter(r => (r.outcome === 'ERROR' || r.outcome === 'CHECK_ERROR')).length);
   const visibleHeld = coverage.filter(f => f.verification_status === 'NOT_REPRODUCED').length;
   const findingCount = report.summary.finding_count ?? findings.length;
   const executionAttempts = report.summary.execution_attempts ?? report.results.length;
@@ -350,14 +397,19 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
   const excludedSetup = report.excluded_setup_executions || [];
   const executionResultCounts = report.summary.execution_result_counts || {};
   const statusLabel: Record<string, string> = {
-    CONFIRMED: 'Confirmed finding', NEEDS_REVIEW: 'Needs review',
+    INSUFFICIENT_EVIDENCE: 'Insufficient evidence',
+    CONFIRMED: 'Confirmed technical finding', REPRODUCED: 'Behavior reproduced', NEEDS_REVIEW: 'Needs review',
     NOT_REPRODUCED: 'Not reproduced', NOT_EXECUTED: 'Not executed', CHECK_ERROR: 'Check error',
   };
   const renderFinding = (finding: Finding, index: number) => {
-    const chain = evidenceCaptures(finding);
     const invariant = invariantFor(finding);
     const steps = traceViews(finding);
     const transitions = transitionSummary(finding);
+    const manualReproduction = manualReproductionFor(finding, invariant);
+    const requestExamples = requestExamplesFor(finding);
+    const businessActions = evidenceCaptures(finding).filter(capture => !['GET', 'HEAD', 'OPTIONS'].includes(String(capture.request?.method || '')) && endpoint(capture.request?.url) !== '/api/demo/reset');
+    const usesOnlyEmptyActionBodies = businessActions.length > 0 && businessActions.every(capture => isEmptyRequestBody(capture.request?.body));
+    const cwes = cweViews(finding);
     const displayTitle = displayTitleFor(finding, invariant);
     const remediationView = remediationFor(finding, remediation, invariant, report.normalized_run_id);
     const severity = Object.keys(SEVERITY_RANK).find(level => level.toLowerCase() === finding.severity?.trim().toLowerCase());
@@ -378,23 +430,25 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       </summary>
       <div className="finding-body">
         <p className="report-muted">Generation: {originLabel(finding.probe_origin)}</p>
+        {status === 'REPRODUCED' && <section className="report-explanation"><h4>Behavior reproduced</h4><p>{finding.verification_reason}</p><p>The user decides whether this behavior violates the product rules.</p></section>}
+        {finding.rule_origin === 'AI_INFERRED' && <section className="report-expected"><h4>AI-inferred invariant</h4><p>{finding.inferred_invariant?.statement || 'This legacy execution did not record a structured inferred invariant.'}</p><p>Inferred from the recording; not a business-owner-approved requirement.</p></section>}
+        <p className="report-count-context">Execution: {finding.execution_status || 'Not recorded'} · Evidence: {finding.evidence_validation_status || 'Not recorded'} · Security verdict: {statusLabel[status] || status}</p>
+        {status === 'INSUFFICIENT_EVIDENCE' && <section className="report-guidance"><h4>What is missing</h4><p>{finding.verification_reason}</p></section>}
         {invariant && <section className={`report-invariant ${status === 'CONFIRMED' ? 'invariant-confirmed' : ''}`} aria-label="Verified invariant">
-          <p className="report-eyebrow">Backend-evaluated invariant</p>
+          <p className="report-eyebrow">Recorded comparison</p>
           <div className="invariant-equation">{invariant.operands.map((item, i) => <span className="invariant-part" key={item.path}>{i > 0 && <span className="invariant-operator">+</span>}<strong>{money(item.value)}</strong><small>{item.label}</small></span>)}<span className="invariant-operator">=</span><span className="invariant-total"><strong>{money(invariant.total)}</strong><small>{invariant.totalLabel}</small></span></div>
-          <p className="invariant-limit">Allowed maximum: <strong>{money(invariant.maximum)}</strong> {invariant.maximumLabel}</p>
+          <p className="invariant-limit">Comparison value: <strong>{money(invariant.maximum)}</strong> {invariant.maximumLabel}</p>
         </section>}
-        {(!invariant || status === 'NEEDS_REVIEW') && <p className="report-verdict"><strong>{status === 'NEEDS_REVIEW' ? 'Missing evidence' : 'Verification'}</strong><span>{finding.verification_reason || 'No supported state verification recorded.'}</span></p>}
-        {finding.backend_requirement && <section className="report-expected"><h4>Backend-controlled requirement</h4><p><strong>{finding.backend_requirement.id}</strong> · {finding.backend_requirement.product}</p><p>{finding.backend_requirement.statement}</p>{!!finding.backend_requirement.allowed_run_ids?.length && <p className="report-muted">Scoped run: {finding.backend_requirement.allowed_run_ids.join(', ')}</p>}<p className="report-muted">Asserted {finding.backend_requirement.asserted_on}; applied as {finding.backend_requirement.application_mode.replaceAll('_', ' ')}. {finding.backend_requirement.assertion_context}</p></section>}
-        {finding.backend_requirement?.application_identity && <p className="report-muted">Application: {finding.backend_requirement.application_identity.application_id} · identity {finding.backend_requirement.application_identity.identity_version} · requirements {finding.backend_requirement.requirements_version}</p>}
+        {(!invariant || status === 'NEEDS_REVIEW') && <p className="report-verdict"><strong>{status === 'NEEDS_REVIEW' ? 'Why this needs review' : 'Verification'}</strong><span>{finding.verification_reason || 'No supported state verification recorded.'}</span></p>}
         {status === 'NEEDS_REVIEW' && (finding.original_hypothesis || finding.title)?.trim() && <section className="report-expected"><h4>Claim under review</h4><p>{finding.original_hypothesis || finding.title}</p></section>}
         {finding.verification_status === 'NOT_EXECUTED' && <section className="report-guidance"><h4>Missing prerequisite</h4><p>{finding.execution?.missing_precondition || finding.verification_reason}</p><h4>Next step / manual test</h4><p>{finding.execution?.next_step || 'No specific next step recorded.'}</p></section>}
-        {!!finding.deduplicated_from?.length && <p className="report-deduplicated">Also represents deduplicated check: {finding.deduplicated_from.join(', ')}</p>}
-        {finding.url_tested && <p className="report-endpoint"><strong>Tested endpoint</strong><code>{finding.url_tested}</code></p>}
-        <section className="report-expected"><h4>Expected invariant</h4><p>{finding.expected_behavior || (invariant ? `${invariant.operands.map(x => x.label).join(' + ')} must not exceed ${invariant.maximumLabel} (${money(invariant.maximum)}).` : 'No executable invariant was recorded.')}</p></section>
-        {(transitions.totalReturned.length > 1 || transitions.refundStatus.length > 1) && <section className="report-transitions"><h4>State transition summary</h4>{transitions.totalReturned.length > 1 && <p><code>totalReturned</code><strong>{transitions.totalReturned.join(' → ')}</strong></p>}{transitions.refundStatus.length > 1 && <p><code>refund.status</code><strong>{transitions.refundStatus.join(' → ')}</strong></p>}</section>}
-        {status === 'CONFIRMED' ? <section className="report-evidence trace-primary"><h4>Complete ordered request/action trace <span>{chain.length} steps</span></h4><p className="report-muted">Execution: {finding.execution_id}</p>{trace}<p className="report-muted">Source: {finding.source.replaceAll('_', ' ')}{finding.script ? ` · Script: ${finding.script}` : ''}</p></section> : <details className="report-evidence"><summary>Inspect ordered request/action trace ({chain.length})</summary>{trace}</details>}
-        {finding.coverage_status ? <section className="report-guidance"><h4>Scenario not established</h4><p>{finding.verification_reason}</p><p>Resolve the required endpoint and rerun the complete chain before assessing this control.</p></section> : status === 'NOT_REPRODUCED' ? <section className="report-control-observed"><h4>Control observed</h4><p>{finding.verification_reason || 'The signed execution completed without violating the evaluated invariant.'}</p>{finding.title?.trim() && <details><summary>Original hypothesis</summary><p>{finding.title}</p>{remediationView.issue !== finding.title && <p>{remediationView.issue}</p>}</details>}</section> : <section className="report-remediation"><h4>Recommended remediation</h4><dl>
-          <div><dt>CWE</dt><dd>{remediationView.cwe}</dd></div><div><dt>Severity</dt><dd>{remediationView.severity}</dd></div>
+        {finding.url_tested && endpoint(finding.url_tested) !== '/api/demo/reset' && <p className="report-endpoint"><strong>Tested endpoint</strong><code>{finding.url_tested}</code></p>}
+        <section className="report-expected"><h4>AI-proposed test condition</h4><p>{(invariant ? `${invariant.operands.map(x => x.label).join(' + ')} is compared with ${invariant.maximumLabel} (${money(invariant.maximum)}).` : 'No supported comparison was recorded.')}</p></section>
+        {Object.keys(transitions).length > 0 && <section className="report-transitions"><h4>Recorded changes</h4>{Object.entries(transitions).slice(0, 12).map(([name, values]) => <p key={name}><code>{name}</code><strong>{values.join(" → ")}</strong></p>)}</section>}
+        {manualReproduction && <section className="report-reproduction"><p className="report-eyebrow">Manual reproduction</p><h4>Repeat the proven request sequence in an authorized test environment</h4>{usesOnlyEmptyActionBodies && <aside className="empty-body-explanation"><strong>Why are the POST bodies empty?</strong><p>The recorded requests contain no body fields. Their actual effects are shown in the responses below.</p></aside>}<ol>{manualReproduction.steps.map((step, i) => <li key={`${step.method}-${step.path}-${i}`}><div><strong>{step.label}</strong><code>{step.method} {step.path}</code></div>{!['GET', 'HEAD', 'OPTIONS'].includes(step.method) && <p className="reproduction-body"><span>JSON body</span><code>{step.body === undefined || step.body === null || step.body === '' ? 'No request body' : pretty(step.body)}</code>{isEmptyRequestBody(step.body) && <small>No body fields were supplied.</small>}</p>}<p>{step.note}</p></li>)}</ol><div className="reproduction-result"><p>{manualReproduction.secure}</p><p><strong>{manualReproduction.observed}</strong></p></div>{requestExamples.length > 0 && <div className="request-formats"><details open><summary>Copy-ready cURL for PowerShell</summary><CopyBlock label="Run these commands in order" text={requestExamples.map(item => item.curl).join('\n\n')} /></details><details><summary>Raw HTTP for Burp Repeater</summary><p className="report-muted">Send each request in a separate Repeater tab, in the order shown.</p>{requestExamples.map((item, i) => <CopyBlock key={`${item.label}-${i}`} label={`Request ${i + 1}: ${item.label}`} text={item.rawHttp} />)}</details></div>}</section>}
+        {status === 'CONFIRMED' ? <section className="report-evidence trace-primary"><h4>Application request/action trace <span>{steps.length} steps</span></h4><p className="report-muted">Execution: {finding.execution_id}</p>{trace}<p className="report-muted">Source: {finding.source.replaceAll('_', ' ')}{finding.script ? ` · Script: ${finding.script}` : ''}</p></section> : <details className="report-evidence"><summary>Inspect application request/action trace ({steps.length})</summary>{trace}</details>}
+        {status === 'NEEDS_REVIEW' || status === 'NOT_EXECUTED' ? <section className="report-guidance"><h4>Assessment limitation</h4><p>{status === 'NOT_EXECUTED' ? 'This scenario was not executed. See the missing prerequisite above.' : 'This is an unresolved test hypothesis. The recorded comparison does not establish the claimed vulnerability.'}</p><details><summary>Original draft recommendation — unverified</summary><p>{remediationView.issue}</p>{remediationView.fixes.map((fix, i) => <p key={i}>{fix}</p>)}</details></section> : finding.coverage_status ? <section className="report-guidance"><h4>Scenario not established</h4><p>{finding.verification_reason}</p></section> : status === 'NOT_REPRODUCED' ? <section className="report-control-observed"><h4>Test condition not observed</h4><p>{finding.verification_reason || 'The backend-verified execution completed without violating the evaluated invariant.'}</p>{finding.title?.trim() && <details><summary>Original hypothesis</summary><p>{finding.title}</p>{remediationView.issue !== finding.title && <p>{remediationView.issue}</p>}</details>}</section> : <section className="report-remediation"><h4>Recommended remediation</h4><dl>
+          <div><dt>CWE</dt><dd>{cwes.length ? cwes.map(cwe => <span className="remediation-cwe" key={cwe.id}><a href={cwe.url} target="_blank" rel="noreferrer">{cwe.id}: {cwe.name}</a></span>) : remediationView.cwe}</dd></div><div><dt>Severity</dt><dd>{remediationView.severity}</dd></div>
           <div><dt>Affected endpoints</dt><dd className="endpoint-chips">{remediationView.endpoints.length ? remediationView.endpoints.map(x => <code key={x}>{x}</code>) : 'Not recorded'}</dd></div>
           <div><dt>Issue</dt><dd>{remediationView.issue}</dd></div><div><dt>{status === 'CONFIRMED' ? 'Proven facts' : 'Evidence available'}</dt><dd>{remediationView.evidence}</dd></div>
           <div><dt>Recommendation (not evidence)</dt><dd>{remediationView.fixes.length ? <ul>{remediationView.fixes.map(x => <li key={x}>{x}</li>)}</ul> : 'No specific recommendation recorded.'}</dd></div>
@@ -405,48 +459,52 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
   const primaryMessage = noChecks
     ? (plannedExecutions === 0 ? '0 probes generated / no security checks executed' : 'No security checks executed')
     : uniqueVulnerabilities
-    ? `${uniqueVulnerabilities} confirmed ${uniqueVulnerabilities === 1 ? 'vulnerability requires' : 'vulnerabilities require'} action.`
+    ? `${uniqueVulnerabilities} ${uniqueVulnerabilities === 1 ? 'recorded result requires' : 'recorded results require'} user review.`
     : review.length
       ? `No vulnerability is confirmed yet. ${review.length} ${review.length === 1 ? 'item requires' : 'items require'} review.`
       : 'No vulnerability was confirmed by the executed checks.';
   return <section className="fb-report">
     <section className={`report-overview ${noChecks ? 'has-review' : confirmed.length ? 'has-confirmed' : review.length ? 'has-review' : 'has-clear'}`}>
-      <div><p className="report-eyebrow">Assessment outcome</p><h2>{primaryMessage}</h2>
-        <p>{noChecks ? 'No executed security checks means no conclusion about vulnerabilities or held controls.' : 'Verdicts require captured state evidence. Severity alone is not confirmation.'}</p></div>
-      <span className="report-risk-label">{noChecks ? 'Not assessed' : confirmed.some(f => f.severity?.toLowerCase() === 'critical') ? 'Critical action' : confirmed.length ? 'Action required' : review.length ? 'Review required' : 'No confirmed issues'}</span>
+      <div className="report-overview-copy"><p className="report-eyebrow">Assessment outcome</p><h2>{primaryMessage}</h2>
+        <p>{noChecks ? 'No executed security checks means no conclusion about vulnerabilities or held controls.' : 'Results describe recorded behavior. Business meaning and impact require user review.'}</p>
+      {!noChecks && confirmed.length === 0 && review.length > 0 && <p className="report-notice">No vulnerability has been established. Review items are unresolved hypotheses: a check may have run successfully while testing only part of the claimed behavior. Each item explains the remaining limitation below.</p>}
+      </div>
+      <span className="report-risk-label">{noChecks ? 'Not assessed' : confirmed.some(f => f.severity?.toLowerCase() === 'critical') ? 'Review required' : confirmed.length ? 'Review required' : review.length ? 'Review required' : 'No confirmed issues'}</span>
     </section>
     <div className="report-metrics" aria-label="Assessment summary">
-      {[[confirmed.length, 'Confirmed findings', 'confirmed', ''], [review.length, 'Findings needing review', 'review', ''], [visibleHeld, 'Not-reproduced findings', 'held', 'security findings'], [notExecuted + errors + coverageGaps, 'Finding coverage gaps', 'gap', '']].map(([value, label, tone, detail]) =>
+      {[[confirmed.length, 'Reproduced / technical findings', 'confirmed', ''], [review.length, 'Findings needing review', 'review', ''], [visibleHeld, 'Not-reproduced findings', 'held', 'security findings'], [notExecuted + errors + coverageGaps, 'Finding coverage gaps', 'gap', '']].map(([value, label, tone, detail]) =>
         <div className={`report-metric metric-${tone}`} key={label}><strong>{value}</strong><span>{label}</span>{detail && <small>{detail}</small>}</div>)}
     </div>
-    <p className="report-count-context">Finding verdicts: <strong>{findingCount}</strong> normalized findings after deduplication. <strong>{uniqueVulnerabilities}</strong> unique vulnerabilities from <strong>{confirmed.length}</strong> confirmed findings. <strong>{coverageGaps}</strong> findings with incomplete scenario coverage.</p>
+    <p className="report-count-context">Finding verdicts: <strong>{findingCount}</strong> normalized findings after deduplication. <strong>{uniqueVulnerabilities}</strong> result groups from <strong>{confirmed.length}</strong> recorded findings. <strong>{coverageGaps}</strong> findings with incomplete scenario coverage.</p>
     <section className="report-execution-summary" aria-label="Execution summary">
       <div><p className="report-eyebrow">Backend-derived</p><h3>Execution attempts</h3></div>
+      {report.assessment_status && <p>Assessment {report.assessment_status.status}: planned {report.assessment_status.planned}, executed {report.assessment_status.executed}, skipped {report.assessment_status.skipped}, failed {report.assessment_status.failed}, pending {report.assessment_status.pending}.</p>}
       <dl>
         <div><dt>Planned</dt><dd>{plannedExecutions}</dd></div>
         <div><dt>Attempts</dt><dd>{executionAttempts}</dd></div>
-        <div><dt>Authenticated terminal receipts</dt><dd>{completedExecutions}</dd></div>
+        <div><dt>Backend-verified executions</dt><dd>{completedExecutions}</dd></div>
         <div><dt>Pending</dt><dd>{pendingExecutions}</dd></div>
+        <div><dt>Rejected before execution</dt><dd>{report.summary.preflight_rejected || 0}</dd></div>
         <div><dt>Process errors</dt><dd>{processErrors}</dd></div>
         <div><dt>Evidence-contract errors</dt><dd>{evidenceContractErrors}</dd></div>
         <div><dt>Trace mismatches</dt><dd>{traceMismatches}</dd></div>
       </dl>
-      <p>Primary execution results: <strong>{executionResultCounts.needs_review || 0}</strong> need review, <strong>{executionResultCounts.not_reproduced || 0}</strong> not reproduced, <strong>{executionResultCounts.confirmed || 0}</strong> confirmed, and <strong>{executionResultCounts.check_error || 0}</strong> check errors.</p>
+      <p>Primary execution results: <strong>{executionResultCounts.needs_review || 0}</strong> need review, <strong>{executionResultCounts.not_reproduced || 0}</strong> not reproduced, <strong>{executionResultCounts.reproduced || 0}</strong> reproduced, <strong>{executionResultCounts.confirmed || 0}</strong> technical findings, and <strong>{executionResultCounts.check_error || 0}</strong> check errors.</p>
       <p>Deduplicated primary chains: <strong>{report.summary.deduplicated_primary_chains ?? deduplicatedIds.length}</strong>. All {executionAttempts} authenticated attempts remain listed below.</p>
       {report.summary.probe_origin_counts && <p>Probe generation: {Object.entries(report.summary.probe_origin_counts).filter(([, count]) => count > 0).map(([origin, count]) => `${originLabel(origin)}: ${count} execution results`).join('; ')}.</p>}
     </section>
-    {(notExecuted > 0 || errors > 0 || pendingExecutions > 0 || executionErrors > 0) && <p className="report-notice" role="status">Coverage is incomplete: {notExecuted} not executed findings, {pendingExecutions} pending probes, {processErrors} process errors, {evidenceContractErrors} evidence-contract errors, and {traceMismatches} signed-trace mismatches. A terminal receipt with invalid evidence is not a successful check.</p>}
+    {(notExecuted > 0 || errors > 0 || pendingExecutions > 0 || executionErrors > 0) && <p className="report-notice" role="status">Coverage is incomplete: {notExecuted} not executed findings, {pendingExecutions} pending probes, {processErrors} process errors, {evidenceContractErrors} evidence-contract errors, and {traceMismatches} authenticated HTTP-trace mismatches. A terminal receipt with invalid evidence is not a successful check.</p>}
 
     <section className="report-section">
-      <div className="report-section-heading"><div><p className="report-eyebrow">Evidence-backed</p><h2>Confirmed vulnerabilities</h2></div><span>{uniqueVulnerabilities}</span></div>
+      <div className="report-section-heading"><div><p className="report-eyebrow">Evidence-backed</p><h2>Reproduced behavior and technical findings</h2></div><span>{uniqueVulnerabilities}</span></div>
       {vulnerabilities.length ? vulnerabilities.map(group => {
         const members = confirmed.filter(f => group.finding_ids.includes(f.id));
         return <section className="report-vulnerability-group" key={group.id} aria-label="Unique vulnerability">
-          <p className="report-count-context">{group.id}: {members.length} confirmed findings · {group.execution_ids.length} authenticated receipts.</p>
+          <p className="report-count-context">{group.id}: {members.length} recorded findings · {group.execution_ids.length} backend-verified execution records.</p>
           {members.slice(0, 1).map(renderFinding)}
-          {members.length > 1 && <details className="report-evidence"><summary>Additional reproductions of this vulnerability ({members.length - 1})</summary><p>{group.grouping_basis} Each payload and signed trace remains separately inspectable.</p>{members.slice(1).map(renderFinding)}</details>}
+          {members.length > 1 && <details className="report-evidence"><summary>Additional reproductions of this vulnerability ({members.length - 1})</summary><p>{group.grouping_basis} Each request payload and backend-verified HTTP trace remains separately inspectable.</p>{members.slice(1).map(renderFinding)}</details>}
         </section>;
-      }) : <div className="report-empty"><strong>No confirmed vulnerabilities</strong><p>That means the current evidence did not cross the confirmation threshold—not that the target is secure.</p></div>}
+      }) : <div className="report-empty"><strong>No reproduced findings</strong><p>That means the current evidence did not cross the confirmation threshold—not that the target is secure.</p></div>}
     </section>
 
     {review.length > 0 && <section className="report-section">
@@ -463,7 +521,7 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
 
     {report.validated_ai_candidates !== undefined && <section className="report-section">
       <h2>AI candidate coverage</h2>
-      <p>{report.validated_ai_candidates} validated AI candidates. Backend coverage probes are independently planned and labelled in the execution log.</p>
+      <p>{report.validated_ai_candidates} validated AI candidates. Tests are proposed from the selected recordings.</p>
       {(report.unverified_candidates || []).map(c => <p key={c.candidate_id}>{c.candidate_id}: Unverified coverage — {c.message}</p>)}
     </section>}
     {partialCoverage.length > 0 && <section className="report-section report-partial-coverage">
@@ -471,16 +529,21 @@ export default function ReportView({ report, remediation }: { report: FindingsRe
       <p className="report-section-copy">These traces support analysis but lack an independently evaluated invariant and therefore are not security findings or execution verdicts.</p>
       {partialCoverage.map(item => <article className="report-guidance" key={item.id}><h3>{item.title}</h3><p>{item.reason}</p><p className="report-muted">Candidate: {item.candidate_id || 'not recorded'} · Primary finding: {item.source_finding_id || 'not recorded'} · Execution: {item.execution_id || 'not recorded'}</p></article>)}
     </section>}
+    {!!report.unexecuted_hypotheses?.length && <section className="report-section">
+      <h2>Unexecuted hypotheses</h2>
+      <p>These hypotheses have no planned probe or execution record. They are coverage notes, not additional findings.</p>
+      {report.unexecuted_hypotheses.map((item, index) => <article key={item.id || index}><h3>{item.id}: {item.title}</h3><p>{item.verification?.execution?.missing_precondition || item.description || 'No executable probe was generated.'}</p></article>)}
+    </section>}
 
     {excludedSetup.length > 0 && <section className="report-section report-excluded-setup">
       <div className="report-section-heading"><div><p className="report-eyebrow">Fixture execution</p><h2>Excluded setup-path scenarios</h2></div><span>{excludedSetup.length}</span></div>
-      {excludedSetup.map(item => <article className="report-guidance" key={item.execution_id || item.id}><h3>Excluded setup-path scenario</h3><p>{item.reason}</p><p className="report-muted">{item.script} · Execution: {item.execution_id}</p></article>)}
+      {excludedSetup.map(item => <article className="report-guidance" key={item.execution_id || item.id}><h3>Excluded setup-path scenario</h3><p>This execution exercised authorized fixture setup rather than application attack surface.</p><p className="report-muted">{item.script} · Execution: {item.execution_id}</p></article>)}
     </section>}
 
     <details className="report-appendix"><summary>Probe execution log <span>{executionAttempts} attempts</span></summary>
       <p className="report-muted">Individual checks are supporting evidence, not additional vulnerabilities. A zero process exit does not make evidence valid.</p>
       {report.results.length === 0 && <p>No execution records available.</p>}
-      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={result.execution_id || i} open={result.outcome === 'NOT_EXECUTED' || result.evidence_validation_status === 'invalid'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.presentation_status === 'EXCLUDED_SETUP_PATH' ? 'Excluded setup-path scenario' : result.presentation_status === 'DEDUPLICATED_PRIMARY_CHAIN' ? `Deduplicated evidence for ${result.deduplicated_into}` : result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Generation: {originLabel(result.probe_origin)} · Execution: {result.execution_id || 'Not recorded'}</p><p>Mutation: {result.mutation_type}</p><code>{result.url_tested}</code>{result.evidence_validation_status === 'invalid' && <p className="report-notice"><strong>Evidence invalid:</strong> {result.evidence_error_category?.replaceAll('_', ' ') || 'contract or trace validation failed'}. This receipt is not a successful check.</p>}{result.presentation_reason && <p><strong>{result.presentation_reason}</strong></p>}{result.verification_reason && <p>{result.verification_reason}</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</div></details>)}</div>
+      <div className="report-results">{report.results.map((result, i) => <details className="report-result" key={result.execution_id || i} open={result.outcome === 'NOT_EXECUTED' || result.evidence_validation_status === 'invalid'}><summary><span className={`result-dot result-${result.outcome.toLowerCase()}`} /> <strong>{result.script}</strong><span>{result.presentation_status === 'EXCLUDED_SETUP_PATH' ? 'Excluded setup-path scenario' : result.presentation_status === 'DEDUPLICATED_PRIMARY_CHAIN' ? `Deduplicated evidence for ${result.deduplicated_into}` : result.outcome.replaceAll('_', ' ')}</span><span>HTTP {result.status_code ?? '—'}</span></summary><div><p>Generation: {originLabel(result.probe_origin)} · Execution: {result.execution_id || 'Not recorded'}</p><p>Mutation: {result.mutation_type}</p>{result.presentation_status === 'EXCLUDED_SETUP_PATH' ? <p><strong>Authorized fixture setup; excluded from security findings.</strong></p> : <>{endpoint(result.url_tested) !== '/api/demo/reset' && <code>{result.url_tested}</code>}{result.presentation_reason && <p><strong>{result.presentation_reason}</strong></p>}{result.verification_reason && <p>{result.verification_reason}</p>}{result.response_snippet && <pre>{result.response_snippet}</pre>}</>}{result.evidence_validation_status === 'invalid' && <p className="report-notice"><strong>Evidence invalid:</strong> {result.evidence_error_category?.replaceAll('_', ' ') || 'contract or trace validation failed'}. This receipt is not a successful check.</p>}{result.error_message && <p className="report-notice">{result.error_message}</p>}</div></details>)}</div>
     </details>
   </section>;
 }

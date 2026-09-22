@@ -13,7 +13,8 @@ class StartupPromptTests(unittest.TestCase):
             'skills/analyze-har/SKILL.md','skills/analyze-har/OBSERVED_UI_RULES.md',
             'agents/saboteur/charter.md',
             'skills/mutate-flow/SKILL.md','agents/prober/charter.md',
-            'skills/probe-flow/SKILL.md','skills/probe-flow/VERIFICATION.md']
+            'skills/probe-flow/SKILL.md','skills/probe-flow/VERIFICATION.md',
+            'skills/probe-flow/REPORTING.md']
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)
             for i,f in enumerate(files):
@@ -60,6 +61,9 @@ class StartupPromptTests(unittest.TestCase):
             self.assertIn('changes_from_previous/appeared/8` is INVALID', continuation)
             self.assertIn('at most TWO dedicated Analyst correction attempts', continuation)
             self.assertIn('validator_error.json', continuation)
+            self.assertIn('The primary report reader is a business analyst', continuation)
+            self.assertIn('AI_INFERRED invariant', continuation)
+            self.assertIn('ordered requests and exact bodies', continuation)
             (run / 'crew/skills/analyze-har/OBSERVED_UI_RULES.md').unlink()
             with self.assertRaises(FileNotFoundError):
                 build_system_prompt(run, 'test-flow')

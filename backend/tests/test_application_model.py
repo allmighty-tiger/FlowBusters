@@ -26,6 +26,24 @@ class ApplicationModelTests(unittest.TestCase):
         self.assertTrue(apps[0]['runs'][0]['eligible'])
         self.assertEqual(apps[0]['runs'][0]['observed_ui_provenance'], 'verified')
 
+    def test_authenticated_reanalysis_is_selectable_without_copying_capture_manifest(self):
+        from backend.runtime.reanalyze import validate_recording_source, prepare_reanalysis_inputs
+        original = self.root / 'runs' / 'refund'
+        inputs = validate_recording_source(self.root, 'refund')
+        destination = self.root / 'runs' / 'refund-new'; destination.mkdir()
+        prepare_reanalysis_inputs(destination, destination.name, inputs, self.root)
+        state = json.loads((original / 'flows/refund/state_map.json').read_text())
+        state['flow_name'] = destination.name
+        artifacts = destination / 'flows' / destination.name
+        (artifacts / 'state_map.json').write_text(json.dumps(state))
+        before = {p: p.read_bytes() for p in original.rglob('*') if p.is_file()}
+        selected = collect(self.root, ['refund-new', 'cancel'], 'http://localhost:3000')
+        self.assertEqual(selected['sources'][0]['run_id'], 'refund-new')
+        self.assertEqual(before, {p: p.read_bytes() for p in original.rglob('*') if p.is_file()})
+        demo = artifacts / 'demo.json'; demo.write_text(demo.read_text() + ' ')
+        with self.assertRaisesRegex(ValueError, 'Copied recording artifact changed'):
+            collect(self.root, ['refund-new', 'cancel'], 'http://localhost:3000')
+
     def test_zero_script_refund_is_eligible_without_report_target_and_sources_are_unchanged(self):
         before = {p: p.read_bytes() for p in self.root.rglob('*') if p.is_file()}
         inputs = collect(self.root, ['refund', 'cancel'], 'http://localhost:3000')
