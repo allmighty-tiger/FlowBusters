@@ -251,6 +251,14 @@ measuredValue=0 cannot reject the hypothesis: retain it as NEEDS_REVIEW unless
 an independently supported predicate tests the requested amount itself.
 # Setup admission
 
+Numeric-plan provenance failures are admission errors, not unsupported predicates.
+The generation gate may relocate an unchanged observation value to one unique
+exact pointer in the same authenticated raw artifact. Abbreviated HAR bodies and
+state-map analysis require regeneration; they cannot be accepted as raw evidence.
+After one unsuccessful regeneration the JSON plan is rejected without creating
+Python or making HTTP requests. Independent admitted plans may still execute.
+Preflight rejections are separate from process errors and have no execution receipt.
+
 A PROBE_PLAN setup is an explicitly configured POST reset, not a state-read GET.
 Use only a `configured_setup` entry from the authenticated endpoint catalog.
 All planned methods and paths are checked before the first probe. Multiple

@@ -35,6 +35,15 @@ observed limit. A uniqueness or field-trust claim cannot use that as proof.
 The backend validates plans before creating Python. Legacy script examples below
 describe compiled output, not files the agent should author for a new run.
 
+Supporting observations cite only immutable `demo.json` or `recording.har`.
+`state_map.json`, its attack-surface labels and inferred rules are analysis, not
+raw observations. A pointer to `/log/entries/2/response/content/text` denotes the
+ENTIRE raw string, including other fields and timestamps. A JSON subset such as
+`{"order":{"totalReturned":100}}` is not that string. Copy the exact value.
+A source-reference failure does not make `sum_lte` unsupported. Repair a pointer
+only on one unique exact raw match, otherwise regenerate references once or
+reject before Python creation. Never remove the numeric invariant to pass admission.
+
 ## Confidence: medium
 
 ## When to Use

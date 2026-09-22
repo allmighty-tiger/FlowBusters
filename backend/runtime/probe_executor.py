@@ -695,6 +695,13 @@ def reconcile(data, report_dir, root):
         planned = [p for p in planned if p[0] == 'BACKEND_COVERAGE' or p[1] in gate['allowed_scripts']]
     from backend.runtime.queue_status import load_rejections
     rejections = load_rejections(run_dir, root)
+    # Rejected JSON plans never become Python scripts or HTTP attempts.
+    # Count their authenticated preflight decisions without inventing receipts.
+    for rejection in rejections:
+        if rejection['script'].endswith('.plan.json'):
+            item = ('MUTATION_SCRIPT', rejection['script'])
+            if item not in planned:
+                planned.append(item)
     rejected_by_name = {r['script']: r for r in rejections}
 
     def attach_rule_provenance(record):
@@ -966,6 +973,9 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
         json.dump(draft, stream, indent=2)
     backend_coverage = run_dir / 'backend_coverage' / flow
     scripts = sorted((run_dir / 'mutations' / flow).glob('*.py'))
+    uncompiled = [p for p in sorted((run_dir / 'mutations' / flow).glob('*.plan.json'))
+                  if not p.with_name(p.name[:-len('.plan.json')] + '.py').exists()]
+    scripts += uncompiled
     # Extra verification probes are separate programs/receipts, never relabelled mutations.
     extra = run_dir / 'verification_probes' / flow
     scripts += sorted(extra.glob('*.py'))
@@ -986,6 +996,17 @@ async def execute_run(run_dir, flow, root, progress, execution_progress=None):
     from backend.runtime.generated_probes import validate_plan_set
     plan_errors = validate_plan_set(scripts, endpoint_catalog, run=run_dir, root=root)
     rejected = {p: e['error'] for p in scripts for e in plan_errors if e['script'] == p.name}
+    for plan_path in uncompiled:
+        if plan_path not in scripts:
+            continue
+        from backend.runtime.probe_contract import validate_admission
+        error = 'JSON plan was not admitted; no executable script was created'
+        try:
+            validate_admission(json.loads(plan_path.read_text(encoding='utf-8')),
+                               run_dir, root, endpoint_catalog)
+        except (ValueError, TypeError, KeyError) as exc:
+            error += ': ' + str(exc)
+        rejected[plan_path] = error
     for planned_script in scripts:
         error = (preflight_script_contract(planned_script)
                  or preflight_endpoints(planned_script, endpoint_catalog))

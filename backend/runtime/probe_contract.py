@@ -59,6 +59,9 @@ def validate_admission(plan, run, root, catalog):
         raise ValueError('New JSON plans require schema_version=2')
     validate_combination(plan)
     validate_plan(plan)
+    _, _, observation_errors = inspect_observations(plan, run, root, repair=False)
+    if observation_errors:
+        raise ValueError('Invalid supporting observations: ' + json.dumps(observation_errors))
     if not plan.get('setup'):
         raise ValueError('Independent configured setup is required')
     rows = catalog['endpoints']
@@ -71,6 +74,77 @@ def validate_admission(plan, run, root, catalog):
     if plan['predicate'] == Predicate.BUSINESS_RULE.value:
         validate_support(plan, run, root)
         validate_recorded_operand_paths(plan, run)
+
+
+def inspect_observations(plan, run, root, *, repair=True):
+    """Generation only: relocate a claimed value only on one exact raw match.
+
+    Never expand abbreviated HAR bodies, drop observations, or change values.
+    Authentication and the runtime verifier remain independent of this helper.
+    """
+    import re
+    from backend.runtime.endpoint_catalog import validate_recorded_input
+    from backend.runtime.ui_provenance import resolve_json_pointer, _verify_cross_flow_snapshot
+    run = Path(run).resolve()
+    corrected = deepcopy(plan)
+    repairs, errors, documents = [], [], {}
+    observations = corrected.get('supporting_observations', [])
+    if not isinstance(observations, list):
+        return corrected, repairs, [{'error': 'supporting_observations must be an array'}]
+    cross = (run / 'cross_flow_inputs.json').exists()
+
+    def matches(node, wanted, pointer=''):
+        if type(node) is type(wanted) and node == wanted:
+            yield pointer
+        if isinstance(node, dict):
+            for key, child in node.items():
+                escaped = key.replace('~', '~0').replace('/', '~1')
+                yield from matches(child, wanted, pointer + '/' + escaped)
+        elif isinstance(node, list):
+            for index, child in enumerate(node):
+                yield from matches(child, wanted, pointer + '/' + str(index))
+
+    for index, observation in enumerate(observations):
+        detail = {'index': index, 'observation': deepcopy(observation)}
+        try:
+            if not isinstance(observation, dict) or 'value' not in observation:
+                raise ValueError('Observation requires a structured reference and exact value')
+            source, artifact = observation.get('source_run'), observation.get('artifact')
+            if not isinstance(source, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', source):
+                raise ValueError('Invalid observation source_run')
+            if artifact not in ('demo.json', 'recording.har'):
+                raise ValueError('Only raw demo.json and recording.har are supporting evidence; state_map.json is agent analysis')
+            if not cross and source != run.name:
+                raise ValueError('Observation source was not selected for this run')
+            folder = run / 'cross_flow_sources' / source if cross else run / 'flows' / run.name
+            path = folder / artifact
+            if path.is_symlink() or not path.resolve().is_relative_to(run):
+                raise ValueError('Observation escapes the run')
+            if (source, artifact) not in documents:
+                if cross:
+                    _verify_cross_flow_snapshot(run, source, folder, root=root)
+                else:
+                    validate_recorded_input(run, run.name, root)
+                documents[source, artifact] = json.loads(path.read_text(encoding='utf-8'))
+            document = documents[source, artifact]
+            try:
+                actual = resolve_json_pointer(document, observation.get('json_pointer'))
+                detail['actual_value'] = actual
+                if type(actual) is type(observation['value']) and actual == observation['value']:
+                    continue
+            except ValueError as exc:
+                detail['pointer_error'] = str(exc)
+            locations = list(matches(document, observation['value']))
+            detail['exact_match_pointers'] = locations
+            if repair and len(locations) == 1:
+                observation['json_pointer'] = locations[0]
+                repairs.append(dict(detail, repaired_pointer=locations[0]))
+                continue
+            raise ValueError('Claimed value does not match the raw pointer; '
+                             f'{len(locations)} exact raw matches. Regenerate the reference; do not paraphrase content.text')
+        except (ValueError, OSError, KeyError, TypeError) as exc:
+            errors.append(dict(detail, error=str(exc)))
+    return corrected, repairs, errors
 
 
 def write_admitted_plan(path, plan, run, root, catalog):

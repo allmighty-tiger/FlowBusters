@@ -34,6 +34,33 @@ metadata is omitted. (`ReportView.tsx`, `LifecycleReport`.)
 
 ## New-run inference and isolation gate (2026-09-21)
 
+### Numeric source-reference admission correction (2026-09-22)
+
+`probe_contract.inspect_observations` authenticates selected recording artifacts
+and checks exact, type-preserving observation values. During generation only, it
+may relocate a pointer when that unchanged value has exactly one match in the
+same raw artifact. It never expands a JSON subset into a HAR `content.text`
+string, drops an observation, or treats agent state maps as raw evidence.
+`probe_plan_correction.admit_json_plans` supplies exact discrepancies and raw
+observation examples for one correction attempt. A numeric plan cannot become
+unsupported merely because its references failed validation. An unresolved
+numeric plan stays rejected JSON, with no compiled script or HTTP execution.
+`probe_executor.execute_run` records that preflight rejection separately and
+continues independent admitted probes; `reconcile` counts the rejected plan
+without manufacturing an execution receipt. These are admission/accounting
+changes, not changes to receipt validation or security verdict thresholds.
+
+Already executed unsupported receipts remain unsupported: a generation fix
+cannot retrospectively add an executed invariant or violation boolean.
+`queue_status.assessment_status` includes preflight rejections in failures, so
+`COMPLETED_WITH_ERRORS` can legitimately coexist with zero process errors.
+
+Known classification limitation: `verification._claim_coverage_error` currently
+treats a non-violating amount bound as partial coverage whenever the final state
+contains a pending workflow, including a bound specifically on a requested amount.
+The admission correction does not change that verdict rule or retrospectively
+upgrade preserved unsupported receipts.
+
 `ui_provenance._validate_ui_text` resolves explicit text pointers and compares
 whitespace-normalized text, without fuzzy matching. `relocate_ui_pointers` can
 repair only a unique exact match in the declared UI state. `correct_state_map`

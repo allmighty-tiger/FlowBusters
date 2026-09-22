@@ -716,6 +716,11 @@ unsupported claims use predicate='unsupported_business_rule', claim_type='unsupp
 invariant=null and a concrete unsupported_reason. These are the ONLY TWO allowed
 claim_type/predicate pairs. Attack names belong in title, never in either enum.
 A repeated-payout amount bound uses amount_bound; uniqueness is a different claim.
+Supporting observations must reference only raw demo.json or recording.har, never
+state_map.json or its inferred attack_surface. A pointer to HAR content.text
+requires the complete exact string, not a shortened JSON object or paraphrase.
+Do not downgrade a numeric predicate because its source references are invalid:
+correct the references and inference metadata before execution, or reject the plan.
 Never substitute a
 money bound for workflow authorization or mass assignment. One atomic chain per
 file: no supplementary scenarios, guessed concurrency or extra resets. Repeated

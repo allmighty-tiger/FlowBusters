@@ -48,6 +48,10 @@ async def propose_setups(config, feedback, env):
             'provide AI_INFERRED, inferred_invariant with statement, exact predicate object, '
             'required_actions and terminal_state, plus exact raw supporting observations '
             '(copy a supplied observation object, do not paraphrase its value). '
+            'A broken source reference is NOT an unsupported predicate. Never downgrade an '
+            'amount_bound/business_rule_must_hold plan because its observations are invalid. '
+            'Repair its source references using exact raw values; state_map.json is not raw evidence. '
+            'A HAR content.text pointer resolves to the ENTIRE string, not a JSON subset. '
             'No tools, file writes, HTTP, or endpoint invention. Single correction attempt. '
             'Untrusted data follows:\n' + json.dumps(feedback))
     proc = await asyncio.create_subprocess_exec(
@@ -183,7 +187,7 @@ async def admit_json_plans(config, run, flow, env, progress):
     """New generation boundary: JSON -> validation/correction -> Python, never inverse."""
     from backend.runtime.endpoint_catalog import load_endpoint_catalog
     from backend.runtime.probe_contract import (observed_context, regeneration_feedback,
-        validate_admission, write_admitted_plan, review_only)
+        validate_admission, write_admitted_plan, review_only, inspect_observations)
     from backend.runtime.state_map_correction import evidence_hashes
     run = Path(run)
     drafts = sorted((run / 'mutations' / flow).glob('*.plan.json'))
@@ -195,10 +199,13 @@ async def admit_json_plans(config, run, flow, env, progress):
     snapshots = evidence_hashes(run, flow)
     original_bytes = {p: p.read_bytes() for p in drafts}
     plans = {p.name: json.loads(original_bytes[p]) for p in drafts}
+    repaired, repairs, observation_errors = {}, {}, {}
     errors = {}
     for name, plan in plans.items():
+        repaired[name], repairs[name], observation_errors[name] = inspect_observations(
+            plan, run, config.run_dir)
         try:
-            validate_admission(plan, run, config.run_dir, catalog)
+            validate_admission(repaired[name], run, config.run_dir, catalog)
         except (ValueError, KeyError, TypeError) as exc:
             errors[name] = str(exc)
     proposals = {}
@@ -206,20 +213,29 @@ async def admit_json_plans(config, run, flow, env, progress):
     if errors:
         context = observed_context(run, config.run_dir)
         feedback = {'typed_json_admission': True, 'rejected_plans': {
-            name: regeneration_feedback(plans[name], error, context) for name, error in errors.items()}}
+            name: dict(regeneration_feedback(repaired[name], error, context),
+                       observation_errors=observation_errors[name], pointer_repairs=repairs[name])
+            for name, error in errors.items()}}
         progress(f'Typed plan correction 1/1: {len(errors)} JSON plans; no Python scripts created yet')
         try:
             proposals = (await propose_setups(config, feedback, env)).get('plans', {})
-            if not isinstance(proposals, dict) or not set(proposals).issubset(errors):
+            if (not isinstance(proposals, dict) or not set(proposals).issubset(errors)
+                    or not all(isinstance(value, dict) for value in proposals.values())):
                 raise ValueError('Correction references a different plan set')
         except (ValueError, TypeError, AttributeError, asyncio.TimeoutError) as exc:
             proposals = {}
             errors = {name: error + '; correction failed: ' + str(exc) for name, error in errors.items()}
     admitted, decisions = {}, []
     for name, original in plans.items():
-        plan = proposals.get(name, original)
+        plan, final_repairs, _ = inspect_observations(
+            proposals.get(name, repaired[name]), run, config.run_dir)
+        repairs[name].extend(final_repairs)
         error = None
+        numeric = (original.get('claim_type') == 'amount_bound'
+                   and original.get('predicate') == 'business_rule_must_hold')
         try:
+            if numeric and (plan.get('claim_type'), plan.get('predicate')) != ('amount_bound', 'business_rule_must_hold'):
+                raise ValueError('Numeric hypothesis cannot be downgraded to hide an admission error')
             if any(plan.get(k) != original.get(k) for k in ('title', 'origin', 'setup', 'state_read', 'actions')):
                 raise ValueError('Correction changed the original hypothesis or action chain')
             original_inference = original.get('inferred_invariant') or {}
@@ -229,12 +245,26 @@ async def admit_json_plans(config, run, flow, env, progress):
             validate_admission(plan, run, config.run_dir, catalog)
         except (ValueError, TypeError, KeyError) as exc:
             error = str(exc)
-            plan = review_only(original, error)
-            validate_admission(plan, run, config.run_dir, catalog)
-        admitted[name] = plan
+            if not numeric:
+                # Truly unsupported hypothesis types may remain reviewable, but
+                # their raw references must still validate before any HTTP call.
+                plan = review_only(repaired[name], error)
+                try:
+                    validate_admission(plan, run, config.run_dir, catalog)
+                except (ValueError, TypeError, KeyError) as rejection:
+                    error = str(rejection)
+                    plan = None
+            else:
+                plan = None
+        if plan is not None:
+            admitted[name] = plan
         decisions.append({'plan': name, 'regenerated': name in proposals,
                           'original_error': errors.get(name), 'review_only_reason': error,
-                          'claim_type': plan['claim_type'], 'predicate': plan['predicate']})
+                          'status': 'ADMITTED' if plan is not None else 'REJECTED',
+                          'rejection_error': error if plan is None else None,
+                          'pointer_repairs': repairs[name],
+                          'claim_type': (plan or original).get('claim_type'),
+                          'predicate': (plan or original).get('predicate')})
     if (evidence_hashes(run, flow) != snapshots or any(p.read_bytes() != original_bytes[p] for p in drafts)):
         raise ValueError('Recording or draft changed during JSON admission')
     audit = run / 'plan_admission'; audit.mkdir(exist_ok=False)
@@ -244,4 +274,5 @@ async def admit_json_plans(config, run, flow, env, progress):
         script = run / 'mutations' / flow / (name[:-len('.plan.json')] + '.py')
         write_admitted_plan(script, plan, run, config.run_dir, catalog)
     progress(f'Typed plans admitted: {len(admitted)}; review-only: '
-             f'{sum(d["review_only_reason"] is not None for d in decisions)}')
+             f'{sum(d["review_only_reason"] is not None and d["status"] == "ADMITTED" for d in decisions)}; '
+             f'rejected before script creation: {len(drafts) - len(admitted)}')
