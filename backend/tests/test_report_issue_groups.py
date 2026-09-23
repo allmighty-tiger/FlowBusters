@@ -13,12 +13,19 @@ class ReportIssueGroupTests(unittest.TestCase):
         f = self.finding('pending', 30)
         f['verification']['violation']['observed'] = False
         f['verification']['after']['response']['actual']['order']['refund'] = {'status': 'pending'}
+        f['verification'].update(rule_origin='AI_INFERRED',
+            inferred_invariant={'statement': 'Completed compensation stays within the payment',
+                'predicate': deepcopy(f['verification']['invariant']),
+                'required_actions': [{'method': 'POST', 'path': '/api/order/price-adjustment'}],
+                'terminal_state': [{'path': ['order', 'refund', 'status'], 'equals': 'completed'}]},
+            supporting_observations=[{'source_run': 'test', 'artifact': 'demo.json',
+                'json_pointer': '/label', 'value': 'Compensation'}])
         r = self.normalize([f])
         self.assertEqual(r['findings'][0]['verification_status'], 'NEEDS_REVIEW')
         self.assertEqual(r['results'][0]['outcome'], 'NEEDS_REVIEW')
         self.assertEqual(r['summary']['controls_held'], 0)
         self.assertEqual(r['summary']['coverage_gaps'], 1)
-        self.assertIn('completion action', r['findings'][0]['verification_reason'])
+        self.assertIn("'pending'; expected 'completed'", r['findings'][0]['verification_reason'])
 
     def test_amount_tamper_negative_bound_does_not_test_input_trust(self):
         f = self.finding('amount', 0)

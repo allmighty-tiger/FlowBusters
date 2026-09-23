@@ -533,20 +533,19 @@ def _claim_coverage_error(record, verification):
                 'The check compared a final amount with a limit; it did not check whether '
                 'duplicate requests created duplicate records or effects. Review the recorded '
                 'responses and add a check for the specific repeated effect.')
-    # A final amount bound cannot settle a payout claim while a workflow is
-    # still pending. Inspect explicit response-root state, never search values.
-    body = _capture_response_body(verification.get('after'))
-    state = body if isinstance(body, dict) else {}
-    if len(state) == 1 and isinstance(next(iter(state.values())), dict):
-        state = next(iter(state.values()))
-    pending = [key for key, value in state.items()
-               if isinstance(value, dict) and value.get('status') == 'pending']
+    # Terminal means the state declared for this claim, not a status vocabulary.
+    # A requested-amount bound can end at pending; a settlement claim must reach
+    # its declared completed state. Receipt/path/invariant checks still run in
+    # reconciliation, and this check never supplies confirmation authority.
     fallback = None
-    if pending and not verification.get('violation', {}).get('observed'):
-        fallback = ('Partial coverage: final state still has pending workflow(s): '
-                + ', '.join(pending) + '. The amount bound was evaluated before settlement. '
-                'The payout hypothesis requires the completion action and a subsequent final GET; '
-                'a pending balance does not establish that the completed-workflow control held.')
+    if verification.get('rule_origin') == 'AI_INFERRED' or verification.get('inferred_invariant') is not None:
+        from backend.runtime.inferred_invariants import terminal_error
+        try:
+            error = terminal_error(verification)
+        except (ValueError, TypeError, KeyError) as exc:
+            error = str(exc)
+        if error:
+            fallback = 'Partial coverage: ' + error
     if (mutation == 'PRICING_TAMPER' or 'tamper' in title or 'requestedamount' in title
             or 'client-supplied' in title or 'client supplied' in title):
         if not verification.get('violation', {}).get('observed'):

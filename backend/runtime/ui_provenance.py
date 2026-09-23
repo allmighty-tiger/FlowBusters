@@ -390,8 +390,11 @@ def _validate_ui_transition(fact, source_run, artifact_dir):
         _require((found_role, found_name) == (role, name),
                  'Pointed semantic element does not match the declared role/name')
     if transition != 'appeared':
-        _require(len(_matching_elements(before_state, role, name)) == 1,
-                 'Before-state semantic element is missing or ambiguous')
+        # Exact raw pointers disambiguate transient accessibility variants such
+        # as the same button recorded once normally and once with ``[active]``.
+        # Two identical raw entries remain ambiguous and are still rejected.
+        _require(before_state.get('elements', []).count(before_value) == 1,
+                 'Before-state pointed semantic element is missing or ambiguous (duplicate raw entry)')
     if transition == 'disappeared':
         _require(before_value == after_value, 'Disappeared-element pointers contradict each other')
         _require(len(_matching_elements(after_state, role, name)) == 0,

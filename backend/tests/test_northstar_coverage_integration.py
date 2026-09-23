@@ -311,8 +311,12 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
                    {'endpoint': '/api/order/refund/request', 'body': {}}]
         for name, chain in [('pending', actions), ('completed', actions + [
                 {'endpoint': '/api/order/refund/complete', 'body': {}}])]:
-            (folder / (name + '.py')).write_text(self.render_probe(
-                self.origin, '/api/demo/reset', '/api/order', chain, INVARIANT, name), encoding='utf-8')
+            plan = evidence_plan(run, self.origin, chain, INVARIANT, name)
+            # Settlement is part of this hypothesis, not inferred from a status
+            # string after execution. Both probes must declare the same target.
+            plan['inferred_invariant']['terminal_state'] = [
+                {'path': ['order', 'refund', 'status'], 'equals': 'completed'}]
+            (folder / (name + '.py')).write_text(render_plan(plan), encoding='utf-8')
         asyncio.run(execute_run(run, run.name, self.root, lambda _: None))
         reports = run / 'reports' / run.name
         raw = {p: p.read_bytes() for p in (reports / 'executions').glob('*.json')}

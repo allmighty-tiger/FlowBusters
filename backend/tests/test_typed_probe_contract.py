@@ -220,7 +220,7 @@ class TypedProbeContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(audit['decisions'][0]['status'], 'REJECTED')
         self.assertIn('cannot be downgraded', audit['decisions'][0]['rejection_error'])
 
-    async def test_refund_demo_chains_and_existing_pending_coverage_boundary(self):
+    async def test_refund_demo_chains_respect_declared_pending_terminal_state(self):
         # Controlled local fixture, not the live application or a saved assessment.
         order = {}
         def reset():
@@ -265,8 +265,8 @@ class TypedProbeContractTests(unittest.IsolatedAsyncioTestCase):
         cases = [(['request', 'complete', 'complete'], {}, 'totalReturned', 'CONFIRMED'),
                  (['request', 'complete', 'request', 'complete'], {}, 'totalReturned', 'CONFIRMED'),
                  (['request', 'complete'], {'amount': 9999, 'completedAmount': 9999}, 'totalReturned', 'NOT_REPRODUCED'),
-                 (['request'], {'amount': 9999, 'requestedAmount': 9999}, 'requestedAmount', 'NEEDS_REVIEW'),
-                 (['request', 'request'], {}, 'requestedAmount', 'NEEDS_REVIEW')]
+                 (['request'], {'amount': 9999, 'requestedAmount': 9999}, 'requestedAmount', 'NOT_REPRODUCED'),
+                 (['request', 'request'], {}, 'requestedAmount', 'NOT_REPRODUCED')]
         for index, (chain, injected, field, expected) in enumerate(cases, 1):
             plan = deepcopy(self.plan)
             term = ['order', field] if field == 'totalReturned' else ['order', 'refund', field]
@@ -292,12 +292,13 @@ class TypedProbeContractTests(unittest.IsolatedAsyncioTestCase):
         results = sorted(report['results'], key=lambda row: row['script'])
         self.assertEqual([r['outcome'] for r in results], [case[3] for case in cases],
                          [r.get('verification_reason') for r in results])
-        # Documents the unchanged verifier limitation, NOT the intended business
-        # conclusion: pending-state guard currently overrides even a requested-
-        # amount bound. Do not conceal that by altering this task's verdict rules.
+        # The admitted claim is the requested-amount bound, not arbitrary input
+        # trust or uniqueness. Pending is its explicitly declared terminal state.
         for result in results[-2:]:
-            self.assertIn('pending workflow', result['verification_reason'])
+            self.assertEqual(result['verification']['after']['response']['order']['refund']['requestedAmount'], 100)
+            self.assertEqual(result['verification']['after']['response']['order']['refund']['status'], 'pending')
             self.assertIs(result['verification']['violation']['observed'], False)
+        self.assertEqual(results[-1]['verification']['actions'][-1]['status_code'], 409)
         receipts = load_receipts(self.run / 'reports/flow', self.root)
         self.assertEqual(len(receipts), 5)
         for receipt in receipts.values():

@@ -394,6 +394,29 @@ class UIProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(UIProvenanceError, 'ambiguous'):
             validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
 
+    def test_exact_disappearance_pointer_distinguishes_active_variant(self):
+        """Regression for refund-after-fixes UIR-005-F1 recording shape."""
+        button = 'button "Complete refund" [cursor=pointer]'
+        active = 'button "Complete refund" [active] [cursor=pointer]'
+        before, after = self.demo['workflow_timeline']['ui_states']
+        before['elements'] = [button, active]
+        after['elements'] = []
+        after['changes_from_previous']['disappeared'] = [button, active]
+        fact = self.rule['facts'][0]
+        fact.update(element={'role': 'button', 'name': 'Complete refund'},
+                    before_step=2, after_step=4, transition='disappeared',
+                    json_pointers={
+                        'before': '/workflow_timeline/ui_states/0/elements/0',
+                        'after': '/workflow_timeline/ui_states/1/changes_from_previous/disappeared/0'})
+        self._write_artifacts()
+        validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
+        # Exact duplicate raw entries still cannot be disambiguated by a pointer.
+        before['elements'].append(button)
+        self._write_artifacts()
+        with self.assertRaisesRegex(UIProvenanceError, 'duplicate raw entry'):
+            validate_state_map(self.state_map, self.artifacts, 'price-adjustment')
+
     def test_json_pointer_escaping_is_exact_and_invalid_escapes_fail(self):
         document = {'a/b': {'x~y': 7}}
         self.assertEqual(resolve_json_pointer(document, '/a~1b/x~0y'), 7)

@@ -45,6 +45,65 @@ class VerificationTests(unittest.TestCase):
         r=capture_deletion_check(lambda: next(snapshots), lambda: v['action'],
             rule=v['rule'],resource_id='r1',principal_id='u1',item_id=1)
         self.assertEqual(classify(r)[0], 'CONFIRMED')
+
+    def pending_amount_record(self, *, required_status='pending', observed=False):
+        record = self.authorize(self.business_rule(observed))
+        invariant = {'operator': 'sum_lte', 'terms': [['order', 'refund', 'requestedAmount']],
+                     'limit': ['order', 'originalAmount']}
+        state = {'order': {'originalAmount': 100, 'refund': {
+            'status': 'pending', 'requestedAmount': 200 if observed else 100}}}
+        verification = record['verification']
+        verification.update(rule_origin='AI_INFERRED', invariant=invariant,
+            inferred_invariant={'statement': 'Requested amount stays within the original amount',
+                'predicate': deepcopy(invariant),
+                'required_actions': [{'method': 'POST', 'path': '/request'}],
+                'terminal_state': [{'path': ['order', 'refund', 'status'], 'equals': required_status}]},
+            supporting_observations=[{'source_run': 'test', 'artifact': 'demo.json',
+                'json_pointer': '/label', 'value': 'Amount'}])
+        verification['actions'] = [{'sequence': 2, 'status_code': 201,
+            'request': {'method': 'POST', 'url': '/request', 'body': {'requestedAmount': 9999}},
+            'response': deepcopy(state)}]
+        verification['after']['response'] = state
+        return record
+
+    def test_declared_pending_numeric_bound_is_not_reproduced(self):
+        self.assertEqual(classify(self.pending_amount_record())[0], 'NOT_REPRODUCED')
+
+    def test_declared_completed_state_still_pending_needs_review(self):
+        status, reason = classify(self.pending_amount_record(required_status='completed'))
+        self.assertEqual(status, 'NEEDS_REVIEW')
+        self.assertIn("'pending'; expected 'completed'", reason)
+
+    def test_unsupported_pending_rule_remains_reviewable(self):
+        record = self.pending_amount_record()
+        record['verification'].update(predicate='unsupported_business_rule', invariant=None,
+                                      unsupported_reason='Workflow authorization is not an amount bound')
+        self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
+
+    def test_declared_pending_positive_keeps_existing_confirmation_requirements(self):
+        record = self.pending_amount_record(observed=True)
+        self.assertEqual(classify(record)[0], 'CONFIRMED')
+        record.pop('_inferred_rule_valid')
+        self.assertNotEqual(classify(record)[0], 'CONFIRMED')
+
+    def test_pending_cannot_hide_missing_actions_or_terminal_fields(self):
+        for defect in ('action', 'field', 'requirements', 'provenance', 'invariant_path'):
+            with self.subTest(defect=defect):
+                record = self.pending_amount_record()
+                if defect == 'action':
+                    record['verification']['inferred_invariant']['required_actions'].append(
+                        {'method': 'POST', 'path': '/complete'})
+                elif defect == 'field':
+                    del record['verification']['after']['response']['order']['refund']['status']
+                elif defect == 'requirements':
+                    record['verification']['inferred_invariant']['terminal_state'] = []
+                elif defect == 'provenance':
+                    record['_provenance_error'] = 'No authenticated execution receipt for this finding'
+                else:
+                    # Existing reconciliation/trace validation rejects the missing
+                    # numeric path before the classification stage under test.
+                    record['_provenance_error'] = 'Invariant paths cannot be evaluated against captured state'
+                self.assertEqual(classify(record)[0], 'NEEDS_REVIEW')
     def test_capture_reads_after_exception(self):
         v=example()['verification']; calls=[]
         def read():
