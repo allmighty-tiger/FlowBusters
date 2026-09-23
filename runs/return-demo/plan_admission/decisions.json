@@ -1,0 +1,1548 @@
+{
+  "feedback": {
+    "typed_json_admission": true,
+    "rejected_plans": {
+      "03_pricing_tamper_client_supplied_override.plan.json": {
+        "original_security_hypothesis": "PRICING_TAMPER: client-supplied adjustmentAmount/totalReturned overrides in the request body may inflate the returned amount beyond originalAmount",
+        "original_inferred_invariant": {
+          "statement": "The recorded call sent no request body at all (bodySize 0), so the server computed adjustmentAmount=30 itself. If the endpoint actually reads amount fields from the body when present, a client could inflate totalReturned past originalAmount by supplying oversized values.",
+          "predicate": {
+            "operator": "sum_lte",
+            "terms": [
+              [
+                "order",
+                "totalReturned"
+              ]
+            ],
+            "limit": [
+              "order",
+              "originalAmount"
+            ]
+          },
+          "required_actions": [
+            {
+              "method": "POST",
+              "path": "/api/order/price-adjustment"
+            }
+          ],
+          "terminal_state": [
+            {
+              "path": [
+                "order",
+                "priceProtection",
+                "status"
+              ],
+              "equals": "completed"
+            }
+          ]
+        },
+        "rejected_combination": {
+          "claim_type": "amount_bound",
+          "predicate": "business_rule_must_hold"
+        },
+        "validation_error": "Invalid supporting observations: [{\"index\": 0, \"observation\": {\"source_run\": \"return-demo\", \"artifact\": \"recording.har\", \"json_pointer\": \"/log/entries/1/request/bodySize\", \"value\": \"0\"}, \"actual_value\": 0, \"exact_match_pointers\": [], \"error\": \"Claimed value does not match the raw pointer; 0 exact raw matches. Regenerate the reference; do not paraphrase content.text\"}]",
+        "allowed_combinations": [
+          {
+            "claim_type": "amount_bound",
+            "predicate": "business_rule_must_hold",
+            "operator": "sum_lte"
+          },
+          {
+            "claim_type": "unsupported",
+            "predicate": "unsupported_business_rule",
+            "operator": null
+          }
+        ],
+        "schema": {
+          "type": "object",
+          "required": [
+            "schema_version",
+            "title",
+            "claim_type",
+            "predicate",
+            "origin",
+            "setup",
+            "state_read",
+            "actions"
+          ],
+          "properties": {
+            "schema_version": {
+              "const": 2
+            },
+            "claim_type": {
+              "enum": [
+                "amount_bound",
+                "unsupported"
+              ]
+            },
+            "predicate": {
+              "enum": [
+                "business_rule_must_hold",
+                "unsupported_business_rule"
+              ]
+            }
+          },
+          "oneOf": [
+            {
+              "properties": {
+                "claim_type": {
+                  "const": "amount_bound"
+                },
+                "predicate": {
+                  "const": "business_rule_must_hold"
+                },
+                "invariant": {
+                  "type": "object",
+                  "properties": {
+                    "operator": {
+                      "const": "sum_lte"
+                    }
+                  }
+                }
+              },
+              "required": [
+                "invariant",
+                "rule_origin",
+                "inferred_invariant",
+                "supporting_observations"
+              ]
+            },
+            {
+              "properties": {
+                "claim_type": {
+                  "const": "unsupported"
+                },
+                "predicate": {
+                  "const": "unsupported_business_rule"
+                },
+                "invariant": {
+                  "type": "null"
+                }
+              },
+              "required": [
+                "unsupported_reason"
+              ]
+            }
+          ]
+        },
+        "original_plan": {
+          "schema_version": 2,
+          "title": "PRICING_TAMPER: client-supplied adjustmentAmount/totalReturned overrides in the request body may inflate the returned amount beyond originalAmount",
+          "origin": "http://localhost:3000",
+          "setup": "/api/demo/reset",
+          "state_read": "/api/order",
+          "claim_type": "amount_bound",
+          "actions": [
+            {
+              "method": "POST",
+              "path": "/api/order/price-adjustment",
+              "body": {
+                "adjustmentAmount": 9999,
+                "totalReturned": 9999,
+                "netCustomerBenefit": 9999,
+                "amount": 9999
+              }
+            }
+          ],
+          "predicate": "business_rule_must_hold",
+          "invariant": {
+            "operator": "sum_lte",
+            "terms": [
+              [
+                "order",
+                "totalReturned"
+              ]
+            ],
+            "limit": [
+              "order",
+              "originalAmount"
+            ]
+          },
+          "rule": {
+            "source": "agent_inference",
+            "provenance": {
+              "schema_version": 1,
+              "source_run": "return-demo",
+              "artifact": "state_map.json",
+              "note": "critical_endpoints[].why 'Agent inference (unverified)' hypothesis on POST /api/order/price-adjustment: server may trust client-supplied amount fields instead of recomputing them."
+            }
+          },
+          "rule_origin": "AI_INFERRED",
+          "inferred_invariant": {
+            "statement": "The recorded call sent no request body at all (bodySize 0), so the server computed adjustmentAmount=30 itself. If the endpoint actually reads amount fields from the body when present, a client could inflate totalReturned past originalAmount by supplying oversized values.",
+            "predicate": {
+              "operator": "sum_lte",
+              "terms": [
+                [
+                  "order",
+                  "totalReturned"
+                ]
+              ],
+              "limit": [
+                "order",
+                "originalAmount"
+              ]
+            },
+            "required_actions": [
+              {
+                "method": "POST",
+                "path": "/api/order/price-adjustment"
+              }
+            ],
+            "terminal_state": [
+              {
+                "path": [
+                  "order",
+                  "priceProtection",
+                  "status"
+                ],
+                "equals": "completed"
+              }
+            ]
+          },
+          "supporting_observations": [
+            {
+              "source_run": "return-demo",
+              "artifact": "recording.har",
+              "json_pointer": "/log/entries/1/request/bodySize",
+              "value": "0"
+            },
+            {
+              "source_run": "return-demo",
+              "artifact": "recording.har",
+              "json_pointer": "/log/entries/1/response/content/text",
+              "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+            }
+          ]
+        },
+        "observed_fields": [
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "id"
+            ],
+            "value": "1042",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "orderNumber"
+            ],
+            "value": "#1042",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "product",
+              "name"
+            ],
+            "value": "Northstar Weekender Pack",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "product",
+              "variant"
+            ],
+            "value": "Slate \u00b7 28 L",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "product",
+              "quantity"
+            ],
+            "value": 1,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "product",
+              "imageUrl"
+            ],
+            "value": "/assets/weekender-pack.svg",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "purchaseDate"
+            ],
+            "value": "2026-08-24T14:18:00.000Z",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "deliveryDate"
+            ],
+            "value": "2026-08-29T16:42:00.000Z",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "originalAmount"
+            ],
+            "value": 100,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "paymentStatus"
+            ],
+            "value": "paid",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "orderStatus"
+            ],
+            "value": "delivered",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "fulfillmentStatus"
+            ],
+            "value": "delivered",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "cancellation",
+              "status"
+            ],
+            "value": "none",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "cancellation",
+              "reimbursementAmount"
+            ],
+            "value": 0,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "priceProtection",
+              "status"
+            ],
+            "value": "eligible",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "priceProtection",
+              "currentPrice"
+            ],
+            "value": 70,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "priceProtection",
+              "adjustmentAmount"
+            ],
+            "value": 0,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "refund",
+              "status"
+            ],
+            "value": "none",
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "refund",
+              "requestedAmount"
+            ],
+            "value": 0,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "refund",
+              "completedAmount"
+            ],
+            "value": 0,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "totalReturned"
+            ],
+            "value": 0,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "netCustomerBenefit"
+            ],
+            "value": -100,
+            "numeric": true,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "availableActions",
+              "requestRefund"
+            ],
+            "value": true,
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "availableActions",
+              "requestPriceAdjustment"
+            ],
+            "value": true,
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "availableActions",
+              "cancelOrder"
+            ],
+            "value": true,
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 0,
+            "response_path": [
+              "order",
+              "availableActions",
+              "completeRefund"
+            ],
+            "value": false,
+            "numeric": false,
+            "raw_pointer": "/log/entries/0/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "message"
+            ],
+            "value": "Price adjustment issued.",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "id"
+            ],
+            "value": "1042",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "orderNumber"
+            ],
+            "value": "#1042",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "product",
+              "name"
+            ],
+            "value": "Northstar Weekender Pack",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "product",
+              "variant"
+            ],
+            "value": "Slate \u00b7 28 L",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "product",
+              "quantity"
+            ],
+            "value": 1,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "product",
+              "imageUrl"
+            ],
+            "value": "/assets/weekender-pack.svg",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "purchaseDate"
+            ],
+            "value": "2026-08-24T14:18:00.000Z",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "deliveryDate"
+            ],
+            "value": "2026-08-29T16:42:00.000Z",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "originalAmount"
+            ],
+            "value": 100,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "paymentStatus"
+            ],
+            "value": "paid",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "orderStatus"
+            ],
+            "value": "delivered",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "fulfillmentStatus"
+            ],
+            "value": "delivered",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "cancellation",
+              "status"
+            ],
+            "value": "none",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "cancellation",
+              "reimbursementAmount"
+            ],
+            "value": 0,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "priceProtection",
+              "status"
+            ],
+            "value": "completed",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "priceProtection",
+              "currentPrice"
+            ],
+            "value": 70,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "priceProtection",
+              "adjustmentAmount"
+            ],
+            "value": 30,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "priceProtection",
+              "completedAt"
+            ],
+            "value": "2026-09-23T00:10:56.109Z",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "refund",
+              "status"
+            ],
+            "value": "none",
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "refund",
+              "requestedAmount"
+            ],
+            "value": 0,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "refund",
+              "completedAmount"
+            ],
+            "value": 0,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "totalReturned"
+            ],
+            "value": 30,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "netCustomerBenefit"
+            ],
+            "value": -70,
+            "numeric": true,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "availableActions",
+              "requestRefund"
+            ],
+            "value": true,
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "availableActions",
+              "requestPriceAdjustment"
+            ],
+            "value": false,
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "availableActions",
+              "cancelOrder"
+            ],
+            "value": false,
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          },
+          {
+            "source_run": "return-demo",
+            "entry_index": 1,
+            "response_path": [
+              "order",
+              "availableActions",
+              "completeRefund"
+            ],
+            "value": false,
+            "numeric": false,
+            "raw_pointer": "/log/entries/1/response/content/text"
+          }
+        ],
+        "supporting_observation_examples": [
+          {
+            "source_run": "return-demo",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/0/response/content/text",
+            "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+          },
+          {
+            "source_run": "return-demo",
+            "artifact": "recording.har",
+            "json_pointer": "/log/entries/1/response/content/text",
+            "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+          }
+        ],
+        "observation_errors": [
+          {
+            "index": 0,
+            "observation": {
+              "source_run": "return-demo",
+              "artifact": "recording.har",
+              "json_pointer": "/log/entries/1/request/bodySize",
+              "value": "0"
+            },
+            "actual_value": 0,
+            "exact_match_pointers": [],
+            "error": "Claimed value does not match the raw pointer; 0 exact raw matches. Regenerate the reference; do not paraphrase content.text"
+          }
+        ],
+        "pointer_repairs": []
+      }
+    }
+  },
+  "proposal": {
+    "03_pricing_tamper_client_supplied_override.plan.json": {
+      "schema_version": 2,
+      "title": "PRICING_TAMPER: client-supplied adjustmentAmount/totalReturned overrides in the request body may inflate the returned amount beyond originalAmount",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": {
+            "adjustmentAmount": 9999,
+            "totalReturned": 9999,
+            "netCustomerBenefit": 9999,
+            "amount": 9999
+          }
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "rule": {
+        "source": "agent_inference",
+        "provenance": {
+          "schema_version": 1,
+          "source_run": "return-demo",
+          "artifact": "state_map.json",
+          "note": "critical_endpoints[].why 'Agent inference (unverified)' hypothesis on POST /api/order/price-adjustment: server may trust client-supplied amount fields instead of recomputing them."
+        }
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "The recorded call sent no request body at all (bodySize 0), so the server computed adjustmentAmount=30 itself. If the endpoint actually reads amount fields from the body when present, a client could inflate totalReturned past originalAmount by supplying oversized values.",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "priceProtection",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/0/response/content/text",
+          "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+        },
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+        }
+      ]
+    }
+  },
+  "decisions": [
+    {
+      "plan": "01_replay_price_adjustment_twice.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    },
+    {
+      "plan": "02_repeat_price_adjustment_three_times.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    },
+    {
+      "plan": "03_pricing_tamper_client_supplied_override.plan.json",
+      "regenerated": true,
+      "original_error": "Invalid supporting observations: [{\"index\": 0, \"observation\": {\"source_run\": \"return-demo\", \"artifact\": \"recording.har\", \"json_pointer\": \"/log/entries/1/request/bodySize\", \"value\": \"0\"}, \"actual_value\": 0, \"exact_match_pointers\": [], \"error\": \"Claimed value does not match the raw pointer; 0 exact raw matches. Regenerate the reference; do not paraphrase content.text\"}]",
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    },
+    {
+      "plan": "04_mass_assignment_privilege_fields.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "unsupported",
+      "predicate": "unsupported_business_rule"
+    },
+    {
+      "plan": "05_data_tamper_invalid_numeric_types.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    },
+    {
+      "plan": "06_replay_with_forged_status_reset.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    }
+  ],
+  "admitted_plans": {
+    "01_replay_price_adjustment_twice.plan.json": {
+      "schema_version": 2,
+      "title": "REPLAY_ATTACK: repeated price-adjustment calls may push totalReturned above originalAmount (violates observed single-use rule UIR-001)",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": null
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "rule": {
+        "source": "observed_ui",
+        "provenance": {
+          "schema_version": 1,
+          "source_run": "return-demo",
+          "artifact": "state_map.json",
+          "rule_id": "UIR-001",
+          "fact_ids": [
+            "UIR-001-F1",
+            "UIR-001-F2"
+          ]
+        }
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "Price adjustment is single-use \u2014 the UI hides the control and priceProtection.status moves from 'eligible' to 'completed' after one call. totalReturned must not exceed originalAmount even if the client calls the endpoint a second time after the button disappears.",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "priceProtection",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/0/response/content/text",
+          "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+        },
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+        }
+      ]
+    },
+    "02_repeat_price_adjustment_three_times.plan.json": {
+      "schema_version": 2,
+      "title": "DOUBLE_SPEND: three sequential price-adjustment calls stress single-use enforcement beyond a simple replay",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": null
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "rule": {
+        "source": "observed_ui",
+        "provenance": {
+          "schema_version": 1,
+          "source_run": "return-demo",
+          "artifact": "state_map.json",
+          "rule_id": "UIR-001",
+          "fact_ids": [
+            "UIR-001-F1",
+            "UIR-001-F2"
+          ]
+        }
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "If a single replay is rejected but the server has any per-request rather than per-order idempotency guard, a third rapid repeat may reveal a race window where totalReturned exceeds originalAmount.",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "priceProtection",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/0/response/content/text",
+          "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+        },
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+        }
+      ]
+    },
+    "03_pricing_tamper_client_supplied_override.plan.json": {
+      "schema_version": 2,
+      "title": "PRICING_TAMPER: client-supplied adjustmentAmount/totalReturned overrides in the request body may inflate the returned amount beyond originalAmount",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": {
+            "adjustmentAmount": 9999,
+            "totalReturned": 9999,
+            "netCustomerBenefit": 9999,
+            "amount": 9999
+          }
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "rule": {
+        "source": "agent_inference",
+        "provenance": {
+          "schema_version": 1,
+          "source_run": "return-demo",
+          "artifact": "state_map.json",
+          "note": "critical_endpoints[].why 'Agent inference (unverified)' hypothesis on POST /api/order/price-adjustment: server may trust client-supplied amount fields instead of recomputing them."
+        }
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "The recorded call sent no request body at all (bodySize 0), so the server computed adjustmentAmount=30 itself. If the endpoint actually reads amount fields from the body when present, a client could inflate totalReturned past originalAmount by supplying oversized values.",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "priceProtection",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/0/response/content/text",
+          "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+        },
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+        }
+      ]
+    },
+    "04_mass_assignment_privilege_fields.plan.json": {
+      "schema_version": 2,
+      "title": "MASS_ASSIGNMENT: request body sends privilege/status fields the UI never sends (status, isAdmin, verified, role, priceProtection.status)",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "unsupported",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": {
+            "status": "admin",
+            "isAdmin": true,
+            "verified": true,
+            "role": "staff",
+            "priceProtection": {
+              "status": "completed"
+            },
+            "paymentStatus": "refunded"
+          }
+        }
+      ],
+      "predicate": "unsupported_business_rule",
+      "invariant": null,
+      "unsupported_reason": "This is a field-acceptance / mass-assignment claim (whether the server persists unexpected privileged fields such as status, isAdmin, verified, role from the request body) rather than a numeric amount comparison. sum_lte cannot express 'field X was ignored/rejected'; this requires manual/structural review of the before vs after order object for each injected key, which is outside the supported amount_bound predicate."
+    },
+    "05_data_tamper_invalid_numeric_types.plan.json": {
+      "schema_version": 2,
+      "title": "DATA_TAMPER: malformed/extreme numeric and type-confused values in the price-adjustment body (negative amount, float quantity, string amount)",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": {
+            "adjustmentAmount": -5000,
+            "quantity": 0.5,
+            "totalReturned": "unlimited"
+          }
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "rule": {
+        "source": "agent_inference",
+        "provenance": {
+          "schema_version": 1,
+          "source_run": "return-demo",
+          "artifact": "state_map.json",
+          "note": "critical_endpoints[].why hypothesis: unvalidated numeric/type input on POST /api/order/price-adjustment could corrupt the stored totalReturned or bypass its bound via type coercion."
+        }
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "Regardless of malformed or type-confused input values, the server-computed totalReturned for this order must never exceed originalAmount ($100).",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "priceProtection",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/0/response/content/text",
+          "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+        },
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+        }
+      ]
+    },
+    "06_replay_with_forged_status_reset.plan.json": {
+      "schema_version": 2,
+      "title": "REPLAY_ATTACK + DATA_TAMPER: second price-adjustment call attempts to forge priceProtection.status back to 'eligible' to re-arm the payout",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/price-adjustment",
+          "body": {
+            "priceProtection": {
+              "status": "eligible",
+              "adjustmentAmount": 0
+            }
+          }
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "rule": {
+        "source": "observed_ui",
+        "provenance": {
+          "schema_version": 1,
+          "source_run": "return-demo",
+          "artifact": "state_map.json",
+          "rule_id": "UIR-001",
+          "fact_ids": [
+            "UIR-001-F1",
+            "UIR-001-F2"
+          ]
+        }
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "After the first successful price adjustment, priceProtection.status is server-set to 'completed'. A second call that supplies a body attempting to reset status to 'eligible' must not be able to re-arm the $30 payout and push totalReturned above originalAmount.",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "priceProtection",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+        }
+      ]
+    }
+  }
+}

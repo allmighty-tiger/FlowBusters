@@ -1,0 +1,907 @@
+{
+  "execution_id": "01_double_cancel_amount_bound-e256b5d8b5f14e43ac268d5d9c8e4618",
+  "script": "01_double_cancel_amount_bound.py",
+  "source": "MUTATION_SCRIPT",
+  "triggered_by": null,
+  "script_sha256": "de57f75efe8badc6cc3f39c8453f9bbe42544767d5ac7681119b04daab771c23",
+  "script_source_base64": "UFJPQkVfUExBTiA9IHsnc2NoZW1hX3ZlcnNpb24nOiAyLCAndGl0bGUnOiAnUmVwZWF0ZWQgY2FuY2VsbGF0aW9uIG1heSBpc3N1ZSBhIGR1cGxpY2F0ZSAkMTAwLjAwIHJlaW1idXJzZW1lbnQgKGRvdWJsZSBwYXlvdXQpJywgJ29yaWdpbic6ICdodHRwOi8vbG9jYWxob3N0OjMwMDAnLCAnc2V0dXAnOiAnL2FwaS9kZW1vL3Jlc2V0JywgJ3N0YXRlX3JlYWQnOiAnL2FwaS9vcmRlcicsICdjbGFpbV90eXBlJzogJ2Ftb3VudF9ib3VuZCcsICdhY3Rpb25zJzogW3snbWV0aG9kJzogJ1BPU1QnLCAncGF0aCc6ICcvYXBpL29yZGVyL2NhbmNlbCcsICdib2R5JzogTm9uZX0sIHsnbWV0aG9kJzogJ1BPU1QnLCAncGF0aCc6ICcvYXBpL29yZGVyL2NhbmNlbCcsICdib2R5JzogTm9uZX1dLCAncHJlZGljYXRlJzogJ2J1c2luZXNzX3J1bGVfbXVzdF9ob2xkJywgJ2ludmFyaWFudCc6IHsnb3BlcmF0b3InOiAnc3VtX2x0ZScsICd0ZXJtcyc6IFtbJ29yZGVyJywgJ3RvdGFsUmV0dXJuZWQnXV0sICdsaW1pdCc6IFsnb3JkZXInLCAnb3JpZ2luYWxBbW91bnQnXX0sICdydWxlX29yaWdpbic6ICdBSV9JTkZFUlJFRCcsICdpbmZlcnJlZF9pbnZhcmlhbnQnOiB7J3N0YXRlbWVudCc6ICJUaGUgdG90YWwgYW1vdW50IHJldHVybmVkIHRvIHRoZSBjdXN0b21lciBmb3IgdGhpcyBvcmRlciBtdXN0IG5ldmVyIGV4Y2VlZCB0aGUgb3JkZXIncyBvcmlnaW5hbCBwYXltZW50IGFtb3VudCwgZXZlbiBpZiBQT1NUIC9hcGkvb3JkZXIvY2FuY2VsIGlzIGNhbGxlZCBtb3JlIHRoYW4gb25jZSAoRE9VQkxFX1NQRU5EIC8gUkVQTEFZX0FUVEFDSykuIiwgJ3ByZWRpY2F0ZSc6IHsnb3BlcmF0b3InOiAnc3VtX2x0ZScsICd0ZXJtcyc6IFtbJ29yZGVyJywgJ3RvdGFsUmV0dXJuZWQnXV0sICdsaW1pdCc6IFsnb3JkZXInLCAnb3JpZ2luYWxBbW91bnQnXX0sICdyZXF1aXJlZF9hY3Rpb25zJzogW3snbWV0aG9kJzogJ1BPU1QnLCAncGF0aCc6ICcvYXBpL29yZGVyL2NhbmNlbCd9LCB7J21ldGhvZCc6ICdQT1NUJywgJ3BhdGgnOiAnL2FwaS9vcmRlci9jYW5jZWwnfV0sICd0ZXJtaW5hbF9zdGF0ZSc6IFt7J3BhdGgnOiBbJ29yZGVyJywgJ2NhbmNlbGxhdGlvbicsICdzdGF0dXMnXSwgJ2VxdWFscyc6ICdjb21wbGV0ZWQnfV19LCAnc3VwcG9ydGluZ19vYnNlcnZhdGlvbnMnOiBbeydzb3VyY2VfcnVuJzogJ2NhbmNlbC1kZW1vJywgJ2FydGlmYWN0JzogJ3JlY29yZGluZy5oYXInLCAnanNvbl9wb2ludGVyJzogJy9sb2cvZW50cmllcy8wL3Jlc3BvbnNlL2NvbnRlbnQvdGV4dCcsICd2YWx1ZSc6ICd7Im9yZGVyIjp7ImlkIjoiMTA0MiIsIm9yZGVyTnVtYmVyIjoiIzEwNDIiLCJwcm9kdWN0Ijp7Im5hbWUiOiJOb3J0aHN0YXIgV2Vla2VuZGVyIFBhY2siLCJ2YXJpYW50IjoiU2xhdGUgwrcgMjggTCIsInF1YW50aXR5IjoxLCJpbWFnZVVybCI6Ii9hc3NldHMvd2Vla2VuZGVyLXBhY2suc3ZnIn0sInB1cmNoYXNlRGF0ZSI6IjIwMjYtMDgtMjRUMTQ6MTg6MDAuMDAwWiIsImRlbGl2ZXJ5RGF0ZSI6IjIwMjYtMDgtMjlUMTY6NDI6MDAuMDAwWiIsIm9yaWdpbmFsQW1vdW50IjoxMDAsInBheW1lbnRTdGF0dXMiOiJwYWlkIiwib3JkZXJTdGF0dXMiOiJkZWxpdmVyZWQiLCJmdWxmaWxsbWVudFN0YXR1cyI6ImRlbGl2ZXJlZCIsImNhbmNlbGxhdGlvbiI6eyJzdGF0dXMiOiJub25lIiwicmVpbWJ1cnNlbWVudEFtb3VudCI6MCwiY29tcGxldGVkQXQiOm51bGx9LCJwcmljZVByb3RlY3Rpb24iOnsic3RhdHVzIjoiZWxpZ2libGUiLCJjdXJyZW50UHJpY2UiOjcwLCJhZGp1c3RtZW50QW1vdW50IjowLCJjb21wbGV0ZWRBdCI6bnVsbH0sInJlZnVuZCI6eyJzdGF0dXMiOiJub25lIiwicmVxdWVzdGVkQW1vdW50IjowLCJjb21wbGV0ZWRBbW91bnQiOjAsInJlcXVlc3RlZEF0IjpudWxsLCJjb21wbGV0ZWRBdCI6bnVsbH0sInRvdGFsUmV0dXJuZWQiOjAsIm5ldEN1c3RvbWVyQmVuZWZpdCI6LTEwMCwiYXZhaWxhYmxlQWN0aW9ucyI6eyJyZXF1ZXN0UmVmdW5kIjp0cnVlLCJyZXF1ZXN0UHJpY2VBZGp1c3RtZW50Ijp0cnVlLCJjYW5jZWxPcmRlciI6dHJ1ZSwiY29tcGxldGVSZWZ1bmQiOmZhbHNlfSwiaGlzdG9yeSI6W3siaWQiOiJldnQtMSIsInR5cGUiOiJvcmRlcl9wbGFjZWQiLCJ0aXRsZSI6Ik9yZGVyIHBsYWNlZCIsImRldGFpbCI6IlBheW1lbnQgY29uZmlybWVkIMK3ICQxMDAuMDAiLCJhbW91bnQiOjAsIm9jY3VycmVkQXQiOiIyMDI2LTA4LTI0VDE0OjE4OjAwLjAwMFoifSx7ImlkIjoiZXZ0LTIiLCJ0eXBlIjoib3JkZXJfZGVsaXZlcmVkIiwidGl0bGUiOiJEZWxpdmVyZWQiLCJkZXRhaWwiOiJMZWZ0IGF0IGZyb250IGRvb3IiLCJhbW91bnQiOjAsIm9jY3VycmVkQXQiOiIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFoifV19fSd9LCB7J3NvdXJjZV9ydW4nOiAnY2FuY2VsLWRlbW8nLCAnYXJ0aWZhY3QnOiAncmVjb3JkaW5nLmhhcicsICdqc29uX3BvaW50ZXInOiAnL2xvZy9lbnRyaWVzLzEvcmVzcG9uc2UvY29udGVudC90ZXh0JywgJ3ZhbHVlJzogJ3sibWVzc2FnZSI6Ik9yZGVyIGNhbmNlbGVkIGFuZCByZWltYnVyc2VtZW50IGlzc3VlZC4iLCJvcmRlciI6eyJpZCI6IjEwNDIiLCJvcmRlck51bWJlciI6IiMxMDQyIiwicHJvZHVjdCI6eyJuYW1lIjoiTm9ydGhzdGFyIFdlZWtlbmRlciBQYWNrIiwidmFyaWFudCI6IlNsYXRlIMK3IDI4IEwiLCJxdWFudGl0eSI6MSwiaW1hZ2VVcmwiOiIvYXNzZXRzL3dlZWtlbmRlci1wYWNrLnN2ZyJ9LCJwdXJjaGFzZURhdGUiOiIyMDI2LTA4LTI0VDE0OjE4OjAwLjAwMFoiLCJkZWxpdmVyeURhdGUiOiIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFoiLCJvcmlnaW5hbEFtb3VudCI6MTAwLCJwYXltZW50U3RhdHVzIjoicGFpZCIsIm9yZGVyU3RhdHVzIjoiY2FuY2VsZWQiLCJmdWxmaWxsbWVudFN0YXR1cyI6ImRlbGl2ZXJlZCIsImNhbmNlbGxhdGlvbiI6eyJzdGF0dXMiOiJjb21wbGV0ZWQiLCJyZWltYnVyc2VtZW50QW1vdW50IjoxMDAsImNvbXBsZXRlZEF0IjoiMjAyNi0wOS0yMlQyMzo1MTowMi41NzBaIn0sInByaWNlUHJvdGVjdGlvbiI6eyJzdGF0dXMiOiJlbGlnaWJsZSIsImN1cnJlbnRQcmljZSI6NzAsImFkanVzdG1lbnRBbW91bnQiOjAsImNvbXBsZXRlZEF0IjpudWxsfSwicmVmdW5kIjp7InN0YXR1cyI6Im5vbmUiLCJyZXF1ZXN0ZWRBbW91bnQiOjAsImNvbXBsZXRlZEFtb3VudCI6MCwicmVxdWVzdGVkQXQiOm51bGwsImNvbXBsZXRlZEF0IjpudWxsfSwidG90YWxSZXR1cm5lZCI6MTAwLCJuZXRDdXN0b21lckJlbmVmaXQiOjAsImF2YWlsYWJsZUFjdGlvbnMiOnsicmVxdWVzdFJlZnVuZCI6ZmFsc2UsInJlcXVlc3RQcmljZUFkanVzdG1lbnQiOmZhbHNlLCJjYW5jZWxPcmRlciI6ZmFsc2UsImNvbXBsZXRlUmVmdW5kIjpmYWxzZX0sImhpc3RvcnkiOlt7ImlkIjoiZXZ0LTEiLCJ0eXBlIjoib3JkZXJfcGxhY2VkIiwidGl0bGUiOiJPcmRlciBwbGFjZWQiLCJkZXRhaWwiOiJQYXltZW50IGNvbmZpcm1lZCDCtyAkMTAwLjAwIiwiYW1vdW50IjowLCJvY2N1cnJlZEF0IjoiMjAyNi0wOC0yNFQxNDoxODowMC4wMDBaIn0seyJpZCI6ImV2dC0yIiwidHlwZSI6Im9yZGVyX2RlbGl2ZXJlZCIsInRpdGxlIjoiRGVsaXZlcmVkIiwiZGV0YWlsIjoiTGVmdCBhdCBmcm9udCBkb29yIiwiYW1vdW50IjowLCJvY2N1cnJlZEF0IjoiMjAyNi0wOC0yOVQxNjo0MjowMC4wMDBaIn0seyJpZCI6ImV2dC0zIiwidHlwZSI6Im9yZGVyX2NhbmNlbGVkIiwidGl0bGUiOiJPcmRlciBjYW5jZWxlZCIsImRldGFpbCI6IlJlaW1idXJzZW1lbnQgaXNzdWVkIHRvIG9yaWdpbmFsIHBheW1lbnQgbWV0aG9kIiwiYW1vdW50IjoxMDAsIm9jY3VycmVkQXQiOiIyMDI2LTA5LTIyVDIzOjUxOjAyLjU3MFoifV19fSd9XX0NCg0KaW1wb3J0IGpzb24sIG1hdGgsIGh0dHB4DQpkZWYgbnVtZXJpYyhib2R5LCBwYXRoKToNCiAgICBmb3Iga2V5IGluIHBhdGg6DQogICAgICAgIGJvZHkgPSBib2R5W2tleV0NCiAgICBpZiB0eXBlKGJvZHkpIG5vdCBpbiAoaW50LCBmbG9hdCkgb3Igbm90IG1hdGguaXNmaW5pdGUoYm9keSk6DQogICAgICAgIHJhaXNlIFZhbHVlRXJyb3IoJ05vbi1maW5pdGUvbm9uLW51bWVyaWMgQUZURVIgb3BlcmFuZDogJyArIHJlcHIocGF0aCkpDQogICAgcmV0dXJuIGJvZHkNCndpdGggaHR0cHguQ2xpZW50KHRpbWVvdXQ9MzAsIGZvbGxvd19yZWRpcmVjdHM9RmFsc2UpIGFzIGNsaWVudDoNCiAgICBkZWYgY2FwdHVyZShtZXRob2QsIHBhdGgsIGJvZHk9Tm9uZSk6DQogICAgICAgIHJlc3BvbnNlID0gY2xpZW50LnJlcXVlc3QobWV0aG9kLCBQUk9CRV9QTEFOWydvcmlnaW4nXSArIHBhdGgsDQogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgKiooeydqc29uJzogYm9keX0gaWYgYm9keSBpcyBub3QgTm9uZSBlbHNlIHt9KSkNCiAgICAgICAgdHJ5Og0KICAgICAgICAgICAgdmFsdWUgPSByZXNwb25zZS5qc29uKCkNCiAgICAgICAgZXhjZXB0IFZhbHVlRXJyb3I6DQogICAgICAgICAgICB2YWx1ZSA9IHJlc3BvbnNlLnRleHQNCiAgICAgICAgcmV0dXJuIHsnc2VxdWVuY2UnOiByZXNwb25zZS5leHRlbnNpb25zWydmbG93YnVzdGVyc19zZXF1ZW5jZSddLA0KICAgICAgICAgICAgICAgICdzdGF0dXNfY29kZSc6IHJlc3BvbnNlLnN0YXR1c19jb2RlLCAnY29tcGxldGUnOiBUcnVlLA0KICAgICAgICAgICAgICAgICdyZXF1ZXN0JzogeydtZXRob2QnOiBtZXRob2QsICd1cmwnOiBzdHIocmVzcG9uc2UucmVxdWVzdC51cmwpLCAnYm9keSc6IGJvZHl9LA0KICAgICAgICAgICAgICAgICdyZXNwb25zZSc6IHZhbHVlfQ0KICAgIHNldHVwID0gW10NCiAgICBpZiBQUk9CRV9QTEFOLmdldCgnc2V0dXAnKToNCiAgICAgICAgc2V0dXAgPSBbY2FwdHVyZSgnUE9TVCcsIFBST0JFX1BMQU5bJ3NldHVwJ10sIHt9KV0NCiAgICAgICAgaWYgc2V0dXBbMF1bJ3N0YXR1c19jb2RlJ10gIT0gMjAwOg0KICAgICAgICAgICAgcmFpc2UgVmFsdWVFcnJvcignQXV0aG9yaXplZCBzZXR1cCBmYWlsZWQnKQ0KICAgIGJlZm9yZSA9IGNhcHR1cmUoJ0dFVCcsIFBST0JFX1BMQU5bJ3N0YXRlX3JlYWQnXSkNCiAgICBhY3Rpb25zID0gW2NhcHR1cmUoYVsnbWV0aG9kJ10sIGFbJ3BhdGgnXSwgYVsnYm9keSddKSBmb3IgYSBpbiBQUk9CRV9QTEFOWydhY3Rpb25zJ11dDQogICAgYWZ0ZXIgPSBjYXB0dXJlKCdHRVQnLCBQUk9CRV9QTEFOWydzdGF0ZV9yZWFkJ10pDQogICAgdmVyaWZpY2F0aW9uID0geydwcmVkaWNhdGUnOiBQUk9CRV9QTEFOWydwcmVkaWNhdGUnXSwgJ3NldHVwJzogc2V0dXAsDQogICAgICAgICdiZWZvcmUnOiBiZWZvcmUsICdhY3Rpb25zJzogYWN0aW9ucywgJ2FmdGVyJzogYWZ0ZXIsDQogICAgICAgICdydWxlJzogeydzb3VyY2UnOiAnYWdlbnRfaW5mZXJlbmNlJywgJ3JlZmVyZW5jZSc6ICdBSS1wcm9wb3NlZCB0ZXN0IGNvbmRpdGlvbjsgYnVzaW5lc3MgbWVhbmluZyByZXF1aXJlcyB1c2VyIHJldmlldyd9fQ0KICAgIHZlcmlmaWNhdGlvblsncnVsZV9vcmlnaW4nXSA9ICdBSV9JTkZFUlJFRCcNCiAgICB2ZXJpZmljYXRpb25bJ2luZmVycmVkX2ludmFyaWFudCddID0gUFJPQkVfUExBTi5nZXQoJ2luZmVycmVkX2ludmFyaWFudCcpDQogICAgdmVyaWZpY2F0aW9uWydzdXBwb3J0aW5nX29ic2VydmF0aW9ucyddID0gUFJPQkVfUExBTi5nZXQoJ3N1cHBvcnRpbmdfb2JzZXJ2YXRpb25zJywgW10pDQogICAgaWYgUFJPQkVfUExBTi5nZXQoJ21pc3NpbmdfZXZpZGVuY2UnKToNCiAgICAgICAgdmVyaWZpY2F0aW9uWydtaXNzaW5nX2V2aWRlbmNlJ10gPSBQUk9CRV9QTEFOWydtaXNzaW5nX2V2aWRlbmNlJ10NCiAgICBpZiBQUk9CRV9QTEFOWydwcmVkaWNhdGUnXSA9PSAnYnVzaW5lc3NfcnVsZV9tdXN0X2hvbGQnOg0KICAgICAgICBpbnZhcmlhbnQgPSBQUk9CRV9QTEFOWydpbnZhcmlhbnQnXQ0KICAgICAgICB0b3RhbCA9IHN1bShudW1lcmljKGFmdGVyWydyZXNwb25zZSddLCBwKSBmb3IgcCBpbiBpbnZhcmlhbnRbJ3Rlcm1zJ10pDQogICAgICAgIG1heGltdW0gPSBudW1lcmljKGFmdGVyWydyZXNwb25zZSddLCBpbnZhcmlhbnRbJ2xpbWl0J10pDQogICAgICAgIHZlcmlmaWNhdGlvbi51cGRhdGUoaW52YXJpYW50PWludmFyaWFudCwgdmlvbGF0aW9uPXsnb2JzZXJ2ZWQnOiB0b3RhbCA+IG1heGltdW0sDQogICAgICAgICAgICAnZGVzY3JpcHRpb24nOiBmJ0ZpbmFsIEdFVDoge3RvdGFsfSA+IHttYXhpbXVtfSA9IHt0b3RhbCA+IG1heGltdW19J30pDQogICAgZWxzZToNCiAgICAgICAgdmVyaWZpY2F0aW9uWyd1bnN1cHBvcnRlZF9yZWFzb24nXSA9IFBST0JFX1BMQU5bJ3Vuc3VwcG9ydGVkX3JlYXNvbiddDQogICAgcHJpbnQoanNvbi5kdW1wcyh7J3RpdGxlJzogUFJPQkVfUExBTlsndGl0bGUnXSwgJ211dGF0aW9uX3R5cGUnOg0KICAgICAgICAnRklOQU5DSUFMX0JPVU5EJyBpZiBQUk9CRV9QTEFOWydjbGFpbV90eXBlJ10gPT0gJ2Ftb3VudF9ib3VuZCcgZWxzZSAnVU5TVVBQT1JURURfQ0xBSU0nLA0KICAgICAgICAndmVyaWZpY2F0aW9uJzogdmVyaWZpY2F0aW9ufSkpDQo=",
+  "command": [
+    "C:\\Users\\nasti\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\python\\python.exe",
+    "C:\\Users\\nasti\\Documents\\FlowBustersPortal\\FlowBusters\\backend\\runtime\\probe_capture.py",
+    "C:\\Users\\nasti\\AppData\\Local\\Temp\\fb-execution-u6fzk2rb\\01_double_cancel_amount_bound.py",
+    "C:\\Users\\nasti\\AppData\\Local\\Temp\\fb-execution-u6fzk2rb\\trace.jsonl",
+    "C:\\Users\\nasti\\AppData\\Local\\Temp\\fb-execution-u6fzk2rb\\execution-scope.json",
+    "C:\\Users\\nasti\\Documents\\FlowBustersPortal\\FlowBusters\\runs\\cancel-demo\\mutations\\cancel-demo\\01_double_cancel_amount_bound.py"
+  ],
+  "started_at": "2026-09-22T23:57:28.615388+00:00",
+  "completed_at": "2026-09-22T23:57:29.082838+00:00",
+  "exit_code": 0,
+  "stdout": "{\"title\": \"Repeated cancellation may issue a duplicate $100.00 reimbursement (double payout)\", \"mutation_type\": \"FINANCIAL_BOUND\", \"verification\": {\"predicate\": \"business_rule_must_hold\", \"setup\": [{\"sequence\": 1, \"status_code\": 200, \"complete\": true, \"request\": {\"method\": \"POST\", \"url\": \"http://localhost:3000/api/demo/reset\", \"body\": {}}, \"response\": {\"message\": \"Demo data reset.\", \"order\": {\"id\": \"1042\", \"orderNumber\": \"#1042\", \"product\": {\"name\": \"Northstar Weekender Pack\", \"variant\": \"Slate \\u00b7 28 L\", \"quantity\": 1, \"imageUrl\": \"/assets/weekender-pack.svg\"}, \"purchaseDate\": \"2026-08-24T14:18:00.000Z\", \"deliveryDate\": \"2026-08-29T16:42:00.000Z\", \"originalAmount\": 100, \"paymentStatus\": \"paid\", \"orderStatus\": \"delivered\", \"fulfillmentStatus\": \"delivered\", \"cancellation\": {\"status\": \"none\", \"reimbursementAmount\": 0, \"completedAt\": null}, \"priceProtection\": {\"status\": \"eligible\", \"currentPrice\": 70, \"adjustmentAmount\": 0, \"completedAt\": null}, \"refund\": {\"status\": \"none\", \"requestedAmount\": 0, \"completedAmount\": 0, \"requestedAt\": null, \"completedAt\": null}, \"totalReturned\": 0, \"netCustomerBenefit\": -100, \"availableActions\": {\"requestRefund\": true, \"requestPriceAdjustment\": true, \"cancelOrder\": true, \"completeRefund\": false}, \"history\": [{\"id\": \"evt-1\", \"type\": \"order_placed\", \"title\": \"Order placed\", \"detail\": \"Payment confirmed \\u00b7 $100.00\", \"amount\": 0, \"occurredAt\": \"2026-08-24T14:18:00.000Z\"}, {\"id\": \"evt-2\", \"type\": \"order_delivered\", \"title\": \"Delivered\", \"detail\": \"Left at front door\", \"amount\": 0, \"occurredAt\": \"2026-08-29T16:42:00.000Z\"}]}}}], \"before\": {\"sequence\": 2, \"status_code\": 200, \"complete\": true, \"request\": {\"method\": \"GET\", \"url\": \"http://localhost:3000/api/order\", \"body\": null}, \"response\": {\"order\": {\"id\": \"1042\", \"orderNumber\": \"#1042\", \"product\": {\"name\": \"Northstar Weekender Pack\", \"variant\": \"Slate \\u00b7 28 L\", \"quantity\": 1, \"imageUrl\": \"/assets/weekender-pack.svg\"}, \"purchaseDate\": \"2026-08-24T14:18:00.000Z\", \"deliveryDate\": \"2026-08-29T16:42:00.000Z\", \"originalAmount\": 100, \"paymentStatus\": \"paid\", \"orderStatus\": \"delivered\", \"fulfillmentStatus\": \"delivered\", \"cancellation\": {\"status\": \"none\", \"reimbursementAmount\": 0, \"completedAt\": null}, \"priceProtection\": {\"status\": \"eligible\", \"currentPrice\": 70, \"adjustmentAmount\": 0, \"completedAt\": null}, \"refund\": {\"status\": \"none\", \"requestedAmount\": 0, \"completedAmount\": 0, \"requestedAt\": null, \"completedAt\": null}, \"totalReturned\": 0, \"netCustomerBenefit\": -100, \"availableActions\": {\"requestRefund\": true, \"requestPriceAdjustment\": true, \"cancelOrder\": true, \"completeRefund\": false}, \"history\": [{\"id\": \"evt-1\", \"type\": \"order_placed\", \"title\": \"Order placed\", \"detail\": \"Payment confirmed \\u00b7 $100.00\", \"amount\": 0, \"occurredAt\": \"2026-08-24T14:18:00.000Z\"}, {\"id\": \"evt-2\", \"type\": \"order_delivered\", \"title\": \"Delivered\", \"detail\": \"Left at front door\", \"amount\": 0, \"occurredAt\": \"2026-08-29T16:42:00.000Z\"}]}}}, \"actions\": [{\"sequence\": 3, \"status_code\": 200, \"complete\": true, \"request\": {\"method\": \"POST\", \"url\": \"http://localhost:3000/api/order/cancel\", \"body\": null}, \"response\": {\"message\": \"Order canceled and reimbursement issued.\", \"order\": {\"id\": \"1042\", \"orderNumber\": \"#1042\", \"product\": {\"name\": \"Northstar Weekender Pack\", \"variant\": \"Slate \\u00b7 28 L\", \"quantity\": 1, \"imageUrl\": \"/assets/weekender-pack.svg\"}, \"purchaseDate\": \"2026-08-24T14:18:00.000Z\", \"deliveryDate\": \"2026-08-29T16:42:00.000Z\", \"originalAmount\": 100, \"paymentStatus\": \"paid\", \"orderStatus\": \"canceled\", \"fulfillmentStatus\": \"delivered\", \"cancellation\": {\"status\": \"completed\", \"reimbursementAmount\": 100, \"completedAt\": \"2026-09-22T23:57:29.058Z\"}, \"priceProtection\": {\"status\": \"eligible\", \"currentPrice\": 70, \"adjustmentAmount\": 0, \"completedAt\": null}, \"refund\": {\"status\": \"none\", \"requestedAmount\": 0, \"completedAmount\": 0, \"requestedAt\": null, \"completedAt\": null}, \"totalReturned\": 100, \"netCustomerBenefit\": 0, \"availableActions\": {\"requestRefund\": false, \"requestPriceAdjustment\": false, \"cancelOrder\": false, \"completeRefund\": false}, \"history\": [{\"id\": \"evt-1\", \"type\": \"order_placed\", \"title\": \"Order placed\", \"detail\": \"Payment confirmed \\u00b7 $100.00\", \"amount\": 0, \"occurredAt\": \"2026-08-24T14:18:00.000Z\"}, {\"id\": \"evt-2\", \"type\": \"order_delivered\", \"title\": \"Delivered\", \"detail\": \"Left at front door\", \"amount\": 0, \"occurredAt\": \"2026-08-29T16:42:00.000Z\"}, {\"id\": \"evt-3\", \"type\": \"order_canceled\", \"title\": \"Order canceled\", \"detail\": \"Reimbursement issued to original payment method\", \"amount\": 100, \"occurredAt\": \"2026-09-22T23:57:29.058Z\"}]}}}, {\"sequence\": 4, \"status_code\": 409, \"complete\": true, \"request\": {\"method\": \"POST\", \"url\": \"http://localhost:3000/api/order/cancel\", \"body\": null}, \"response\": {\"error\": \"Conflict\", \"message\": \"This order has already been canceled.\", \"order\": {\"id\": \"1042\", \"orderNumber\": \"#1042\", \"product\": {\"name\": \"Northstar Weekender Pack\", \"variant\": \"Slate \\u00b7 28 L\", \"quantity\": 1, \"imageUrl\": \"/assets/weekender-pack.svg\"}, \"purchaseDate\": \"2026-08-24T14:18:00.000Z\", \"deliveryDate\": \"2026-08-29T16:42:00.000Z\", \"originalAmount\": 100, \"paymentStatus\": \"paid\", \"orderStatus\": \"canceled\", \"fulfillmentStatus\": \"delivered\", \"cancellation\": {\"status\": \"completed\", \"reimbursementAmount\": 100, \"completedAt\": \"2026-09-22T23:57:29.058Z\"}, \"priceProtection\": {\"status\": \"eligible\", \"currentPrice\": 70, \"adjustmentAmount\": 0, \"completedAt\": null}, \"refund\": {\"status\": \"none\", \"requestedAmount\": 0, \"completedAmount\": 0, \"requestedAt\": null, \"completedAt\": null}, \"totalReturned\": 100, \"netCustomerBenefit\": 0, \"availableActions\": {\"requestRefund\": false, \"requestPriceAdjustment\": false, \"cancelOrder\": false, \"completeRefund\": false}, \"history\": [{\"id\": \"evt-1\", \"type\": \"order_placed\", \"title\": \"Order placed\", \"detail\": \"Payment confirmed \\u00b7 $100.00\", \"amount\": 0, \"occurredAt\": \"2026-08-24T14:18:00.000Z\"}, {\"id\": \"evt-2\", \"type\": \"order_delivered\", \"title\": \"Delivered\", \"detail\": \"Left at front door\", \"amount\": 0, \"occurredAt\": \"2026-08-29T16:42:00.000Z\"}, {\"id\": \"evt-3\", \"type\": \"order_canceled\", \"title\": \"Order canceled\", \"detail\": \"Reimbursement issued to original payment method\", \"amount\": 100, \"occurredAt\": \"2026-09-22T23:57:29.058Z\"}]}}}], \"after\": {\"sequence\": 5, \"status_code\": 200, \"complete\": true, \"request\": {\"method\": \"GET\", \"url\": \"http://localhost:3000/api/order\", \"body\": null}, \"response\": {\"order\": {\"id\": \"1042\", \"orderNumber\": \"#1042\", \"product\": {\"name\": \"Northstar Weekender Pack\", \"variant\": \"Slate \\u00b7 28 L\", \"quantity\": 1, \"imageUrl\": \"/assets/weekender-pack.svg\"}, \"purchaseDate\": \"2026-08-24T14:18:00.000Z\", \"deliveryDate\": \"2026-08-29T16:42:00.000Z\", \"originalAmount\": 100, \"paymentStatus\": \"paid\", \"orderStatus\": \"canceled\", \"fulfillmentStatus\": \"delivered\", \"cancellation\": {\"status\": \"completed\", \"reimbursementAmount\": 100, \"completedAt\": \"2026-09-22T23:57:29.058Z\"}, \"priceProtection\": {\"status\": \"eligible\", \"currentPrice\": 70, \"adjustmentAmount\": 0, \"completedAt\": null}, \"refund\": {\"status\": \"none\", \"requestedAmount\": 0, \"completedAmount\": 0, \"requestedAt\": null, \"completedAt\": null}, \"totalReturned\": 100, \"netCustomerBenefit\": 0, \"availableActions\": {\"requestRefund\": false, \"requestPriceAdjustment\": false, \"cancelOrder\": false, \"completeRefund\": false}, \"history\": [{\"id\": \"evt-1\", \"type\": \"order_placed\", \"title\": \"Order placed\", \"detail\": \"Payment confirmed \\u00b7 $100.00\", \"amount\": 0, \"occurredAt\": \"2026-08-24T14:18:00.000Z\"}, {\"id\": \"evt-2\", \"type\": \"order_delivered\", \"title\": \"Delivered\", \"detail\": \"Left at front door\", \"amount\": 0, \"occurredAt\": \"2026-08-29T16:42:00.000Z\"}, {\"id\": \"evt-3\", \"type\": \"order_canceled\", \"title\": \"Order canceled\", \"detail\": \"Reimbursement issued to original payment method\", \"amount\": 100, \"occurredAt\": \"2026-09-22T23:57:29.058Z\"}]}}}, \"rule\": {\"source\": \"agent_inference\", \"reference\": \"AI-proposed test condition; business meaning requires user review\"}, \"rule_origin\": \"AI_INFERRED\", \"inferred_invariant\": {\"statement\": \"The total amount returned to the customer for this order must never exceed the order's original payment amount, even if POST /api/order/cancel is called more than once (DOUBLE_SPEND / REPLAY_ATTACK).\", \"predicate\": {\"operator\": \"sum_lte\", \"terms\": [[\"order\", \"totalReturned\"]], \"limit\": [\"order\", \"originalAmount\"]}, \"required_actions\": [{\"method\": \"POST\", \"path\": \"/api/order/cancel\"}, {\"method\": \"POST\", \"path\": \"/api/order/cancel\"}], \"terminal_state\": [{\"path\": [\"order\", \"cancellation\", \"status\"], \"equals\": \"completed\"}]}, \"supporting_observations\": [{\"source_run\": \"cancel-demo\", \"artifact\": \"recording.har\", \"json_pointer\": \"/log/entries/0/response/content/text\", \"value\": \"{\\\"order\\\":{\\\"id\\\":\\\"1042\\\",\\\"orderNumber\\\":\\\"#1042\\\",\\\"product\\\":{\\\"name\\\":\\\"Northstar Weekender Pack\\\",\\\"variant\\\":\\\"Slate \\u00b7 28 L\\\",\\\"quantity\\\":1,\\\"imageUrl\\\":\\\"/assets/weekender-pack.svg\\\"},\\\"purchaseDate\\\":\\\"2026-08-24T14:18:00.000Z\\\",\\\"deliveryDate\\\":\\\"2026-08-29T16:42:00.000Z\\\",\\\"originalAmount\\\":100,\\\"paymentStatus\\\":\\\"paid\\\",\\\"orderStatus\\\":\\\"delivered\\\",\\\"fulfillmentStatus\\\":\\\"delivered\\\",\\\"cancellation\\\":{\\\"status\\\":\\\"none\\\",\\\"reimbursementAmount\\\":0,\\\"completedAt\\\":null},\\\"priceProtection\\\":{\\\"status\\\":\\\"eligible\\\",\\\"currentPrice\\\":70,\\\"adjustmentAmount\\\":0,\\\"completedAt\\\":null},\\\"refund\\\":{\\\"status\\\":\\\"none\\\",\\\"requestedAmount\\\":0,\\\"completedAmount\\\":0,\\\"requestedAt\\\":null,\\\"completedAt\\\":null},\\\"totalReturned\\\":0,\\\"netCustomerBenefit\\\":-100,\\\"availableActions\\\":{\\\"requestRefund\\\":true,\\\"requestPriceAdjustment\\\":true,\\\"cancelOrder\\\":true,\\\"completeRefund\\\":false},\\\"history\\\":[{\\\"id\\\":\\\"evt-1\\\",\\\"type\\\":\\\"order_placed\\\",\\\"title\\\":\\\"Order placed\\\",\\\"detail\\\":\\\"Payment confirmed \\u00b7 $100.00\\\",\\\"amount\\\":0,\\\"occurredAt\\\":\\\"2026-08-24T14:18:00.000Z\\\"},{\\\"id\\\":\\\"evt-2\\\",\\\"type\\\":\\\"order_delivered\\\",\\\"title\\\":\\\"Delivered\\\",\\\"detail\\\":\\\"Left at front door\\\",\\\"amount\\\":0,\\\"occurredAt\\\":\\\"2026-08-29T16:42:00.000Z\\\"}]}}\"}, {\"source_run\": \"cancel-demo\", \"artifact\": \"recording.har\", \"json_pointer\": \"/log/entries/1/response/content/text\", \"value\": \"{\\\"message\\\":\\\"Order canceled and reimbursement issued.\\\",\\\"order\\\":{\\\"id\\\":\\\"1042\\\",\\\"orderNumber\\\":\\\"#1042\\\",\\\"product\\\":{\\\"name\\\":\\\"Northstar Weekender Pack\\\",\\\"variant\\\":\\\"Slate \\u00b7 28 L\\\",\\\"quantity\\\":1,\\\"imageUrl\\\":\\\"/assets/weekender-pack.svg\\\"},\\\"purchaseDate\\\":\\\"2026-08-24T14:18:00.000Z\\\",\\\"deliveryDate\\\":\\\"2026-08-29T16:42:00.000Z\\\",\\\"originalAmount\\\":100,\\\"paymentStatus\\\":\\\"paid\\\",\\\"orderStatus\\\":\\\"canceled\\\",\\\"fulfillmentStatus\\\":\\\"delivered\\\",\\\"cancellation\\\":{\\\"status\\\":\\\"completed\\\",\\\"reimbursementAmount\\\":100,\\\"completedAt\\\":\\\"2026-09-22T23:51:02.570Z\\\"},\\\"priceProtection\\\":{\\\"status\\\":\\\"eligible\\\",\\\"currentPrice\\\":70,\\\"adjustmentAmount\\\":0,\\\"completedAt\\\":null},\\\"refund\\\":{\\\"status\\\":\\\"none\\\",\\\"requestedAmount\\\":0,\\\"completedAmount\\\":0,\\\"requestedAt\\\":null,\\\"completedAt\\\":null},\\\"totalReturned\\\":100,\\\"netCustomerBenefit\\\":0,\\\"availableActions\\\":{\\\"requestRefund\\\":false,\\\"requestPriceAdjustment\\\":false,\\\"cancelOrder\\\":false,\\\"completeRefund\\\":false},\\\"history\\\":[{\\\"id\\\":\\\"evt-1\\\",\\\"type\\\":\\\"order_placed\\\",\\\"title\\\":\\\"Order placed\\\",\\\"detail\\\":\\\"Payment confirmed \\u00b7 $100.00\\\",\\\"amount\\\":0,\\\"occurredAt\\\":\\\"2026-08-24T14:18:00.000Z\\\"},{\\\"id\\\":\\\"evt-2\\\",\\\"type\\\":\\\"order_delivered\\\",\\\"title\\\":\\\"Delivered\\\",\\\"detail\\\":\\\"Left at front door\\\",\\\"amount\\\":0,\\\"occurredAt\\\":\\\"2026-08-29T16:42:00.000Z\\\"},{\\\"id\\\":\\\"evt-3\\\",\\\"type\\\":\\\"order_canceled\\\",\\\"title\\\":\\\"Order canceled\\\",\\\"detail\\\":\\\"Reimbursement issued to original payment method\\\",\\\"amount\\\":100,\\\"occurredAt\\\":\\\"2026-09-22T23:51:02.570Z\\\"}]}}\"}], \"invariant\": {\"operator\": \"sum_lte\", \"terms\": [[\"order\", \"totalReturned\"]], \"limit\": [\"order\", \"originalAmount\"]}, \"violation\": {\"observed\": false, \"description\": \"Final GET: 100 > 100 = False\"}}}\r\n",
+  "stderr": "",
+  "stdout_base64": "eyJ0aXRsZSI6ICJSZXBlYXRlZCBjYW5jZWxsYXRpb24gbWF5IGlzc3VlIGEgZHVwbGljYXRlICQxMDAuMDAgcmVpbWJ1cnNlbWVudCAoZG91YmxlIHBheW91dCkiLCAibXV0YXRpb25fdHlwZSI6ICJGSU5BTkNJQUxfQk9VTkQiLCAidmVyaWZpY2F0aW9uIjogeyJwcmVkaWNhdGUiOiAiYnVzaW5lc3NfcnVsZV9tdXN0X2hvbGQiLCAic2V0dXAiOiBbeyJzZXF1ZW5jZSI6IDEsICJzdGF0dXNfY29kZSI6IDIwMCwgImNvbXBsZXRlIjogdHJ1ZSwgInJlcXVlc3QiOiB7Im1ldGhvZCI6ICJQT1NUIiwgInVybCI6ICJodHRwOi8vbG9jYWxob3N0OjMwMDAvYXBpL2RlbW8vcmVzZXQiLCAiYm9keSI6IHt9fSwgInJlc3BvbnNlIjogeyJtZXNzYWdlIjogIkRlbW8gZGF0YSByZXNldC4iLCAib3JkZXIiOiB7ImlkIjogIjEwNDIiLCAib3JkZXJOdW1iZXIiOiAiIzEwNDIiLCAicHJvZHVjdCI6IHsibmFtZSI6ICJOb3J0aHN0YXIgV2Vla2VuZGVyIFBhY2siLCAidmFyaWFudCI6ICJTbGF0ZSBcdTAwYjcgMjggTCIsICJxdWFudGl0eSI6IDEsICJpbWFnZVVybCI6ICIvYXNzZXRzL3dlZWtlbmRlci1wYWNrLnN2ZyJ9LCAicHVyY2hhc2VEYXRlIjogIjIwMjYtMDgtMjRUMTQ6MTg6MDAuMDAwWiIsICJkZWxpdmVyeURhdGUiOiAiMjAyNi0wOC0yOVQxNjo0MjowMC4wMDBaIiwgIm9yaWdpbmFsQW1vdW50IjogMTAwLCAicGF5bWVudFN0YXR1cyI6ICJwYWlkIiwgIm9yZGVyU3RhdHVzIjogImRlbGl2ZXJlZCIsICJmdWxmaWxsbWVudFN0YXR1cyI6ICJkZWxpdmVyZWQiLCAiY2FuY2VsbGF0aW9uIjogeyJzdGF0dXMiOiAibm9uZSIsICJyZWltYnVyc2VtZW50QW1vdW50IjogMCwgImNvbXBsZXRlZEF0IjogbnVsbH0sICJwcmljZVByb3RlY3Rpb24iOiB7InN0YXR1cyI6ICJlbGlnaWJsZSIsICJjdXJyZW50UHJpY2UiOiA3MCwgImFkanVzdG1lbnRBbW91bnQiOiAwLCAiY29tcGxldGVkQXQiOiBudWxsfSwgInJlZnVuZCI6IHsic3RhdHVzIjogIm5vbmUiLCAicmVxdWVzdGVkQW1vdW50IjogMCwgImNvbXBsZXRlZEFtb3VudCI6IDAsICJyZXF1ZXN0ZWRBdCI6IG51bGwsICJjb21wbGV0ZWRBdCI6IG51bGx9LCAidG90YWxSZXR1cm5lZCI6IDAsICJuZXRDdXN0b21lckJlbmVmaXQiOiAtMTAwLCAiYXZhaWxhYmxlQWN0aW9ucyI6IHsicmVxdWVzdFJlZnVuZCI6IHRydWUsICJyZXF1ZXN0UHJpY2VBZGp1c3RtZW50IjogdHJ1ZSwgImNhbmNlbE9yZGVyIjogdHJ1ZSwgImNvbXBsZXRlUmVmdW5kIjogZmFsc2V9LCAiaGlzdG9yeSI6IFt7ImlkIjogImV2dC0xIiwgInR5cGUiOiAib3JkZXJfcGxhY2VkIiwgInRpdGxlIjogIk9yZGVyIHBsYWNlZCIsICJkZXRhaWwiOiAiUGF5bWVudCBjb25maXJtZWQgXHUwMGI3ICQxMDAuMDAiLCAiYW1vdW50IjogMCwgIm9jY3VycmVkQXQiOiAiMjAyNi0wOC0yNFQxNDoxODowMC4wMDBaIn0sIHsiaWQiOiAiZXZ0LTIiLCAidHlwZSI6ICJvcmRlcl9kZWxpdmVyZWQiLCAidGl0bGUiOiAiRGVsaXZlcmVkIiwgImRldGFpbCI6ICJMZWZ0IGF0IGZyb250IGRvb3IiLCAiYW1vdW50IjogMCwgIm9jY3VycmVkQXQiOiAiMjAyNi0wOC0yOVQxNjo0MjowMC4wMDBaIn1dfX19XSwgImJlZm9yZSI6IHsic2VxdWVuY2UiOiAyLCAic3RhdHVzX2NvZGUiOiAyMDAsICJjb21wbGV0ZSI6IHRydWUsICJyZXF1ZXN0IjogeyJtZXRob2QiOiAiR0VUIiwgInVybCI6ICJodHRwOi8vbG9jYWxob3N0OjMwMDAvYXBpL29yZGVyIiwgImJvZHkiOiBudWxsfSwgInJlc3BvbnNlIjogeyJvcmRlciI6IHsiaWQiOiAiMTA0MiIsICJvcmRlck51bWJlciI6ICIjMTA0MiIsICJwcm9kdWN0IjogeyJuYW1lIjogIk5vcnRoc3RhciBXZWVrZW5kZXIgUGFjayIsICJ2YXJpYW50IjogIlNsYXRlIFx1MDBiNyAyOCBMIiwgInF1YW50aXR5IjogMSwgImltYWdlVXJsIjogIi9hc3NldHMvd2Vla2VuZGVyLXBhY2suc3ZnIn0sICJwdXJjaGFzZURhdGUiOiAiMjAyNi0wOC0yNFQxNDoxODowMC4wMDBaIiwgImRlbGl2ZXJ5RGF0ZSI6ICIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFoiLCAib3JpZ2luYWxBbW91bnQiOiAxMDAsICJwYXltZW50U3RhdHVzIjogInBhaWQiLCAib3JkZXJTdGF0dXMiOiAiZGVsaXZlcmVkIiwgImZ1bGZpbGxtZW50U3RhdHVzIjogImRlbGl2ZXJlZCIsICJjYW5jZWxsYXRpb24iOiB7InN0YXR1cyI6ICJub25lIiwgInJlaW1idXJzZW1lbnRBbW91bnQiOiAwLCAiY29tcGxldGVkQXQiOiBudWxsfSwgInByaWNlUHJvdGVjdGlvbiI6IHsic3RhdHVzIjogImVsaWdpYmxlIiwgImN1cnJlbnRQcmljZSI6IDcwLCAiYWRqdXN0bWVudEFtb3VudCI6IDAsICJjb21wbGV0ZWRBdCI6IG51bGx9LCAicmVmdW5kIjogeyJzdGF0dXMiOiAibm9uZSIsICJyZXF1ZXN0ZWRBbW91bnQiOiAwLCAiY29tcGxldGVkQW1vdW50IjogMCwgInJlcXVlc3RlZEF0IjogbnVsbCwgImNvbXBsZXRlZEF0IjogbnVsbH0sICJ0b3RhbFJldHVybmVkIjogMCwgIm5ldEN1c3RvbWVyQmVuZWZpdCI6IC0xMDAsICJhdmFpbGFibGVBY3Rpb25zIjogeyJyZXF1ZXN0UmVmdW5kIjogdHJ1ZSwgInJlcXVlc3RQcmljZUFkanVzdG1lbnQiOiB0cnVlLCAiY2FuY2VsT3JkZXIiOiB0cnVlLCAiY29tcGxldGVSZWZ1bmQiOiBmYWxzZX0sICJoaXN0b3J5IjogW3siaWQiOiAiZXZ0LTEiLCAidHlwZSI6ICJvcmRlcl9wbGFjZWQiLCAidGl0bGUiOiAiT3JkZXIgcGxhY2VkIiwgImRldGFpbCI6ICJQYXltZW50IGNvbmZpcm1lZCBcdTAwYjcgJDEwMC4wMCIsICJhbW91bnQiOiAwLCAib2NjdXJyZWRBdCI6ICIyMDI2LTA4LTI0VDE0OjE4OjAwLjAwMFoifSwgeyJpZCI6ICJldnQtMiIsICJ0eXBlIjogIm9yZGVyX2RlbGl2ZXJlZCIsICJ0aXRsZSI6ICJEZWxpdmVyZWQiLCAiZGV0YWlsIjogIkxlZnQgYXQgZnJvbnQgZG9vciIsICJhbW91bnQiOiAwLCAib2NjdXJyZWRBdCI6ICIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFoifV19fX0sICJhY3Rpb25zIjogW3sic2VxdWVuY2UiOiAzLCAic3RhdHVzX2NvZGUiOiAyMDAsICJjb21wbGV0ZSI6IHRydWUsICJyZXF1ZXN0IjogeyJtZXRob2QiOiAiUE9TVCIsICJ1cmwiOiAiaHR0cDovL2xvY2FsaG9zdDozMDAwL2FwaS9vcmRlci9jYW5jZWwiLCAiYm9keSI6IG51bGx9LCAicmVzcG9uc2UiOiB7Im1lc3NhZ2UiOiAiT3JkZXIgY2FuY2VsZWQgYW5kIHJlaW1idXJzZW1lbnQgaXNzdWVkLiIsICJvcmRlciI6IHsiaWQiOiAiMTA0MiIsICJvcmRlck51bWJlciI6ICIjMTA0MiIsICJwcm9kdWN0IjogeyJuYW1lIjogIk5vcnRoc3RhciBXZWVrZW5kZXIgUGFjayIsICJ2YXJpYW50IjogIlNsYXRlIFx1MDBiNyAyOCBMIiwgInF1YW50aXR5IjogMSwgImltYWdlVXJsIjogIi9hc3NldHMvd2Vla2VuZGVyLXBhY2suc3ZnIn0sICJwdXJjaGFzZURhdGUiOiAiMjAyNi0wOC0yNFQxNDoxODowMC4wMDBaIiwgImRlbGl2ZXJ5RGF0ZSI6ICIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFoiLCAib3JpZ2luYWxBbW91bnQiOiAxMDAsICJwYXltZW50U3RhdHVzIjogInBhaWQiLCAib3JkZXJTdGF0dXMiOiAiY2FuY2VsZWQiLCAiZnVsZmlsbG1lbnRTdGF0dXMiOiAiZGVsaXZlcmVkIiwgImNhbmNlbGxhdGlvbiI6IHsic3RhdHVzIjogImNvbXBsZXRlZCIsICJyZWltYnVyc2VtZW50QW1vdW50IjogMTAwLCAiY29tcGxldGVkQXQiOiAiMjAyNi0wOS0yMlQyMzo1NzoyOS4wNThaIn0sICJwcmljZVByb3RlY3Rpb24iOiB7InN0YXR1cyI6ICJlbGlnaWJsZSIsICJjdXJyZW50UHJpY2UiOiA3MCwgImFkanVzdG1lbnRBbW91bnQiOiAwLCAiY29tcGxldGVkQXQiOiBudWxsfSwgInJlZnVuZCI6IHsic3RhdHVzIjogIm5vbmUiLCAicmVxdWVzdGVkQW1vdW50IjogMCwgImNvbXBsZXRlZEFtb3VudCI6IDAsICJyZXF1ZXN0ZWRBdCI6IG51bGwsICJjb21wbGV0ZWRBdCI6IG51bGx9LCAidG90YWxSZXR1cm5lZCI6IDEwMCwgIm5ldEN1c3RvbWVyQmVuZWZpdCI6IDAsICJhdmFpbGFibGVBY3Rpb25zIjogeyJyZXF1ZXN0UmVmdW5kIjogZmFsc2UsICJyZXF1ZXN0UHJpY2VBZGp1c3RtZW50IjogZmFsc2UsICJjYW5jZWxPcmRlciI6IGZhbHNlLCAiY29tcGxldGVSZWZ1bmQiOiBmYWxzZX0sICJoaXN0b3J5IjogW3siaWQiOiAiZXZ0LTEiLCAidHlwZSI6ICJvcmRlcl9wbGFjZWQiLCAidGl0bGUiOiAiT3JkZXIgcGxhY2VkIiwgImRldGFpbCI6ICJQYXltZW50IGNvbmZpcm1lZCBcdTAwYjcgJDEwMC4wMCIsICJhbW91bnQiOiAwLCAib2NjdXJyZWRBdCI6ICIyMDI2LTA4LTI0VDE0OjE4OjAwLjAwMFoifSwgeyJpZCI6ICJldnQtMiIsICJ0eXBlIjogIm9yZGVyX2RlbGl2ZXJlZCIsICJ0aXRsZSI6ICJEZWxpdmVyZWQiLCAiZGV0YWlsIjogIkxlZnQgYXQgZnJvbnQgZG9vciIsICJhbW91bnQiOiAwLCAib2NjdXJyZWRBdCI6ICIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFoifSwgeyJpZCI6ICJldnQtMyIsICJ0eXBlIjogIm9yZGVyX2NhbmNlbGVkIiwgInRpdGxlIjogIk9yZGVyIGNhbmNlbGVkIiwgImRldGFpbCI6ICJSZWltYnVyc2VtZW50IGlzc3VlZCB0byBvcmlnaW5hbCBwYXltZW50IG1ldGhvZCIsICJhbW91bnQiOiAxMDAsICJvY2N1cnJlZEF0IjogIjIwMjYtMDktMjJUMjM6NTc6MjkuMDU4WiJ9XX19fSwgeyJzZXF1ZW5jZSI6IDQsICJzdGF0dXNfY29kZSI6IDQwOSwgImNvbXBsZXRlIjogdHJ1ZSwgInJlcXVlc3QiOiB7Im1ldGhvZCI6ICJQT1NUIiwgInVybCI6ICJodHRwOi8vbG9jYWxob3N0OjMwMDAvYXBpL29yZGVyL2NhbmNlbCIsICJib2R5IjogbnVsbH0sICJyZXNwb25zZSI6IHsiZXJyb3IiOiAiQ29uZmxpY3QiLCAibWVzc2FnZSI6ICJUaGlzIG9yZGVyIGhhcyBhbHJlYWR5IGJlZW4gY2FuY2VsZWQuIiwgIm9yZGVyIjogeyJpZCI6ICIxMDQyIiwgIm9yZGVyTnVtYmVyIjogIiMxMDQyIiwgInByb2R1Y3QiOiB7Im5hbWUiOiAiTm9ydGhzdGFyIFdlZWtlbmRlciBQYWNrIiwgInZhcmlhbnQiOiAiU2xhdGUgXHUwMGI3IDI4IEwiLCAicXVhbnRpdHkiOiAxLCAiaW1hZ2VVcmwiOiAiL2Fzc2V0cy93ZWVrZW5kZXItcGFjay5zdmcifSwgInB1cmNoYXNlRGF0ZSI6ICIyMDI2LTA4LTI0VDE0OjE4OjAwLjAwMFoiLCAiZGVsaXZlcnlEYXRlIjogIjIwMjYtMDgtMjlUMTY6NDI6MDAuMDAwWiIsICJvcmlnaW5hbEFtb3VudCI6IDEwMCwgInBheW1lbnRTdGF0dXMiOiAicGFpZCIsICJvcmRlclN0YXR1cyI6ICJjYW5jZWxlZCIsICJmdWxmaWxsbWVudFN0YXR1cyI6ICJkZWxpdmVyZWQiLCAiY2FuY2VsbGF0aW9uIjogeyJzdGF0dXMiOiAiY29tcGxldGVkIiwgInJlaW1idXJzZW1lbnRBbW91bnQiOiAxMDAsICJjb21wbGV0ZWRBdCI6ICIyMDI2LTA5LTIyVDIzOjU3OjI5LjA1OFoifSwgInByaWNlUHJvdGVjdGlvbiI6IHsic3RhdHVzIjogImVsaWdpYmxlIiwgImN1cnJlbnRQcmljZSI6IDcwLCAiYWRqdXN0bWVudEFtb3VudCI6IDAsICJjb21wbGV0ZWRBdCI6IG51bGx9LCAicmVmdW5kIjogeyJzdGF0dXMiOiAibm9uZSIsICJyZXF1ZXN0ZWRBbW91bnQiOiAwLCAiY29tcGxldGVkQW1vdW50IjogMCwgInJlcXVlc3RlZEF0IjogbnVsbCwgImNvbXBsZXRlZEF0IjogbnVsbH0sICJ0b3RhbFJldHVybmVkIjogMTAwLCAibmV0Q3VzdG9tZXJCZW5lZml0IjogMCwgImF2YWlsYWJsZUFjdGlvbnMiOiB7InJlcXVlc3RSZWZ1bmQiOiBmYWxzZSwgInJlcXVlc3RQcmljZUFkanVzdG1lbnQiOiBmYWxzZSwgImNhbmNlbE9yZGVyIjogZmFsc2UsICJjb21wbGV0ZVJlZnVuZCI6IGZhbHNlfSwgImhpc3RvcnkiOiBbeyJpZCI6ICJldnQtMSIsICJ0eXBlIjogIm9yZGVyX3BsYWNlZCIsICJ0aXRsZSI6ICJPcmRlciBwbGFjZWQiLCAiZGV0YWlsIjogIlBheW1lbnQgY29uZmlybWVkIFx1MDBiNyAkMTAwLjAwIiwgImFtb3VudCI6IDAsICJvY2N1cnJlZEF0IjogIjIwMjYtMDgtMjRUMTQ6MTg6MDAuMDAwWiJ9LCB7ImlkIjogImV2dC0yIiwgInR5cGUiOiAib3JkZXJfZGVsaXZlcmVkIiwgInRpdGxlIjogIkRlbGl2ZXJlZCIsICJkZXRhaWwiOiAiTGVmdCBhdCBmcm9udCBkb29yIiwgImFtb3VudCI6IDAsICJvY2N1cnJlZEF0IjogIjIwMjYtMDgtMjlUMTY6NDI6MDAuMDAwWiJ9LCB7ImlkIjogImV2dC0zIiwgInR5cGUiOiAib3JkZXJfY2FuY2VsZWQiLCAidGl0bGUiOiAiT3JkZXIgY2FuY2VsZWQiLCAiZGV0YWlsIjogIlJlaW1idXJzZW1lbnQgaXNzdWVkIHRvIG9yaWdpbmFsIHBheW1lbnQgbWV0aG9kIiwgImFtb3VudCI6IDEwMCwgIm9jY3VycmVkQXQiOiAiMjAyNi0wOS0yMlQyMzo1NzoyOS4wNThaIn1dfX19XSwgImFmdGVyIjogeyJzZXF1ZW5jZSI6IDUsICJzdGF0dXNfY29kZSI6IDIwMCwgImNvbXBsZXRlIjogdHJ1ZSwgInJlcXVlc3QiOiB7Im1ldGhvZCI6ICJHRVQiLCAidXJsIjogImh0dHA6Ly9sb2NhbGhvc3Q6MzAwMC9hcGkvb3JkZXIiLCAiYm9keSI6IG51bGx9LCAicmVzcG9uc2UiOiB7Im9yZGVyIjogeyJpZCI6ICIxMDQyIiwgIm9yZGVyTnVtYmVyIjogIiMxMDQyIiwgInByb2R1Y3QiOiB7Im5hbWUiOiAiTm9ydGhzdGFyIFdlZWtlbmRlciBQYWNrIiwgInZhcmlhbnQiOiAiU2xhdGUgXHUwMGI3IDI4IEwiLCAicXVhbnRpdHkiOiAxLCAiaW1hZ2VVcmwiOiAiL2Fzc2V0cy93ZWVrZW5kZXItcGFjay5zdmcifSwgInB1cmNoYXNlRGF0ZSI6ICIyMDI2LTA4LTI0VDE0OjE4OjAwLjAwMFoiLCAiZGVsaXZlcnlEYXRlIjogIjIwMjYtMDgtMjlUMTY6NDI6MDAuMDAwWiIsICJvcmlnaW5hbEFtb3VudCI6IDEwMCwgInBheW1lbnRTdGF0dXMiOiAicGFpZCIsICJvcmRlclN0YXR1cyI6ICJjYW5jZWxlZCIsICJmdWxmaWxsbWVudFN0YXR1cyI6ICJkZWxpdmVyZWQiLCAiY2FuY2VsbGF0aW9uIjogeyJzdGF0dXMiOiAiY29tcGxldGVkIiwgInJlaW1idXJzZW1lbnRBbW91bnQiOiAxMDAsICJjb21wbGV0ZWRBdCI6ICIyMDI2LTA5LTIyVDIzOjU3OjI5LjA1OFoifSwgInByaWNlUHJvdGVjdGlvbiI6IHsic3RhdHVzIjogImVsaWdpYmxlIiwgImN1cnJlbnRQcmljZSI6IDcwLCAiYWRqdXN0bWVudEFtb3VudCI6IDAsICJjb21wbGV0ZWRBdCI6IG51bGx9LCAicmVmdW5kIjogeyJzdGF0dXMiOiAibm9uZSIsICJyZXF1ZXN0ZWRBbW91bnQiOiAwLCAiY29tcGxldGVkQW1vdW50IjogMCwgInJlcXVlc3RlZEF0IjogbnVsbCwgImNvbXBsZXRlZEF0IjogbnVsbH0sICJ0b3RhbFJldHVybmVkIjogMTAwLCAibmV0Q3VzdG9tZXJCZW5lZml0IjogMCwgImF2YWlsYWJsZUFjdGlvbnMiOiB7InJlcXVlc3RSZWZ1bmQiOiBmYWxzZSwgInJlcXVlc3RQcmljZUFkanVzdG1lbnQiOiBmYWxzZSwgImNhbmNlbE9yZGVyIjogZmFsc2UsICJjb21wbGV0ZVJlZnVuZCI6IGZhbHNlfSwgImhpc3RvcnkiOiBbeyJpZCI6ICJldnQtMSIsICJ0eXBlIjogIm9yZGVyX3BsYWNlZCIsICJ0aXRsZSI6ICJPcmRlciBwbGFjZWQiLCAiZGV0YWlsIjogIlBheW1lbnQgY29uZmlybWVkIFx1MDBiNyAkMTAwLjAwIiwgImFtb3VudCI6IDAsICJvY2N1cnJlZEF0IjogIjIwMjYtMDgtMjRUMTQ6MTg6MDAuMDAwWiJ9LCB7ImlkIjogImV2dC0yIiwgInR5cGUiOiAib3JkZXJfZGVsaXZlcmVkIiwgInRpdGxlIjogIkRlbGl2ZXJlZCIsICJkZXRhaWwiOiAiTGVmdCBhdCBmcm9udCBkb29yIiwgImFtb3VudCI6IDAsICJvY2N1cnJlZEF0IjogIjIwMjYtMDgtMjlUMTY6NDI6MDAuMDAwWiJ9LCB7ImlkIjogImV2dC0zIiwgInR5cGUiOiAib3JkZXJfY2FuY2VsZWQiLCAidGl0bGUiOiAiT3JkZXIgY2FuY2VsZWQiLCAiZGV0YWlsIjogIlJlaW1idXJzZW1lbnQgaXNzdWVkIHRvIG9yaWdpbmFsIHBheW1lbnQgbWV0aG9kIiwgImFtb3VudCI6IDEwMCwgIm9jY3VycmVkQXQiOiAiMjAyNi0wOS0yMlQyMzo1NzoyOS4wNThaIn1dfX19LCAicnVsZSI6IHsic291cmNlIjogImFnZW50X2luZmVyZW5jZSIsICJyZWZlcmVuY2UiOiAiQUktcHJvcG9zZWQgdGVzdCBjb25kaXRpb247IGJ1c2luZXNzIG1lYW5pbmcgcmVxdWlyZXMgdXNlciByZXZpZXcifSwgInJ1bGVfb3JpZ2luIjogIkFJX0lORkVSUkVEIiwgImluZmVycmVkX2ludmFyaWFudCI6IHsic3RhdGVtZW50IjogIlRoZSB0b3RhbCBhbW91bnQgcmV0dXJuZWQgdG8gdGhlIGN1c3RvbWVyIGZvciB0aGlzIG9yZGVyIG11c3QgbmV2ZXIgZXhjZWVkIHRoZSBvcmRlcidzIG9yaWdpbmFsIHBheW1lbnQgYW1vdW50LCBldmVuIGlmIFBPU1QgL2FwaS9vcmRlci9jYW5jZWwgaXMgY2FsbGVkIG1vcmUgdGhhbiBvbmNlIChET1VCTEVfU1BFTkQgLyBSRVBMQVlfQVRUQUNLKS4iLCAicHJlZGljYXRlIjogeyJvcGVyYXRvciI6ICJzdW1fbHRlIiwgInRlcm1zIjogW1sib3JkZXIiLCAidG90YWxSZXR1cm5lZCJdXSwgImxpbWl0IjogWyJvcmRlciIsICJvcmlnaW5hbEFtb3VudCJdfSwgInJlcXVpcmVkX2FjdGlvbnMiOiBbeyJtZXRob2QiOiAiUE9TVCIsICJwYXRoIjogIi9hcGkvb3JkZXIvY2FuY2VsIn0sIHsibWV0aG9kIjogIlBPU1QiLCAicGF0aCI6ICIvYXBpL29yZGVyL2NhbmNlbCJ9XSwgInRlcm1pbmFsX3N0YXRlIjogW3sicGF0aCI6IFsib3JkZXIiLCAiY2FuY2VsbGF0aW9uIiwgInN0YXR1cyJdLCAiZXF1YWxzIjogImNvbXBsZXRlZCJ9XX0sICJzdXBwb3J0aW5nX29ic2VydmF0aW9ucyI6IFt7InNvdXJjZV9ydW4iOiAiY2FuY2VsLWRlbW8iLCAiYXJ0aWZhY3QiOiAicmVjb3JkaW5nLmhhciIsICJqc29uX3BvaW50ZXIiOiAiL2xvZy9lbnRyaWVzLzAvcmVzcG9uc2UvY29udGVudC90ZXh0IiwgInZhbHVlIjogIntcIm9yZGVyXCI6e1wiaWRcIjpcIjEwNDJcIixcIm9yZGVyTnVtYmVyXCI6XCIjMTA0MlwiLFwicHJvZHVjdFwiOntcIm5hbWVcIjpcIk5vcnRoc3RhciBXZWVrZW5kZXIgUGFja1wiLFwidmFyaWFudFwiOlwiU2xhdGUgXHUwMGI3IDI4IExcIixcInF1YW50aXR5XCI6MSxcImltYWdlVXJsXCI6XCIvYXNzZXRzL3dlZWtlbmRlci1wYWNrLnN2Z1wifSxcInB1cmNoYXNlRGF0ZVwiOlwiMjAyNi0wOC0yNFQxNDoxODowMC4wMDBaXCIsXCJkZWxpdmVyeURhdGVcIjpcIjIwMjYtMDgtMjlUMTY6NDI6MDAuMDAwWlwiLFwib3JpZ2luYWxBbW91bnRcIjoxMDAsXCJwYXltZW50U3RhdHVzXCI6XCJwYWlkXCIsXCJvcmRlclN0YXR1c1wiOlwiZGVsaXZlcmVkXCIsXCJmdWxmaWxsbWVudFN0YXR1c1wiOlwiZGVsaXZlcmVkXCIsXCJjYW5jZWxsYXRpb25cIjp7XCJzdGF0dXNcIjpcIm5vbmVcIixcInJlaW1idXJzZW1lbnRBbW91bnRcIjowLFwiY29tcGxldGVkQXRcIjpudWxsfSxcInByaWNlUHJvdGVjdGlvblwiOntcInN0YXR1c1wiOlwiZWxpZ2libGVcIixcImN1cnJlbnRQcmljZVwiOjcwLFwiYWRqdXN0bWVudEFtb3VudFwiOjAsXCJjb21wbGV0ZWRBdFwiOm51bGx9LFwicmVmdW5kXCI6e1wic3RhdHVzXCI6XCJub25lXCIsXCJyZXF1ZXN0ZWRBbW91bnRcIjowLFwiY29tcGxldGVkQW1vdW50XCI6MCxcInJlcXVlc3RlZEF0XCI6bnVsbCxcImNvbXBsZXRlZEF0XCI6bnVsbH0sXCJ0b3RhbFJldHVybmVkXCI6MCxcIm5ldEN1c3RvbWVyQmVuZWZpdFwiOi0xMDAsXCJhdmFpbGFibGVBY3Rpb25zXCI6e1wicmVxdWVzdFJlZnVuZFwiOnRydWUsXCJyZXF1ZXN0UHJpY2VBZGp1c3RtZW50XCI6dHJ1ZSxcImNhbmNlbE9yZGVyXCI6dHJ1ZSxcImNvbXBsZXRlUmVmdW5kXCI6ZmFsc2V9LFwiaGlzdG9yeVwiOlt7XCJpZFwiOlwiZXZ0LTFcIixcInR5cGVcIjpcIm9yZGVyX3BsYWNlZFwiLFwidGl0bGVcIjpcIk9yZGVyIHBsYWNlZFwiLFwiZGV0YWlsXCI6XCJQYXltZW50IGNvbmZpcm1lZCBcdTAwYjcgJDEwMC4wMFwiLFwiYW1vdW50XCI6MCxcIm9jY3VycmVkQXRcIjpcIjIwMjYtMDgtMjRUMTQ6MTg6MDAuMDAwWlwifSx7XCJpZFwiOlwiZXZ0LTJcIixcInR5cGVcIjpcIm9yZGVyX2RlbGl2ZXJlZFwiLFwidGl0bGVcIjpcIkRlbGl2ZXJlZFwiLFwiZGV0YWlsXCI6XCJMZWZ0IGF0IGZyb250IGRvb3JcIixcImFtb3VudFwiOjAsXCJvY2N1cnJlZEF0XCI6XCIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFpcIn1dfX0ifSwgeyJzb3VyY2VfcnVuIjogImNhbmNlbC1kZW1vIiwgImFydGlmYWN0IjogInJlY29yZGluZy5oYXIiLCAianNvbl9wb2ludGVyIjogIi9sb2cvZW50cmllcy8xL3Jlc3BvbnNlL2NvbnRlbnQvdGV4dCIsICJ2YWx1ZSI6ICJ7XCJtZXNzYWdlXCI6XCJPcmRlciBjYW5jZWxlZCBhbmQgcmVpbWJ1cnNlbWVudCBpc3N1ZWQuXCIsXCJvcmRlclwiOntcImlkXCI6XCIxMDQyXCIsXCJvcmRlck51bWJlclwiOlwiIzEwNDJcIixcInByb2R1Y3RcIjp7XCJuYW1lXCI6XCJOb3J0aHN0YXIgV2Vla2VuZGVyIFBhY2tcIixcInZhcmlhbnRcIjpcIlNsYXRlIFx1MDBiNyAyOCBMXCIsXCJxdWFudGl0eVwiOjEsXCJpbWFnZVVybFwiOlwiL2Fzc2V0cy93ZWVrZW5kZXItcGFjay5zdmdcIn0sXCJwdXJjaGFzZURhdGVcIjpcIjIwMjYtMDgtMjRUMTQ6MTg6MDAuMDAwWlwiLFwiZGVsaXZlcnlEYXRlXCI6XCIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFpcIixcIm9yaWdpbmFsQW1vdW50XCI6MTAwLFwicGF5bWVudFN0YXR1c1wiOlwicGFpZFwiLFwib3JkZXJTdGF0dXNcIjpcImNhbmNlbGVkXCIsXCJmdWxmaWxsbWVudFN0YXR1c1wiOlwiZGVsaXZlcmVkXCIsXCJjYW5jZWxsYXRpb25cIjp7XCJzdGF0dXNcIjpcImNvbXBsZXRlZFwiLFwicmVpbWJ1cnNlbWVudEFtb3VudFwiOjEwMCxcImNvbXBsZXRlZEF0XCI6XCIyMDI2LTA5LTIyVDIzOjUxOjAyLjU3MFpcIn0sXCJwcmljZVByb3RlY3Rpb25cIjp7XCJzdGF0dXNcIjpcImVsaWdpYmxlXCIsXCJjdXJyZW50UHJpY2VcIjo3MCxcImFkanVzdG1lbnRBbW91bnRcIjowLFwiY29tcGxldGVkQXRcIjpudWxsfSxcInJlZnVuZFwiOntcInN0YXR1c1wiOlwibm9uZVwiLFwicmVxdWVzdGVkQW1vdW50XCI6MCxcImNvbXBsZXRlZEFtb3VudFwiOjAsXCJyZXF1ZXN0ZWRBdFwiOm51bGwsXCJjb21wbGV0ZWRBdFwiOm51bGx9LFwidG90YWxSZXR1cm5lZFwiOjEwMCxcIm5ldEN1c3RvbWVyQmVuZWZpdFwiOjAsXCJhdmFpbGFibGVBY3Rpb25zXCI6e1wicmVxdWVzdFJlZnVuZFwiOmZhbHNlLFwicmVxdWVzdFByaWNlQWRqdXN0bWVudFwiOmZhbHNlLFwiY2FuY2VsT3JkZXJcIjpmYWxzZSxcImNvbXBsZXRlUmVmdW5kXCI6ZmFsc2V9LFwiaGlzdG9yeVwiOlt7XCJpZFwiOlwiZXZ0LTFcIixcInR5cGVcIjpcIm9yZGVyX3BsYWNlZFwiLFwidGl0bGVcIjpcIk9yZGVyIHBsYWNlZFwiLFwiZGV0YWlsXCI6XCJQYXltZW50IGNvbmZpcm1lZCBcdTAwYjcgJDEwMC4wMFwiLFwiYW1vdW50XCI6MCxcIm9jY3VycmVkQXRcIjpcIjIwMjYtMDgtMjRUMTQ6MTg6MDAuMDAwWlwifSx7XCJpZFwiOlwiZXZ0LTJcIixcInR5cGVcIjpcIm9yZGVyX2RlbGl2ZXJlZFwiLFwidGl0bGVcIjpcIkRlbGl2ZXJlZFwiLFwiZGV0YWlsXCI6XCJMZWZ0IGF0IGZyb250IGRvb3JcIixcImFtb3VudFwiOjAsXCJvY2N1cnJlZEF0XCI6XCIyMDI2LTA4LTI5VDE2OjQyOjAwLjAwMFpcIn0se1wiaWRcIjpcImV2dC0zXCIsXCJ0eXBlXCI6XCJvcmRlcl9jYW5jZWxlZFwiLFwidGl0bGVcIjpcIk9yZGVyIGNhbmNlbGVkXCIsXCJkZXRhaWxcIjpcIlJlaW1idXJzZW1lbnQgaXNzdWVkIHRvIG9yaWdpbmFsIHBheW1lbnQgbWV0aG9kXCIsXCJhbW91bnRcIjoxMDAsXCJvY2N1cnJlZEF0XCI6XCIyMDI2LTA5LTIyVDIzOjUxOjAyLjU3MFpcIn1dfX0ifV0sICJpbnZhcmlhbnQiOiB7Im9wZXJhdG9yIjogInN1bV9sdGUiLCAidGVybXMiOiBbWyJvcmRlciIsICJ0b3RhbFJldHVybmVkIl1dLCAibGltaXQiOiBbIm9yZGVyIiwgIm9yaWdpbmFsQW1vdW50Il19LCAidmlvbGF0aW9uIjogeyJvYnNlcnZlZCI6IGZhbHNlLCAiZGVzY3JpcHRpb24iOiAiRmluYWwgR0VUOiAxMDAgPiAxMDAgPSBGYWxzZSJ9fX0NCg==",
+  "stderr_base64": "",
+  "parsed_result": {
+    "title": "Repeated cancellation may issue a duplicate $100.00 reimbursement (double payout)",
+    "mutation_type": "FINANCIAL_BOUND",
+    "verification": {
+      "predicate": "business_rule_must_hold",
+      "setup": [
+        {
+          "sequence": 1,
+          "status_code": 200,
+          "complete": true,
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:3000/api/demo/reset",
+            "body": {}
+          },
+          "response": {
+            "message": "Demo data reset.",
+            "order": {
+              "id": "1042",
+              "orderNumber": "#1042",
+              "product": {
+                "name": "Northstar Weekender Pack",
+                "variant": "Slate \u00b7 28 L",
+                "quantity": 1,
+                "imageUrl": "/assets/weekender-pack.svg"
+              },
+              "purchaseDate": "2026-08-24T14:18:00.000Z",
+              "deliveryDate": "2026-08-29T16:42:00.000Z",
+              "originalAmount": 100,
+              "paymentStatus": "paid",
+              "orderStatus": "delivered",
+              "fulfillmentStatus": "delivered",
+              "cancellation": {
+                "status": "none",
+                "reimbursementAmount": 0,
+                "completedAt": null
+              },
+              "priceProtection": {
+                "status": "eligible",
+                "currentPrice": 70,
+                "adjustmentAmount": 0,
+                "completedAt": null
+              },
+              "refund": {
+                "status": "none",
+                "requestedAmount": 0,
+                "completedAmount": 0,
+                "requestedAt": null,
+                "completedAt": null
+              },
+              "totalReturned": 0,
+              "netCustomerBenefit": -100,
+              "availableActions": {
+                "requestRefund": true,
+                "requestPriceAdjustment": true,
+                "cancelOrder": true,
+                "completeRefund": false
+              },
+              "history": [
+                {
+                  "id": "evt-1",
+                  "type": "order_placed",
+                  "title": "Order placed",
+                  "detail": "Payment confirmed \u00b7 $100.00",
+                  "amount": 0,
+                  "occurredAt": "2026-08-24T14:18:00.000Z"
+                },
+                {
+                  "id": "evt-2",
+                  "type": "order_delivered",
+                  "title": "Delivered",
+                  "detail": "Left at front door",
+                  "amount": 0,
+                  "occurredAt": "2026-08-29T16:42:00.000Z"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "before": {
+        "sequence": 2,
+        "status_code": 200,
+        "complete": true,
+        "request": {
+          "method": "GET",
+          "url": "http://localhost:3000/api/order",
+          "body": null
+        },
+        "response": {
+          "order": {
+            "id": "1042",
+            "orderNumber": "#1042",
+            "product": {
+              "name": "Northstar Weekender Pack",
+              "variant": "Slate \u00b7 28 L",
+              "quantity": 1,
+              "imageUrl": "/assets/weekender-pack.svg"
+            },
+            "purchaseDate": "2026-08-24T14:18:00.000Z",
+            "deliveryDate": "2026-08-29T16:42:00.000Z",
+            "originalAmount": 100,
+            "paymentStatus": "paid",
+            "orderStatus": "delivered",
+            "fulfillmentStatus": "delivered",
+            "cancellation": {
+              "status": "none",
+              "reimbursementAmount": 0,
+              "completedAt": null
+            },
+            "priceProtection": {
+              "status": "eligible",
+              "currentPrice": 70,
+              "adjustmentAmount": 0,
+              "completedAt": null
+            },
+            "refund": {
+              "status": "none",
+              "requestedAmount": 0,
+              "completedAmount": 0,
+              "requestedAt": null,
+              "completedAt": null
+            },
+            "totalReturned": 0,
+            "netCustomerBenefit": -100,
+            "availableActions": {
+              "requestRefund": true,
+              "requestPriceAdjustment": true,
+              "cancelOrder": true,
+              "completeRefund": false
+            },
+            "history": [
+              {
+                "id": "evt-1",
+                "type": "order_placed",
+                "title": "Order placed",
+                "detail": "Payment confirmed \u00b7 $100.00",
+                "amount": 0,
+                "occurredAt": "2026-08-24T14:18:00.000Z"
+              },
+              {
+                "id": "evt-2",
+                "type": "order_delivered",
+                "title": "Delivered",
+                "detail": "Left at front door",
+                "amount": 0,
+                "occurredAt": "2026-08-29T16:42:00.000Z"
+              }
+            ]
+          }
+        }
+      },
+      "actions": [
+        {
+          "sequence": 3,
+          "status_code": 200,
+          "complete": true,
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "body": null
+          },
+          "response": {
+            "message": "Order canceled and reimbursement issued.",
+            "order": {
+              "id": "1042",
+              "orderNumber": "#1042",
+              "product": {
+                "name": "Northstar Weekender Pack",
+                "variant": "Slate \u00b7 28 L",
+                "quantity": 1,
+                "imageUrl": "/assets/weekender-pack.svg"
+              },
+              "purchaseDate": "2026-08-24T14:18:00.000Z",
+              "deliveryDate": "2026-08-29T16:42:00.000Z",
+              "originalAmount": 100,
+              "paymentStatus": "paid",
+              "orderStatus": "canceled",
+              "fulfillmentStatus": "delivered",
+              "cancellation": {
+                "status": "completed",
+                "reimbursementAmount": 100,
+                "completedAt": "2026-09-22T23:57:29.058Z"
+              },
+              "priceProtection": {
+                "status": "eligible",
+                "currentPrice": 70,
+                "adjustmentAmount": 0,
+                "completedAt": null
+              },
+              "refund": {
+                "status": "none",
+                "requestedAmount": 0,
+                "completedAmount": 0,
+                "requestedAt": null,
+                "completedAt": null
+              },
+              "totalReturned": 100,
+              "netCustomerBenefit": 0,
+              "availableActions": {
+                "requestRefund": false,
+                "requestPriceAdjustment": false,
+                "cancelOrder": false,
+                "completeRefund": false
+              },
+              "history": [
+                {
+                  "id": "evt-1",
+                  "type": "order_placed",
+                  "title": "Order placed",
+                  "detail": "Payment confirmed \u00b7 $100.00",
+                  "amount": 0,
+                  "occurredAt": "2026-08-24T14:18:00.000Z"
+                },
+                {
+                  "id": "evt-2",
+                  "type": "order_delivered",
+                  "title": "Delivered",
+                  "detail": "Left at front door",
+                  "amount": 0,
+                  "occurredAt": "2026-08-29T16:42:00.000Z"
+                },
+                {
+                  "id": "evt-3",
+                  "type": "order_canceled",
+                  "title": "Order canceled",
+                  "detail": "Reimbursement issued to original payment method",
+                  "amount": 100,
+                  "occurredAt": "2026-09-22T23:57:29.058Z"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "sequence": 4,
+          "status_code": 409,
+          "complete": true,
+          "request": {
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/cancel",
+            "body": null
+          },
+          "response": {
+            "error": "Conflict",
+            "message": "This order has already been canceled.",
+            "order": {
+              "id": "1042",
+              "orderNumber": "#1042",
+              "product": {
+                "name": "Northstar Weekender Pack",
+                "variant": "Slate \u00b7 28 L",
+                "quantity": 1,
+                "imageUrl": "/assets/weekender-pack.svg"
+              },
+              "purchaseDate": "2026-08-24T14:18:00.000Z",
+              "deliveryDate": "2026-08-29T16:42:00.000Z",
+              "originalAmount": 100,
+              "paymentStatus": "paid",
+              "orderStatus": "canceled",
+              "fulfillmentStatus": "delivered",
+              "cancellation": {
+                "status": "completed",
+                "reimbursementAmount": 100,
+                "completedAt": "2026-09-22T23:57:29.058Z"
+              },
+              "priceProtection": {
+                "status": "eligible",
+                "currentPrice": 70,
+                "adjustmentAmount": 0,
+                "completedAt": null
+              },
+              "refund": {
+                "status": "none",
+                "requestedAmount": 0,
+                "completedAmount": 0,
+                "requestedAt": null,
+                "completedAt": null
+              },
+              "totalReturned": 100,
+              "netCustomerBenefit": 0,
+              "availableActions": {
+                "requestRefund": false,
+                "requestPriceAdjustment": false,
+                "cancelOrder": false,
+                "completeRefund": false
+              },
+              "history": [
+                {
+                  "id": "evt-1",
+                  "type": "order_placed",
+                  "title": "Order placed",
+                  "detail": "Payment confirmed \u00b7 $100.00",
+                  "amount": 0,
+                  "occurredAt": "2026-08-24T14:18:00.000Z"
+                },
+                {
+                  "id": "evt-2",
+                  "type": "order_delivered",
+                  "title": "Delivered",
+                  "detail": "Left at front door",
+                  "amount": 0,
+                  "occurredAt": "2026-08-29T16:42:00.000Z"
+                },
+                {
+                  "id": "evt-3",
+                  "type": "order_canceled",
+                  "title": "Order canceled",
+                  "detail": "Reimbursement issued to original payment method",
+                  "amount": 100,
+                  "occurredAt": "2026-09-22T23:57:29.058Z"
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "after": {
+        "sequence": 5,
+        "status_code": 200,
+        "complete": true,
+        "request": {
+          "method": "GET",
+          "url": "http://localhost:3000/api/order",
+          "body": null
+        },
+        "response": {
+          "order": {
+            "id": "1042",
+            "orderNumber": "#1042",
+            "product": {
+              "name": "Northstar Weekender Pack",
+              "variant": "Slate \u00b7 28 L",
+              "quantity": 1,
+              "imageUrl": "/assets/weekender-pack.svg"
+            },
+            "purchaseDate": "2026-08-24T14:18:00.000Z",
+            "deliveryDate": "2026-08-29T16:42:00.000Z",
+            "originalAmount": 100,
+            "paymentStatus": "paid",
+            "orderStatus": "canceled",
+            "fulfillmentStatus": "delivered",
+            "cancellation": {
+              "status": "completed",
+              "reimbursementAmount": 100,
+              "completedAt": "2026-09-22T23:57:29.058Z"
+            },
+            "priceProtection": {
+              "status": "eligible",
+              "currentPrice": 70,
+              "adjustmentAmount": 0,
+              "completedAt": null
+            },
+            "refund": {
+              "status": "none",
+              "requestedAmount": 0,
+              "completedAmount": 0,
+              "requestedAt": null,
+              "completedAt": null
+            },
+            "totalReturned": 100,
+            "netCustomerBenefit": 0,
+            "availableActions": {
+              "requestRefund": false,
+              "requestPriceAdjustment": false,
+              "cancelOrder": false,
+              "completeRefund": false
+            },
+            "history": [
+              {
+                "id": "evt-1",
+                "type": "order_placed",
+                "title": "Order placed",
+                "detail": "Payment confirmed \u00b7 $100.00",
+                "amount": 0,
+                "occurredAt": "2026-08-24T14:18:00.000Z"
+              },
+              {
+                "id": "evt-2",
+                "type": "order_delivered",
+                "title": "Delivered",
+                "detail": "Left at front door",
+                "amount": 0,
+                "occurredAt": "2026-08-29T16:42:00.000Z"
+              },
+              {
+                "id": "evt-3",
+                "type": "order_canceled",
+                "title": "Order canceled",
+                "detail": "Reimbursement issued to original payment method",
+                "amount": 100,
+                "occurredAt": "2026-09-22T23:57:29.058Z"
+              }
+            ]
+          }
+        }
+      },
+      "rule": {
+        "source": "agent_inference",
+        "reference": "AI-proposed test condition; business meaning requires user review"
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "The total amount returned to the customer for this order must never exceed the order's original payment amount, even if POST /api/order/cancel is called more than once (DOUBLE_SPEND / REPLAY_ATTACK).",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/cancel"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/cancel"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "cancellation",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/0/response/content/text",
+          "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+        },
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Order canceled and reimbursement issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"canceled\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"completed\",\"reimbursementAmount\":100,\"completedAt\":\"2026-09-22T23:51:02.570Z\"},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"order_canceled\",\"title\":\"Order canceled\",\"detail\":\"Reimbursement issued to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:51:02.570Z\"}]}}"
+        }
+      ],
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "violation": {
+        "observed": false,
+        "description": "Final GET: 100 > 100 = False"
+      }
+    }
+  },
+  "trace": [
+    {
+      "sequence": 1,
+      "started_ns": 84031828000000,
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/demo/reset",
+        "body": {}
+      },
+      "completed_ns": 84031859000000,
+      "status_code": 200,
+      "response": {
+        "message": "Demo data reset.",
+        "order": {
+          "id": "1042",
+          "orderNumber": "#1042",
+          "product": {
+            "name": "Northstar Weekender Pack",
+            "variant": "Slate \u00b7 28 L",
+            "quantity": 1,
+            "imageUrl": "/assets/weekender-pack.svg"
+          },
+          "purchaseDate": "2026-08-24T14:18:00.000Z",
+          "deliveryDate": "2026-08-29T16:42:00.000Z",
+          "originalAmount": 100,
+          "paymentStatus": "paid",
+          "orderStatus": "delivered",
+          "fulfillmentStatus": "delivered",
+          "cancellation": {
+            "status": "none",
+            "reimbursementAmount": 0,
+            "completedAt": null
+          },
+          "priceProtection": {
+            "status": "eligible",
+            "currentPrice": 70,
+            "adjustmentAmount": 0,
+            "completedAt": null
+          },
+          "refund": {
+            "status": "none",
+            "requestedAmount": 0,
+            "completedAmount": 0,
+            "requestedAt": null,
+            "completedAt": null
+          },
+          "totalReturned": 0,
+          "netCustomerBenefit": -100,
+          "availableActions": {
+            "requestRefund": true,
+            "requestPriceAdjustment": true,
+            "cancelOrder": true,
+            "completeRefund": false
+          },
+          "history": [
+            {
+              "id": "evt-1",
+              "type": "order_placed",
+              "title": "Order placed",
+              "detail": "Payment confirmed \u00b7 $100.00",
+              "amount": 0,
+              "occurredAt": "2026-08-24T14:18:00.000Z"
+            },
+            {
+              "id": "evt-2",
+              "type": "order_delivered",
+              "title": "Delivered",
+              "detail": "Left at front door",
+              "amount": 0,
+              "occurredAt": "2026-08-29T16:42:00.000Z"
+            }
+          ]
+        }
+      },
+      "error": null,
+      "complete": true
+    },
+    {
+      "sequence": 2,
+      "started_ns": 84031859000000,
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3000/api/order",
+        "body": null
+      },
+      "completed_ns": 84031859000000,
+      "status_code": 200,
+      "response": {
+        "order": {
+          "id": "1042",
+          "orderNumber": "#1042",
+          "product": {
+            "name": "Northstar Weekender Pack",
+            "variant": "Slate \u00b7 28 L",
+            "quantity": 1,
+            "imageUrl": "/assets/weekender-pack.svg"
+          },
+          "purchaseDate": "2026-08-24T14:18:00.000Z",
+          "deliveryDate": "2026-08-29T16:42:00.000Z",
+          "originalAmount": 100,
+          "paymentStatus": "paid",
+          "orderStatus": "delivered",
+          "fulfillmentStatus": "delivered",
+          "cancellation": {
+            "status": "none",
+            "reimbursementAmount": 0,
+            "completedAt": null
+          },
+          "priceProtection": {
+            "status": "eligible",
+            "currentPrice": 70,
+            "adjustmentAmount": 0,
+            "completedAt": null
+          },
+          "refund": {
+            "status": "none",
+            "requestedAmount": 0,
+            "completedAmount": 0,
+            "requestedAt": null,
+            "completedAt": null
+          },
+          "totalReturned": 0,
+          "netCustomerBenefit": -100,
+          "availableActions": {
+            "requestRefund": true,
+            "requestPriceAdjustment": true,
+            "cancelOrder": true,
+            "completeRefund": false
+          },
+          "history": [
+            {
+              "id": "evt-1",
+              "type": "order_placed",
+              "title": "Order placed",
+              "detail": "Payment confirmed \u00b7 $100.00",
+              "amount": 0,
+              "occurredAt": "2026-08-24T14:18:00.000Z"
+            },
+            {
+              "id": "evt-2",
+              "type": "order_delivered",
+              "title": "Delivered",
+              "detail": "Left at front door",
+              "amount": 0,
+              "occurredAt": "2026-08-29T16:42:00.000Z"
+            }
+          ]
+        }
+      },
+      "error": null,
+      "complete": true
+    },
+    {
+      "sequence": 3,
+      "started_ns": 84031859000000,
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/order/cancel",
+        "body": null
+      },
+      "completed_ns": 84031859000000,
+      "status_code": 200,
+      "response": {
+        "message": "Order canceled and reimbursement issued.",
+        "order": {
+          "id": "1042",
+          "orderNumber": "#1042",
+          "product": {
+            "name": "Northstar Weekender Pack",
+            "variant": "Slate \u00b7 28 L",
+            "quantity": 1,
+            "imageUrl": "/assets/weekender-pack.svg"
+          },
+          "purchaseDate": "2026-08-24T14:18:00.000Z",
+          "deliveryDate": "2026-08-29T16:42:00.000Z",
+          "originalAmount": 100,
+          "paymentStatus": "paid",
+          "orderStatus": "canceled",
+          "fulfillmentStatus": "delivered",
+          "cancellation": {
+            "status": "completed",
+            "reimbursementAmount": 100,
+            "completedAt": "2026-09-22T23:57:29.058Z"
+          },
+          "priceProtection": {
+            "status": "eligible",
+            "currentPrice": 70,
+            "adjustmentAmount": 0,
+            "completedAt": null
+          },
+          "refund": {
+            "status": "none",
+            "requestedAmount": 0,
+            "completedAmount": 0,
+            "requestedAt": null,
+            "completedAt": null
+          },
+          "totalReturned": 100,
+          "netCustomerBenefit": 0,
+          "availableActions": {
+            "requestRefund": false,
+            "requestPriceAdjustment": false,
+            "cancelOrder": false,
+            "completeRefund": false
+          },
+          "history": [
+            {
+              "id": "evt-1",
+              "type": "order_placed",
+              "title": "Order placed",
+              "detail": "Payment confirmed \u00b7 $100.00",
+              "amount": 0,
+              "occurredAt": "2026-08-24T14:18:00.000Z"
+            },
+            {
+              "id": "evt-2",
+              "type": "order_delivered",
+              "title": "Delivered",
+              "detail": "Left at front door",
+              "amount": 0,
+              "occurredAt": "2026-08-29T16:42:00.000Z"
+            },
+            {
+              "id": "evt-3",
+              "type": "order_canceled",
+              "title": "Order canceled",
+              "detail": "Reimbursement issued to original payment method",
+              "amount": 100,
+              "occurredAt": "2026-09-22T23:57:29.058Z"
+            }
+          ]
+        }
+      },
+      "error": null,
+      "complete": true
+    },
+    {
+      "sequence": 4,
+      "started_ns": 84031859000000,
+      "request": {
+        "method": "POST",
+        "url": "http://localhost:3000/api/order/cancel",
+        "body": null
+      },
+      "completed_ns": 84031859000000,
+      "status_code": 409,
+      "response": {
+        "error": "Conflict",
+        "message": "This order has already been canceled.",
+        "order": {
+          "id": "1042",
+          "orderNumber": "#1042",
+          "product": {
+            "name": "Northstar Weekender Pack",
+            "variant": "Slate \u00b7 28 L",
+            "quantity": 1,
+            "imageUrl": "/assets/weekender-pack.svg"
+          },
+          "purchaseDate": "2026-08-24T14:18:00.000Z",
+          "deliveryDate": "2026-08-29T16:42:00.000Z",
+          "originalAmount": 100,
+          "paymentStatus": "paid",
+          "orderStatus": "canceled",
+          "fulfillmentStatus": "delivered",
+          "cancellation": {
+            "status": "completed",
+            "reimbursementAmount": 100,
+            "completedAt": "2026-09-22T23:57:29.058Z"
+          },
+          "priceProtection": {
+            "status": "eligible",
+            "currentPrice": 70,
+            "adjustmentAmount": 0,
+            "completedAt": null
+          },
+          "refund": {
+            "status": "none",
+            "requestedAmount": 0,
+            "completedAmount": 0,
+            "requestedAt": null,
+            "completedAt": null
+          },
+          "totalReturned": 100,
+          "netCustomerBenefit": 0,
+          "availableActions": {
+            "requestRefund": false,
+            "requestPriceAdjustment": false,
+            "cancelOrder": false,
+            "completeRefund": false
+          },
+          "history": [
+            {
+              "id": "evt-1",
+              "type": "order_placed",
+              "title": "Order placed",
+              "detail": "Payment confirmed \u00b7 $100.00",
+              "amount": 0,
+              "occurredAt": "2026-08-24T14:18:00.000Z"
+            },
+            {
+              "id": "evt-2",
+              "type": "order_delivered",
+              "title": "Delivered",
+              "detail": "Left at front door",
+              "amount": 0,
+              "occurredAt": "2026-08-29T16:42:00.000Z"
+            },
+            {
+              "id": "evt-3",
+              "type": "order_canceled",
+              "title": "Order canceled",
+              "detail": "Reimbursement issued to original payment method",
+              "amount": 100,
+              "occurredAt": "2026-09-22T23:57:29.058Z"
+            }
+          ]
+        }
+      },
+      "error": null,
+      "complete": true
+    },
+    {
+      "sequence": 5,
+      "started_ns": 84031859000000,
+      "request": {
+        "method": "GET",
+        "url": "http://localhost:3000/api/order",
+        "body": null
+      },
+      "completed_ns": 84031875000000,
+      "status_code": 200,
+      "response": {
+        "order": {
+          "id": "1042",
+          "orderNumber": "#1042",
+          "product": {
+            "name": "Northstar Weekender Pack",
+            "variant": "Slate \u00b7 28 L",
+            "quantity": 1,
+            "imageUrl": "/assets/weekender-pack.svg"
+          },
+          "purchaseDate": "2026-08-24T14:18:00.000Z",
+          "deliveryDate": "2026-08-29T16:42:00.000Z",
+          "originalAmount": 100,
+          "paymentStatus": "paid",
+          "orderStatus": "canceled",
+          "fulfillmentStatus": "delivered",
+          "cancellation": {
+            "status": "completed",
+            "reimbursementAmount": 100,
+            "completedAt": "2026-09-22T23:57:29.058Z"
+          },
+          "priceProtection": {
+            "status": "eligible",
+            "currentPrice": 70,
+            "adjustmentAmount": 0,
+            "completedAt": null
+          },
+          "refund": {
+            "status": "none",
+            "requestedAmount": 0,
+            "completedAmount": 0,
+            "requestedAt": null,
+            "completedAt": null
+          },
+          "totalReturned": 100,
+          "netCustomerBenefit": 0,
+          "availableActions": {
+            "requestRefund": false,
+            "requestPriceAdjustment": false,
+            "cancelOrder": false,
+            "completeRefund": false
+          },
+          "history": [
+            {
+              "id": "evt-1",
+              "type": "order_placed",
+              "title": "Order placed",
+              "detail": "Payment confirmed \u00b7 $100.00",
+              "amount": 0,
+              "occurredAt": "2026-08-24T14:18:00.000Z"
+            },
+            {
+              "id": "evt-2",
+              "type": "order_delivered",
+              "title": "Delivered",
+              "detail": "Left at front door",
+              "amount": 0,
+              "occurredAt": "2026-08-29T16:42:00.000Z"
+            },
+            {
+              "id": "evt-3",
+              "type": "order_canceled",
+              "title": "Order canceled",
+              "detail": "Reimbursement issued to original payment method",
+              "amount": 100,
+              "occurredAt": "2026-09-22T23:57:29.058Z"
+            }
+          ]
+        }
+      },
+      "error": null,
+      "complete": true
+    }
+  ],
+  "error": null,
+  "contract_validation": {
+    "version": 1,
+    "status": "valid",
+    "category": null,
+    "error": null
+  },
+  "signature": "da484cd76bf5079ceac04e477dc59c3806f985241b1f2cac0125a30da4afef82"
+}

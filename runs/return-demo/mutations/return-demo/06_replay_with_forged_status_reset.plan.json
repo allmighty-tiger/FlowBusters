@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "title": "REPLAY_ATTACK + DATA_TAMPER: second price-adjustment call attempts to forge priceProtection.status back to 'eligible' to re-arm the payout",
+  "origin": "http://localhost:3000",
+  "setup": "/api/demo/reset",
+  "state_read": "/api/order",
+  "claim_type": "amount_bound",
+  "actions": [
+    {"method": "POST", "path": "/api/order/price-adjustment", "body": null},
+    {"method": "POST", "path": "/api/order/price-adjustment", "body": {"priceProtection": {"status": "eligible", "adjustmentAmount": 0}}}
+  ],
+  "predicate": "business_rule_must_hold",
+  "invariant": {
+    "operator": "sum_lte",
+    "terms": [["order", "totalReturned"]],
+    "limit": ["order", "originalAmount"]
+  },
+  "rule": {
+    "source": "observed_ui",
+    "provenance": {
+      "schema_version": 1,
+      "source_run": "return-demo",
+      "artifact": "state_map.json",
+      "rule_id": "UIR-001",
+      "fact_ids": ["UIR-001-F1", "UIR-001-F2"]
+    }
+  },
+  "rule_origin": "AI_INFERRED",
+  "inferred_invariant": {
+    "statement": "After the first successful price adjustment, priceProtection.status is server-set to 'completed'. A second call that supplies a body attempting to reset status to 'eligible' must not be able to re-arm the $30 payout and push totalReturned above originalAmount.",
+    "predicate": {
+      "operator": "sum_lte",
+      "terms": [["order", "totalReturned"]],
+      "limit": ["order", "originalAmount"]
+    },
+    "required_actions": [
+      {"method": "POST", "path": "/api/order/price-adjustment"},
+      {"method": "POST", "path": "/api/order/price-adjustment"}
+    ],
+    "terminal_state": [
+      {"path": ["order", "priceProtection", "status"], "equals": "completed"}
+    ]
+  },
+  "supporting_observations": [
+    {
+      "source_run": "return-demo",
+      "artifact": "recording.har",
+      "json_pointer": "/log/entries/1/response/content/text",
+      "value": "{\"message\":\"Price adjustment issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate · 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"completed\",\"currentPrice\":70,\"adjustmentAmount\":30,\"completedAt\":\"2026-09-23T00:10:56.109Z\"},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":30,\"netCustomerBenefit\":-70,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed · $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"price_adjustment_issued\",\"title\":\"Price adjustment issued\",\"detail\":\"Returned to original payment method\",\"amount\":30,\"occurredAt\":\"2026-09-23T00:10:56.109Z\"}]}}"
+    }
+  ]
+}

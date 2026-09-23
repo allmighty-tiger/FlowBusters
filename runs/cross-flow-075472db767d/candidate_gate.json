@@ -1,0 +1,16 @@
+{
+  "flow": "cross-flow-075472db767d",
+  "valid_candidate_ids": [
+    "CFC-001"
+  ],
+  "allowed_scripts": [
+    "01_price_adjustment_then_refund_double_dip.py"
+  ],
+  "unverified_coverage": [
+    {
+      "candidate_id": "unattributed:02_refund_complete_replay.py",
+      "message": "No candidate links this AI probe; excluded from execution"
+    }
+  ],
+  "signature": "b452ea1dfd2e08bac1adcc78933f3106129432635845d5d993cfc5086e6ff69e"
+}

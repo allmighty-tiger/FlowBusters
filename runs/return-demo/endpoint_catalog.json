@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "flow_name": "return-demo",
+  "endpoints": [
+    {
+      "method": "GET",
+      "origin": "http://localhost:3000",
+      "path": "/api/order",
+      "authority": "validated_recording"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/demo/reset",
+      "authority": "configured_setup"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/price-adjustment",
+      "authority": "validated_recording"
+    }
+  ],
+  "workflows": {},
+  "signature": "64523a9288e0bfc63c9f4ebf0f2c3c79cb5b76b3fb43ed7de56651597c1756c6"
+}

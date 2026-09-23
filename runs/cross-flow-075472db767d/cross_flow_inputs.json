@@ -1,0 +1,403 @@
+{
+  "schema_version": 1,
+  "target_url": "http://localhost:3000",
+  "sources": [
+    {
+      "run_id": "refund-rerun",
+      "sha256": "bd4d9ca8e90365df7777b5a66eb329b96f82f3d75fe39de07e06a21abb4314e9",
+      "path": "cross_flow_sources/refund-rerun",
+      "observed_ui_provenance": "verified",
+      "observed_ui_rules": [
+        {
+          "schema_version": 1,
+          "id": "UIR-001",
+          "statement": "A refund can only be requested once per order; after a refund request is created, the \"Request refund\" action becomes unavailable and refund.status moves from none to pending.",
+          "facts": [
+            {
+              "id": "UIR-001-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "refund-rerun",
+              "artifact": "demo.json",
+              "before_step": 1,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Request refund"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/0/elements/63",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/6"
+              }
+            },
+            {
+              "id": "UIR-001-F2",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "refund-rerun",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "availableActions",
+                "requestRefund"
+              ],
+              "before": true,
+              "after": false,
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The workflow intends a refund to be requestable only once per order; the server should reject a second /api/order/refund/request call while a refund is already pending or completed.",
+            "derived_from": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        {
+          "schema_version": 1,
+          "id": "UIR-002",
+          "statement": "The \"Complete refund\" action is available only while a refund is pending, and disappears permanently once the refund is completed (terminal, one-time completion).",
+          "facts": [
+            {
+              "id": "UIR-002-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "refund-rerun",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Complete refund"
+              },
+              "transition": "appeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/appeared/9"
+              }
+            },
+            {
+              "id": "UIR-002-F2",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "refund-rerun",
+              "artifact": "demo.json",
+              "before_step": 4,
+              "after_step": 6,
+              "element": {
+                "role": "button",
+                "name": "Complete refund"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/3/elements/66",
+                "after": "/workflow_timeline/ui_states/5/changes_from_previous/disappeared/3"
+              }
+            },
+            {
+              "id": "UIR-002-F3",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "refund-rerun",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "availableActions",
+                "completeRefund"
+              ],
+              "before": true,
+              "after": false,
+              "entry_indexes": [
+                1,
+                2
+              ],
+              "json_pointers": {
+                "before": "/log/entries/1/response/content/text",
+                "after": "/log/entries/2/response/content/text"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The workflow intends refund completion to occur exactly once; the server should reject a repeat /api/order/refund/complete call, and should reject the call entirely if no refund was ever requested (skip-step).",
+            "derived_from": [
+              "UIR-002-F1",
+              "UIR-002-F2",
+              "UIR-002-F3"
+            ]
+          }
+        },
+        {
+          "schema_version": 1,
+          "id": "UIR-003",
+          "statement": "Price protection adjustment is presented as unavailable while another order request (a refund) is active.",
+          "facts": [
+            {
+              "id": "UIR-003-F1",
+              "type": "explicit_ui_text",
+              "provenance_type": "explicit_visible_ui_text",
+              "source_run": "refund-rerun",
+              "artifact": "demo.json",
+              "step": 4,
+              "text": "paragraph : Price protection is not available while another order request is active.",
+              "json_pointer": "/workflow_timeline/ui_states/3/elements/59"
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The workflow intends price-protection adjustments and refund requests to be mutually exclusive per order; no price-adjustment endpoint was recorded in this session to test server-side enforcement directly.",
+            "derived_from": [
+              "UIR-003-F1"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "run_id": "cancel-demo",
+      "sha256": "20995ec9bf30f68d5259e0c03ccdb5f2f5e132caeacad91dd9f7e84e96a08926",
+      "path": "cross_flow_sources/cancel-demo",
+      "observed_ui_provenance": "verified",
+      "observed_ui_rules": [
+        {
+          "schema_version": 1,
+          "id": "UIR-001",
+          "statement": "Once an order is canceled, the Cancel order and Request refund controls disappear and are no longer available.",
+          "facts": [
+            {
+              "id": "UIR-001-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "cancel-demo",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Cancel order"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements/64",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/7"
+              }
+            },
+            {
+              "id": "UIR-001-F2",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "cancel-demo",
+              "artifact": "demo.json",
+              "before_step": 3,
+              "after_step": 4,
+              "element": {
+                "role": "button",
+                "name": "Request refund"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/2/elements/63",
+                "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/6"
+              }
+            },
+            {
+              "id": "UIR-001-F3",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "cancel-demo",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "availableActions",
+                "cancelOrder"
+              ],
+              "before": true,
+              "after": false,
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The order-cancellation workflow intends the cancel and refund-request actions to become permanently unavailable once cancellation completes.",
+            "derived_from": [
+              "UIR-001-F1",
+              "UIR-001-F2",
+              "UIR-001-F3"
+            ]
+          }
+        },
+        {
+          "schema_version": 1,
+          "id": "UIR-002",
+          "statement": "Price protection becomes unavailable to the customer while another order request (cancellation) is active.",
+          "facts": [
+            {
+              "id": "UIR-002-F1",
+              "type": "explicit_ui_text",
+              "provenance_type": "explicit_visible_ui_text",
+              "source_run": "cancel-demo",
+              "artifact": "demo.json",
+              "step": 1,
+              "text": "paragraph : The price of this item has dropped since your purchase.",
+              "json_pointer": "/workflow_timeline/ui_states/0/elements/55"
+            },
+            {
+              "id": "UIR-002-F2",
+              "type": "explicit_ui_text",
+              "provenance_type": "explicit_visible_ui_text",
+              "source_run": "cancel-demo",
+              "artifact": "demo.json",
+              "step": 4,
+              "text": "paragraph : Price protection is not available while another order request is active.",
+              "json_pointer": "/workflow_timeline/ui_states/3/elements/59"
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The client displays price protection as 'Unavailable' once cancellation is active, even though the server-side priceProtection.status field is not observed to change (remains 'eligible' in both GET /api/order and POST /api/order/cancel responses). This is an unverified hypothesis worth testing server-side: the API may still accept a price-adjustment request after cancellation despite the UI hiding the control.",
+            "derived_from": [
+              "UIR-002-F1",
+              "UIR-002-F2"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "run_id": "return-demo",
+      "sha256": "1501cd1c120ef83c8c7dea9b5bb6084cfdcd3e432f69a831867d7258682f80bc",
+      "path": "cross_flow_sources/return-demo",
+      "observed_ui_provenance": "verified",
+      "observed_ui_rules": [
+        {
+          "schema_version": 1,
+          "id": "UIR-001",
+          "statement": "Price adjustment can only be requested once \u2014 the control becomes unavailable immediately after it is issued",
+          "facts": [
+            {
+              "id": "UIR-001-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "return-demo",
+              "artifact": "demo.json",
+              "before_step": 1,
+              "after_step": 5,
+              "element": {
+                "role": "button",
+                "name": "Request price adjustment"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/0/elements/59",
+                "after": "/workflow_timeline/ui_states/4/changes_from_previous/disappeared/3"
+              }
+            },
+            {
+              "id": "UIR-001-F2",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "return-demo",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "priceProtection",
+                "status"
+              ],
+              "before": "eligible",
+              "after": "completed",
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The UI treats price adjustment as single-use once issued; the server should independently reject a second price-adjustment request for the same order rather than relying on the client to hide the button.",
+            "derived_from": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        {
+          "schema_version": 1,
+          "id": "UIR-002",
+          "statement": "Cancelling the order becomes unavailable once a price adjustment has been issued",
+          "facts": [
+            {
+              "id": "UIR-002-F1",
+              "type": "ui_element_transition",
+              "provenance_type": "observed_ui_affordance",
+              "source_run": "return-demo",
+              "artifact": "demo.json",
+              "before_step": 1,
+              "after_step": 5,
+              "element": {
+                "role": "button",
+                "name": "Cancel order"
+              },
+              "transition": "disappeared",
+              "json_pointers": {
+                "before": "/workflow_timeline/ui_states/0/elements/64",
+                "after": "/workflow_timeline/ui_states/4/changes_from_previous/disappeared/4"
+              }
+            },
+            {
+              "id": "UIR-002-F2",
+              "type": "api_field_transition",
+              "provenance_type": "api_state_fact",
+              "source_run": "return-demo",
+              "artifact": "recording.har",
+              "field_path": [
+                "order",
+                "availableActions",
+                "cancelOrder"
+              ],
+              "before": true,
+              "after": false,
+              "entry_indexes": [
+                0,
+                1
+              ],
+              "json_pointers": {
+                "before": "/log/entries/0/response/content/text",
+                "after": "/log/entries/1/response/content/text"
+              }
+            }
+          ],
+          "inference": {
+            "provenance_type": "agent_inference",
+            "text": "The client disables cancellation client-side after a price adjustment is issued; the server should also reject a cancel-order call in this state rather than trusting the UI gate.",
+            "derived_from": [
+              "UIR-002-F1",
+              "UIR-002-F2"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "signature": "3a59e17d6df135ab9ca716914d12024dc6013b1b2be2e7ccc3f66f3f7e9f9b0d"
+}

@@ -1,0 +1,14 @@
+{
+  "allowed_domains": [
+    "https://example.com",
+    "http://localhost:3000",
+    "http://localhost:3000/*"
+  ],
+  "allowed_paths_prefix": [
+    "*"
+  ],
+  "block_production": false,
+  "setup_paths": [
+    "/api/demo/reset"
+  ]
+}
