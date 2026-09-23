@@ -186,8 +186,9 @@ async def correct_probe_setups(config, run, flow, env, progress):
 async def admit_json_plans(config, run, flow, env, progress):
     """New generation boundary: JSON -> validation/correction -> Python, never inverse."""
     from backend.runtime.endpoint_catalog import load_endpoint_catalog
-    from backend.runtime.probe_contract import (observed_context, regeneration_feedback,
-        validate_admission, write_admitted_plan, review_only, inspect_observations)
+    from backend.runtime.probe_contract import (compact_regeneration_context, observed_context,
+        regeneration_feedback, validate_admission, write_admitted_plan, review_only,
+        inspect_observations)
     from backend.runtime.state_map_correction import evidence_hashes
     run = Path(run)
     drafts = sorted((run / 'mutations' / flow).glob('*.plan.json'))
@@ -211,9 +212,12 @@ async def admit_json_plans(config, run, flow, env, progress):
     proposals = {}
     feedback = None
     if errors:
-        context = observed_context(run, config.run_dir)
-        feedback = {'typed_json_admission': True, 'rejected_plans': {
-            name: dict(regeneration_feedback(repaired[name], error, context),
+        context = compact_regeneration_context(
+            observed_context(run, config.run_dir),
+            [repaired[name] for name in errors])
+        feedback = {'typed_json_admission': True, 'observed_context': context,
+            'rejected_plans': {
+            name: dict(regeneration_feedback(repaired[name], error, {}),
                        observation_errors=observation_errors[name], pointer_repairs=repairs[name])
             for name, error in errors.items()}}
         progress(f'Typed plan correction 1/1: {len(errors)} JSON plans; no Python scripts created yet')

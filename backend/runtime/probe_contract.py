@@ -203,7 +203,28 @@ def regeneration_feedback(plan, error, context):
             'original_inferred_invariant': plan.get('inferred_invariant'),
             'rejected_combination': {k: plan.get(k) for k in ('claim_type', 'predicate')},
             'validation_error': str(error), 'allowed_combinations': ALLOWED_COMBINATIONS,
-            'schema': PLAN_SCHEMA, 'original_plan': plan, **context}
+             'schema': PLAN_SCHEMA, 'original_plan': plan, **context}
+
+
+def compact_regeneration_context(context, plans):
+    """Build one bounded evidence catalogue shared by all rejected plans."""
+    leaf_names = set()
+    for plan in plans:
+        invariant = plan.get('invariant') if isinstance(plan, dict) else None
+        if not isinstance(invariant, dict):
+            continue
+        for path in [*(invariant.get('terms') or []), invariant.get('limit')]:
+            if isinstance(path, list) and path and isinstance(path[-1], str):
+                leaf_names.add(path[-1])
+    fields = [field for field in context.get('observed_fields', [])
+              if isinstance(field, dict)
+              and isinstance(field.get('response_path'), list)
+              and field['response_path']
+              and field['response_path'][-1] in leaf_names]
+    return {
+        'observed_fields': fields,
+        'supporting_observation_examples': context.get('supporting_observation_examples', []),
+    }
 
 
 def review_only(plan, error):

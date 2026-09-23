@@ -360,6 +360,8 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
                 'predicate': 'business_rule_must_hold', 'invariant': INVARIANT,
                 'actions': [{'method': 'POST', 'path': a['endpoint'], 'body': a['body']} for a in actions]}
         plan = evidence_plan(run, self.origin, actions, INVARIANT, 'combined')
+        plan['supporting_observations'] = [o for o in plan['supporting_observations']
+                                          if o['source_run'] in ('src-price', 'src-refund')]
         (run / 'scope.json').write_text((sources[0] / 'scope.json').read_text())
         (folder / 'probe.py').write_text(render_plan(plan), encoding='utf-8')
         c = {'id': 'C1', 'title': 'combined', 'source_runs': ['src-price'],
@@ -389,6 +391,34 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         fake = deepcopy(c); fake['actions'].reverse()
         with self.assertRaisesRegex(ValueError, 'ordered action'):
             validate_candidate(fake, run, self.root)
+        # Generated candidates may declare the chain only in the exact contract.
+        # Its ordered method/path/body binding is authoritative, not a duplicate
+        # prose actions field. Real POST facts must not be mistaken for shared GETs.
+        contract_only = deepcopy(c)
+        contract_only.pop('actions')
+        validate_candidate(contract_only, run, self.root)
+        inferred_candidate = deepcopy(contract_only)
+        inferred_candidate['rule'] = {'source': 'agent_inference', 'plan_script': 'probe.py'}
+        validate_candidate(inferred_candidate, run, self.root)
+        wrong_inference = deepcopy(inferred_candidate)
+        wrong_inference['execution_contract']['invariant']['limit'] = ['order', 'different']
+        with self.assertRaisesRegex(ValueError, 'exact execution contract'):
+            validate_candidate(wrong_inference, run, self.root)
+        wrong_inference = deepcopy(inferred_candidate)
+        wrong_inference['rule']['plan_script'] = '../probe.py'
+        with self.assertRaisesRegex(ValueError, 'basename'):
+            validate_candidate(wrong_inference, run, self.root)
+        original_script = (folder / 'probe.py').read_bytes()
+        fabricated = deepcopy(plan)
+        fabricated['supporting_observations'][0]['value'] = 'invented evidence'
+        (folder / 'probe.py').write_text(render_plan(fabricated), encoding='utf-8')
+        with self.assertRaisesRegex(ValueError, 'contradicts'):
+            validate_candidate(inferred_candidate, run, self.root)
+        (folder / 'probe.py').write_bytes(original_script)
+        wrong_action = deepcopy(contract_only)
+        wrong_action['execution_contract']['actions'][0]['path'] = '/unobserved'
+        with self.assertRaisesRegex(ValueError, 'method/path'):
+            validate_candidate(wrong_action, run, self.root)
         with patch('backend.runtime.candidate_correction.propose', return_value=corrected) as agent:
             self.assertEqual(asyncio.run(correct_candidates(config, run, run.name, {}, lambda _: None)), 1)
             self.assertEqual(agent.call_count, 1)
@@ -445,6 +475,43 @@ class NorthstarCoverageIntegrationTests(unittest.TestCase):
         self.assertIn('C1', unverified)
         self.assertTrue(unverified['C1'])
         self.assertEqual(load_receipts(run / 'reports' / run.name, self.root), {})
+
+    def test_missing_candidate_artifact_gets_one_bounded_generation(self):
+        from types import SimpleNamespace
+        from backend.runtime.application_model import collect, prepare_inputs
+        from backend.runtime.candidate_correction import correct_candidates
+        from backend.runtime.generated_probes import binding_contract
+        sources = [self.recording('recover-' + name, CHAINS[name])
+                   for name in ('price', 'refund', 'cancel')]
+        run = self.root / 'runs' / 'cross-recover'; run.mkdir()
+        prepare_inputs(run, run.name,
+                       collect(self.root, [p.name for p in sources], self.origin), root=self.root)
+        actions = [{'endpoint': '/api/order/price-adjustment', 'body': {}},
+                   {'endpoint': '/api/order/refund/request', 'body': {}},
+                   {'endpoint': '/api/order/refund/complete', 'body': {}}]
+        plan = evidence_plan(run, self.origin, actions, INVARIANT, 'combined')
+        folder = run / 'mutations' / run.name; folder.mkdir(parents=True)
+        (folder / 'combined.py').write_text(render_plan(plan), encoding='utf-8')
+        candidate = {'id': 'RECOVERED-1', 'title': 'combined',
+            'source_runs': ['recover-price', 'recover-refund'],
+            'rule': {'source': 'user', 'reference': 'test hypothesis'},
+            'actions': [a['endpoint'] for a in actions],
+            'execution_contract': binding_contract(plan), 'source_facts': []}
+        for source, index in [('recover-price', 1), ('recover-refund', 1)]:
+            entry = json.loads((run / 'cross_flow_sources' / source / 'recording.har').read_text())['log']['entries'][index]
+            candidate['source_facts'].append({'source_run': source, 'artifact': 'recording.har',
+                'json_pointer': f'/log/entries/{index}', 'method': entry['request']['method'],
+                'url': entry['request']['url'], 'status': entry['response']['status']})
+        proposal = {'schema_version': 1, 'candidates': [candidate]}
+        path = run / 'flows' / run.name / 'cross_flow_candidates.json'
+        self.assertFalse(path.exists())
+        with patch('backend.runtime.candidate_correction.propose', return_value=proposal) as agent:
+            count = asyncio.run(correct_candidates(
+                SimpleNamespace(run_dir=self.root), run, run.name, {}, lambda _: None))
+        self.assertEqual(count, 1)
+        self.assertEqual(agent.call_count, 1)
+        self.assertTrue(agent.call_args.kwargs['initial'])
+        self.assertEqual(json.loads(path.read_text())['candidates'][0]['id'], 'RECOVERED-1')
 
     def test_endpoint_catalog_guides_generation_and_rejects_guessed_route(self):
         run = self.recording('inventory', CHAINS['price'])

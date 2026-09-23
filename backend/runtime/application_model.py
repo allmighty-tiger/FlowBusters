@@ -233,7 +233,27 @@ def validate_cross_flow_candidates(data, run_dir, root=None):
         rule = candidate.get('rule')
         if not isinstance(rule, dict):
             raise ValueError('Each cross-flow candidate needs a structured rule')
-        if rule.get('source') == 'observed_ui':
+        if rule.get('source') == 'agent_inference' and 'plan_script' in rule:
+            # Explicit new-generation reference to the same validated AI inference
+            # used by single-flow admission. Never upgrade legacy UI references.
+            from backend.runtime.generated_probes import read_plan, render_plan, binding_contract
+            from backend.runtime.inferred_invariants import validate_support
+            name = rule['plan_script']
+            if (not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_-]+\.py', name)):
+                raise ValueError('AI-inferred candidate needs an exact plan_script basename')
+            run = Path(run_dir).resolve()
+            script = run / 'mutations' / run.name / name
+            if script.is_symlink() or not script.resolve().is_relative_to(run):
+                raise ValueError('Candidate plan_script escapes the run')
+            plan = read_plan(script)
+            if plan is None or script.read_text(encoding='utf-8') != render_plan(plan):
+                raise ValueError('Candidate plan_script must be an exact backend-compiled plan')
+            if binding_contract(plan) != candidate.get('execution_contract'):
+                raise ValueError('Candidate inference plan differs from its exact execution contract')
+            validate_support(plan, run, root or _runtime_root(run))
+            if not {o['source_run'] for o in plan['supporting_observations']}.issubset(set(source_runs)):
+                raise ValueError('Candidate inference observations reference undeclared sources')
+        elif rule.get('source') == 'observed_ui':
             try:
                 resolved = validate_rule_reference(rule, run_dir, root=root or _runtime_root(run_dir))
             except UIProvenanceError as exc:
@@ -308,7 +328,15 @@ Single-source hypotheses are not cross-flow candidates. Do not add a second ID
 without a genuine action fact. Each hypothesis must reference
 at least two source runs, explain a shared entity or invariant, and specify
 setup, fresh object/session bindings, before/action/after evidence and expected
-behavior. Identical repeated flows are not new cross-flow coverage.
+behavior. Identical repeated flows are not new cross-flow coverage. For a claim
+about a terminal financial effect, include every observed state-changing action
+needed to reach that terminal state. A request/pending action is not a substitute
+for an observed completion action; the plan and candidate must include completion.
+For new numeric AI-inferred candidates use rule={"source":"agent_inference",
+"plan_script":"exact_compiled_probe.py"}. The backend validates the referenced
+plan's AI_INFERRED metadata, exact raw observations, required actions and invariant
+against authenticated snapshots, and requires the same execution_contract.
+Do not invent LEGACY-UIR IDs or treat a financial inference as an observed UI rule.
 Each candidate has a structured rule. For source observed_ui use rule_id and
 fact_ids from a verified manifest rule plus its source_run and state_map.json
 artifact. API-only facts use source api_state and inference uses source

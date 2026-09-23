@@ -9,8 +9,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 
-from backend.runtime.probe_contract import (ALLOWED_COMBINATIONS, observed_context,
-    regeneration_feedback, validate_combination, write_admitted_plan, inspect_observations)
+from backend.runtime.probe_contract import (ALLOWED_COMBINATIONS, compact_regeneration_context,
+    observed_context, regeneration_feedback, validate_combination, write_admitted_plan,
+    inspect_observations)
 from backend.runtime.generated_probes import read_plan
 from backend.runtime.probe_plan_correction import admit_json_plans
 from backend.runtime.probe_executor import execute_run, load_receipts, validate_probe_output
@@ -85,6 +86,21 @@ class TypedProbeContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(feedback['rejected_combination']['predicate'], 'business_rule_must_hold')
         self.assertEqual({tuple(f['response_path']) for f in context['observed_fields']},
                          {('record', 'measured'), ('record', 'limit')})
+
+    def test_cross_flow_correction_context_is_shared_and_numeric_field_bounded(self):
+        context = {'observed_fields': [
+            {'response_path': ['order', 'totalReturned'], 'value': 130},
+            {'response_path': ['order', 'originalAmount'], 'value': 100},
+            {'response_path': ['order', 'history', 'ignored'], 'value': 'large'}],
+            'supporting_observation_examples': [{'json_pointer': '/log/entries/0/response/content/text',
+                                                 'value': '{"order":{}}'}]}
+        compact = compact_regeneration_context(context, [{
+            'invariant': {'operator': 'sum_lte', 'terms': [['order', 'totalReturned']],
+                          'limit': ['order', 'originalAmount']}}])
+        self.assertEqual([f['response_path'] for f in compact['observed_fields']],
+                         [['order', 'totalReturned'], ['order', 'originalAmount']])
+        self.assertEqual(compact['supporting_observation_examples'],
+                         context['supporting_observation_examples'])
 
     async def test_one_correction_before_creation_preserves_hypothesis(self):
         invalid = dict(self.plan, claim_type='invented_amount_claim')

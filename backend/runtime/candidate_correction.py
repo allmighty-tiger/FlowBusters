@@ -112,11 +112,13 @@ def validate_candidate(candidate, run, root, scripts=None):
     if not isinstance(facts, list):
         raise ValueError('source_facts must reference actual HAR entries from at least two sources')
     covered = set()
-    actions = json.dumps(candidate.get('actions', []))
+    contract = candidate.get('execution_contract')
+    if not isinstance(contract, dict) or not isinstance(contract.get('actions'), list):
+        raise ValueError('Candidate needs an exact execution_contract with ordered actions')
+    contract_actions = contract['actions']
     action_endpoints = candidate.get('action_endpoints', [])
     if not isinstance(action_endpoints, list):
         raise ValueError('action_endpoints must list exact endpoints for named actions')
-    actions += json.dumps(action_endpoints)
     for fact in facts:
         source = fact.get('source_run')
         if source not in candidate['source_runs'] or fact.get('artifact') != 'recording.har':
@@ -135,12 +137,11 @@ def validate_candidate(candidate, run, root, scripts=None):
                 or fact.get('status') != entry['response']['status']):
             raise ValueError(f'Fact {source}{pointer} contradicts its authenticated HAR entry: '
                              f'expected {request["method"]} {request["url"]} status={entry["response"]["status"]}')
-        if request['method'] == 'GET' or path not in actions:
+        if request['method'].upper() in ('GET', 'HEAD', 'OPTIONS'):
             raise ValueError('Source fact must support a state-changing candidate action, not just a shared GET')
-        contract = candidate.get('execution_contract')
-        if isinstance(contract, dict) and not any(
+        if not any(
                 a.get('method') == request['method'] and a.get('path') == path
-                for a in contract.get('actions', []) if isinstance(a, dict)):
+                for a in contract_actions if isinstance(a, dict)):
             raise ValueError('Source fact method/path is absent from the exact execution contract')
         covered.add(source)
     if covered != set(candidate['source_runs']) or len(covered) < 2:
@@ -192,7 +193,7 @@ def validate_candidate(candidate, run, root, scripts=None):
             raise ValueError('Referenced action endpoint is absent from candidate probe source')
 
 
-async def propose(config, run, flow, data, errors, env):
+async def propose(config, run, flow, data, errors, env, *, initial=False):
     with tempfile.TemporaryDirectory(prefix='fb-candidate-correction-') as temp:
         workspace = Path(temp)
         shutil.copytree(run / 'cross_flow_sources', workspace / 'cross_flow_sources')
@@ -203,7 +204,16 @@ async def propose(config, run, flow, data, errors, env):
         (workspace / 'candidates.json').write_text(json.dumps(data), encoding='utf-8')
         (workspace / 'errors.json').write_text(json.dumps(errors), encoding='utf-8')
         (workspace / 'mcp.json').write_text('{"mcpServers":{}}')
-        prompt = CROSS_FLOW_INSTRUCTIONS.replace('{flow}', flow) + '''
+        prompt = CROSS_FLOW_INSTRUCTIONS.replace('{flow}', flow) + ('''
+RECOVERY GENERATION: The primary analysis omitted cross_flow_candidates.json.
+Read the compiled mutation plans and source_action_facts.json. Generate candidates
+only where an exact probe execution_contract is supported by state-changing HAR
+facts from at least two distinct authenticated source runs. Do not manufacture a
+second source, change a probe, or turn a single-flow hypothesis into cross-flow.
+Return ONLY JSON {"schema_version":1,"candidates":[...]}. If no candidate meets
+the contract, return an empty candidates array. No shell, HTTP, writes, browser or
+probe execution.
+''' if initial else '''
 CORRECTION ONLY: Read candidates.json and errors.json and immutable cross_flow_sources.
 Read source_action_facts.json when available for exact, backend-enumerated HAR indexes.
 Return ONLY JSON {"schema_version":1,"candidates":[...]}. Preserve candidate IDs,
@@ -217,7 +227,10 @@ path, body), predicate, invariant, unsupported_reason and claim_type from the ma
 PROBE_PLAN. A missing optional plan field is null. Never match a subset or a superset
 of a chain. If no exact plan represents the original hypothesis, leave it unverified.
 If a candidate cannot be justified, leave it unchanged for backend coverage reporting.
-'''
+For a numeric AI_INFERRED plan, reference its validated inference explicitly with
+rule={"source":"agent_inference","plan_script":"exact_compiled_probe.py"}.
+Do not invent or repair a legacy UI rule ID to represent a new numeric inference.
+''')
         (workspace / 'prompt.txt').write_text(prompt, encoding='utf-8')
         proc = await asyncio.create_subprocess_exec(config.claude_bin, '--print', '--bare',
             '--setting-sources', '', '--output-format', 'json', '--tools', 'Read',
@@ -311,7 +324,23 @@ def _bind_candidate_scripts(candidate, script_actions):
 async def correct_candidates(config, run, flow, env, progress):
     run = Path(run); root = Path(config.run_dir)
     path = run / 'flows' / flow / 'cross_flow_candidates.json'
-    data = json.loads(path.read_text())
+    baseline = evidence_hashes(run, flow)
+    missing = not path.exists()
+    if missing:
+        progress('Cross-flow candidate artifact missing; bounded recovery generation 1/1')
+        try:
+            data = await propose(config, run, flow,
+                {'schema_version': 1, 'candidates': []},
+                {'code': 'MISSING_CANDIDATE_ARTIFACT',
+                 'message': 'cross_flow_candidates.json was not written by primary analysis'},
+                env, initial=True)
+        except (ValueError, KeyError, TypeError, OSError, asyncio.TimeoutError) as exc:
+            raise ValueError('Missing cross_flow_candidates.json and recovery generation failed: '
+                             + (str(exc) or type(exc).__name__)) from exc
+        if evidence_hashes(run, flow) != baseline:
+            raise ValueError('Immutable source evidence changed during candidate recovery')
+    else:
+        data = json.loads(path.read_text())
     if data.get('schema_version') != 1:
         raise ValueError('Candidate schema_version must be 1')
     original = data.get('candidates', [])
@@ -325,9 +354,9 @@ async def correct_candidates(config, run, flow, env, progress):
     ids = [c.get('id') for c in original]
     if any(not isinstance(i, str) or not i for i in ids) or len(set(ids)) != len(ids):
         raise ValueError('Candidate IDs must be non-empty and unique')
-    baseline = evidence_hashes(run, flow)
     audit = run / 'candidate_corrections'; audit.mkdir(exist_ok=True)
-    (audit / 'original.json').write_text(json.dumps(data, indent=2))
+    (audit / ('recovered.json' if missing else 'original.json')).write_text(
+        json.dumps(data, indent=2))
     if list((run / 'reports').glob('*/executions/*.json')):
         raise ValueError('Candidate correction refused after execution')
     # Static action chains of every AI probe in this run, used for deterministic
