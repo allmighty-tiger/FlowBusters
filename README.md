@@ -34,8 +34,8 @@ endpoints directly.
 
 | Phase | What happens | Output |
 |:---:|:---|:---|
-| **Record** | You perform the legitimate workflow in a headed Playwright browser | `demo.json`, `recording.har` |
-| **Analyze** | The workflow, roles, transitions, and critical endpoints are inferred | `state_map.json` |
+| **Record** | You perform the legitimate workflow; Playwright captures changed semantic UI states plus network traffic | `demo.json`, `recording.har` |
+| **Analyze** | UI rules, roles, transitions, and critical endpoints are inferred | `state_map.json` |
 | **Mutate** | Adversarial tests are generated for the observed business logic | `mutations/*.py` |
 | **Probe** | Generated HTTP tests are executed and classified | `findings.json` |
 | **Report** | Evidence, CWE references, and remediation are assembled | `remediation.md` |
@@ -194,6 +194,11 @@ runs/{flow-name}/
 `BUG_FOUND` means the target accepted an operation that should have been
 rejected. `REJECTED` means the attempted operation was blocked. `ERROR` means
 the probe could not execute or could not be evaluated.
+
+`demo.json` contains a compact workflow timeline rather than a full DOM dump:
+deduplicated UI states, their visible before/after differences, and a value-free
+network outline. Passwords, tokens, and sensitive URL parameters are redacted
+from this agent-facing context; replay credentials remain in the HAR.
 
 A successful HTTP response alone does not prove a vulnerability. Findings
 require human review.

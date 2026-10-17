@@ -1,0 +1,343 @@
+{
+  "feedback": null,
+  "proposal": {},
+  "decisions": [
+    {
+      "plan": "01_skip_step_complete_without_request.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "unsupported",
+      "predicate": "unsupported_business_rule"
+    },
+    {
+      "plan": "02_double_complete_sequential_replay.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    },
+    {
+      "plan": "03_duplicate_refund_request_while_pending.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "unsupported",
+      "predicate": "unsupported_business_rule"
+    },
+    {
+      "plan": "04_reopen_completed_order_via_request_then_complete.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    },
+    {
+      "plan": "05_request_after_completion_terminal_state.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "unsupported",
+      "predicate": "unsupported_business_rule"
+    }
+  ],
+  "admitted_plans": {
+    "01_skip_step_complete_without_request.plan.json": {
+      "schema_version": 2,
+      "title": "SKIP_STEP: refund/complete accepted with no prior pending refund request",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "unsupported",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/refund/complete",
+          "body": null
+        }
+      ],
+      "predicate": "unsupported_business_rule",
+      "invariant": null,
+      "unsupported_reason": "This tests workflow-order enforcement (UIR-002: 'Complete refund' is only ever shown after a refund has been requested). If the server wrongly accepts completion with no prior request, order.refund.status will still read 'completed' and totalReturned will equal originalAmount (100), the same values as a legitimate single-request-then-complete flow. sum_lte(totalReturned <= originalAmount) is 100<=100=true in BOTH the buggy and the correct case, so it cannot distinguish an improperly-accepted skip-step from a valid completion. This requires manual/human review of order.refund.status and order.history to confirm no refund was ever requested before completion succeeded."
+    },
+    "02_double_complete_sequential_replay.plan.json": {
+      "schema_version": 2,
+      "title": "DOUBLE_SPEND / REPLAY_ATTACK: calling refund/complete twice may pay out twice",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/refund/request",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/refund/complete",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/refund/complete",
+          "body": null
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "unsupported_reason": null,
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "Total returned to the customer (order.totalReturned) must never exceed the order's original amount (order.originalAmount = 100), even if POST /api/order/refund/complete is called a second time after the refund already completed. UIR-002 shows the 'Complete refund' button and availableActions.completeRefund both disappear after the first completion, implying the workflow intends completion to happen exactly once; this must be enforced server-side, not just hidden in the UI.",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/refund/request"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/refund/complete"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/refund/complete"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "refund",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "refund-rerun",
+          "artifact": "demo.json",
+          "json_pointer": "/workflow_timeline/ui_states/3/elements/66",
+          "value": "button \"Complete refund\" [cursor=pointer]"
+        },
+        {
+          "source_run": "refund-rerun",
+          "artifact": "demo.json",
+          "json_pointer": "/workflow_timeline/ui_states/5/changes_from_previous/disappeared/3",
+          "value": "button \"Complete refund\" [cursor=pointer]"
+        },
+        {
+          "source_run": "refund-rerun",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/2/response/content/text",
+          "value": "{\"message\":\"Refund completed.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"completed\",\"requestedAmount\":100,\"completedAmount\":100,\"requestedAt\":\"2026-09-22T23:27:12.771Z\",\"completedAt\":\"2026-09-22T23:27:14.846Z\"},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"refund_requested\",\"title\":\"Refund requested\",\"detail\":\"Refund is being reviewed\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:27:12.771Z\"},{\"id\":\"evt-4\",\"type\":\"refund_completed\",\"title\":\"Refund completed\",\"detail\":\"Sent to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:27:14.846Z\"}]}}"
+        }
+      ]
+    },
+    "03_duplicate_refund_request_while_pending.plan.json": {
+      "schema_version": 2,
+      "title": "REPLAY_ATTACK: refund/request accepted a second time while a refund is already pending",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "unsupported",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/refund/request",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/refund/request",
+          "body": null
+        }
+      ],
+      "predicate": "unsupported_business_rule",
+      "invariant": null,
+      "unsupported_reason": "This tests whether a second POST /api/order/refund/request is rejected while refund.status is already 'pending' (UIR-001: the 'Request refund' button and availableActions.requestRefund both disappear after the first request). requestedAmount is fixed at the order's originalAmount (100) either way, and totalReturned is unaffected until completion, so no numeric field can exceed a bound to prove a duplicate request was wrongly accepted. Confirming this requires reviewing order.history for a duplicate 'refund_requested' event or a changed requestedAt timestamp, which sum_lte cannot express."
+    },
+    "04_reopen_completed_order_via_request_then_complete.plan.json": {
+      "schema_version": 2,
+      "title": "STATE_INTERLEAVING: re-requesting and re-completing a refund after the order already reached its terminal 'completed' state may double the payout",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/refund/request",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/refund/complete",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/refund/request",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/refund/complete",
+          "body": null
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "unsupported_reason": null,
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "UIR-002 shows the order reaches a terminal state after refund completion ('This order has no actions requiring your attention.' / 'No further actions are available for this order.', observed at step 6). If the server allows POST /api/order/refund/request to reopen a completed order and a second POST /api/order/refund/complete to pay out again, totalReturned would exceed originalAmount (100), a direct financial-loss bug distinct from a simple immediate double-complete (plan 02) because it goes through a full request->complete->request->complete cycle.",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/refund/request"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/refund/complete"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/refund/request"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/refund/complete"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "refund",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "refund-rerun",
+          "artifact": "demo.json",
+          "json_pointer": "/workflow_timeline/ui_states/5/changes_from_previous/appeared/4",
+          "value": "paragraph : This order has no actions requiring your attention."
+        },
+        {
+          "source_run": "refund-rerun",
+          "artifact": "demo.json",
+          "json_pointer": "/workflow_timeline/ui_states/5/changes_from_previous/appeared/5",
+          "value": "paragraph : No further actions are available for this order."
+        },
+        {
+          "source_run": "refund-rerun",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/2/response/content/text",
+          "value": "{\"message\":\"Refund completed.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"completed\",\"requestedAmount\":100,\"completedAmount\":100,\"requestedAt\":\"2026-09-22T23:27:12.771Z\",\"completedAt\":\"2026-09-22T23:27:14.846Z\"},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"refund_requested\",\"title\":\"Refund requested\",\"detail\":\"Refund is being reviewed\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:27:12.771Z\"},{\"id\":\"evt-4\",\"type\":\"refund_completed\",\"title\":\"Refund completed\",\"detail\":\"Sent to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:27:14.846Z\"}]}}"
+        }
+      ]
+    },
+    "05_request_after_completion_terminal_state.plan.json": {
+      "schema_version": 2,
+      "title": "SKIP_STEP / terminal-state bypass: refund/request accepted again after the order already shows 'no further actions available'",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "unsupported",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/refund/request",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/refund/complete",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/refund/request",
+          "body": null
+        }
+      ],
+      "predicate": "unsupported_business_rule",
+      "invariant": null,
+      "unsupported_reason": "This isolates whether the terminal state itself (UIR-002: no actions available after completion) can be reopened by a bare refund/request call, without chaining a second completion (that fuller double-payout chain is covered by plan 04). A lone re-request does not change order.totalReturned, so sum_lte cannot express whether reopening a terminal order was wrongly accepted; it requires reviewing refund.status/requestedAt and order.history for a new 'refund_requested' event after a 'refund_completed' event."
+    }
+  }
+}

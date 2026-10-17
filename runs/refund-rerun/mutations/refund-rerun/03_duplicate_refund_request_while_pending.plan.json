@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "title": "REPLAY_ATTACK: refund/request accepted a second time while a refund is already pending",
+  "origin": "http://localhost:3000",
+  "setup": "/api/demo/reset",
+  "state_read": "/api/order",
+  "claim_type": "unsupported",
+  "actions": [
+    {"method": "POST", "path": "/api/order/refund/request", "body": null},
+    {"method": "POST", "path": "/api/order/refund/request", "body": null}
+  ],
+  "predicate": "unsupported_business_rule",
+  "invariant": null,
+  "unsupported_reason": "This tests whether a second POST /api/order/refund/request is rejected while refund.status is already 'pending' (UIR-001: the 'Request refund' button and availableActions.requestRefund both disappear after the first request). requestedAmount is fixed at the order's originalAmount (100) either way, and totalReturned is unaffected until completion, so no numeric field can exceed a bound to prove a duplicate request was wrongly accepted. Confirming this requires reviewing order.history for a duplicate 'refund_requested' event or a changed requestedAt timestamp, which sum_lte cannot express."
+}

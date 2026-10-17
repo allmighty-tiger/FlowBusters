@@ -1,7 +1,8 @@
+import '../components/report.css';
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiGet } from '../services/api';
-import ReportView, { FindingsReport } from '../components/ReportView';
+import ReportView, { FindingsReport, ReportRunMeta } from '../components/ReportView';
 
 export default function ReportPage() {
   const navigate = useNavigate();
@@ -16,6 +17,10 @@ export default function ReportPage() {
   const flowName = flowNameParam || sessionStorage.getItem('fb_flow_name') || '';
 
   useEffect(() => {
+    let active = true;
+    setLoading(true);
+    setError(null);
+    setReport(null);
     if (!flowName) {
       setError('No assessment flow found. Please start an assessment first.');
       setLoading(false);
@@ -24,16 +29,18 @@ export default function ReportPage() {
 
     apiGet(`/api/assessments/report?flow_name=${encodeURIComponent(flowName)}`)
       .then((data) => {
+        if (!active) return;
         setReport(data.findings);
         setRemediation(data.remediation);
       })
-      .catch((err) => setError(err.message || 'Failed to load report'))
-      .finally(() => setLoading(false));
+      .catch((err) => { if (active) setError(err.message || 'Failed to load report'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [flowName]);
 
   if (loading) return <div style={{ color: '#888', padding: '2rem' }}>Loading report...</div>;
   if (error) return (
-    <div>
+    <div className="fb-report-page">
       <div style={{ background: '#2d1215', border: '1px solid #7f1d1d', borderRadius: 6, padding: '1rem', color: '#fca5a5', marginBottom: '1rem' }}>
         {error}
       </div>
@@ -45,19 +52,15 @@ export default function ReportPage() {
   if (!report) return null;
 
   return (
-    <div>
-      <div style={{ marginBottom: '1.5rem' }}>
-        <button onClick={() => navigate('/reports')} style={{
-          background: 'transparent', color: '#e6c15a', border: '1px solid #333',
-          padding: '0.3rem 1rem', borderRadius: 4, cursor: 'pointer', fontSize: '0.85rem', marginBottom: '1rem',
-        }}>
+    <div className="fb-report-page">
+      <header className="report-page-header">
+        <button className="report-back" onClick={() => navigate('/reports')}>
           ← All reports
         </button>
-        <h1 style={{ fontSize: '1.5rem', margin: 0, color: '#e6c15a' }}>⚔️ Assessment Report</h1>
-        <p style={{ color: '#888', marginTop: '0.25rem' }}>
-          {report.target_url} &middot; Flow: <code style={{ color: '#e6c15a' }}>{report.flow_name}</code> &middot; {report.run_timestamp}
-        </p>
-      </div>
+        <p className="report-eyebrow">FlowBusters / Security assessment</p>
+        <h1>Assessment report</h1>
+        <ReportRunMeta report={report} />
+      </header>
 
       <ReportView report={report} remediation={remediation} />
     </div>

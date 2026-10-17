@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import PortalPage from './pages/portal';
 import ProgressPage from './pages/progress';
 import ReportPage from './pages/report';
 import ReportsIndexPage from './pages/reports';
 import TallTalePage from './pages/tall-tale';
 import AboutPage from './pages/about';
+import ApplicationsPage from './pages/applications';
 import wavesBg from './assets/waves-bg.svg';
 
 const MENU = [
   { icon: '🗺️', label: 'New Assessment', to: '/' },
   { icon: '🧭', label: 'Progress', to: '/progress' },
   { icon: '📜', label: 'Reports', to: '/reports' },
+  { icon: '🔗', label: 'Application Model', to: '/applications' },
   { icon: '📖', label: 'A Tall Tale', to: '/tall-tale' },
   { icon: '⚔️', label: 'About', to: '/about' },
 ];
@@ -115,6 +117,8 @@ function NavBar() {
 }
 
 function AppContent() {
+  const { pathname } = useLocation();
+  const isReport = pathname === "/applications" || pathname === "/reports" || pathname.endsWith("/report");
   return (
     <div style={{ fontFamily: 'system-ui, sans-serif', minHeight: '100vh', color: '#e2e8f0',
       backgroundColor: '#0f0f23',
@@ -123,11 +127,12 @@ function AppContent() {
       backgroundSize: 'cover',
       backgroundPosition: 'center bottom' }}>
       <NavBar />
-      <main style={{ maxWidth: 800, margin: '0 auto', padding: '2rem 1rem' }}>
+      <main style={{ maxWidth: isReport ? 1200 : 800, margin: '0 auto', padding: '2rem 1rem' }}>
         <Routes>
           <Route path="/" element={<PortalPage />} />
           <Route path="/progress" element={<ProgressPage />} />
           <Route path="/reports" element={<ReportsIndexPage />} />
+          <Route path="/applications" element={<ApplicationsPage />} />
           <Route path="/:flowName/report" element={<ReportPage />} />
           <Route path="/tall-tale" element={<TallTalePage />} />
           <Route path="/about" element={<AboutPage />} />

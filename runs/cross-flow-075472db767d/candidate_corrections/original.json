@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "candidates": [
+    {
+      "id": "CFC-001",
+      "title": "Price adjustment followed by refund double-dips the same order beyond its original amount",
+      "source_runs": [
+        "return-demo",
+        "refund-rerun"
+      ],
+      "source_facts": [
+        {
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/price-adjustment",
+          "status": 200
+        },
+        {
+          "source_run": "refund-rerun",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/refund/request",
+          "status": 201
+        },
+        {
+          "source_run": "refund-rerun",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/2",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/refund/complete",
+          "status": 200
+        }
+      ],
+      "actions": [
+        "http://localhost:3000/api/order/price-adjustment",
+        "http://localhost:3000/api/order/refund/request",
+        "http://localhost:3000/api/order/refund/complete"
+      ],
+      "action_endpoints": [
+        "request_price_adjustment",
+        "request_refund",
+        "complete_refund"
+      ],
+      "scripts": [
+        "01_price_adjustment_then_refund_double_dip.plan.json"
+      ],
+      "shared_entity": "order #1042 (originalAmount=100)",
+      "invariant_hypothesis": "totalReturned must never exceed originalAmount (100) for a single order, since price adjustment, refund and cancellation are presented in the UI as mutually exclusive, one-request-at-a-time actions.",
+      "setup": "/api/demo/reset",
+      "fresh_object_binding": "Each execution begins with POST /api/demo/reset to restore the order to its baseline (originalAmount=100, all statuses at baseline), matching the state independently observed as the initial GET /api/order response in all three source runs.",
+      "evidence_chain": {
+        "before": "GET /api/order -> priceProtection.status=eligible, refund.status=none, totalReturned=0, availableActions.requestRefund=true",
+        "action_1": "POST /api/order/price-adjustment -> priceProtection.status=completed, adjustmentAmount=30, totalReturned=30, availableActions.requestRefund=true (return-demo, entries[1])",
+        "action_2": "POST /api/order/refund/request -> refund.status=pending, requestedAmount=100 (refund-rerun, entries[1], applied to the now-adjusted order)",
+        "action_3": "POST /api/order/refund/complete -> refund.status=completed, completedAmount=100 (refund-rerun, entries[2])",
+        "after": "GET /api/order -> expected totalReturned = 30 + 100 = 130 > originalAmount 100 if the vulnerability is confirmed"
+      },
+      "expected_behavior": "Server should reject request_refund (or refund/complete) once a price adjustment has already been completed on the order, the same way it rejects request_refund after cancel_order and rejects request_price_adjustment after refund/request.",
+      "rule": {
+        "source": "agent_inference",
+        "provenance": {
+          "schema_version": 1,
+          "source_run": "return-demo",
+          "artifact": "state_map.json",
+          "rule_id": "UIR-001",
+          "fact_ids": [
+            "UIR-001-F1",
+            "UIR-001-F2"
+          ]
+        }
+      },
+      "execution_contract": {
+        "origin": "http://localhost:3000",
+        "setup": "/api/demo/reset",
+        "state_read": "/api/order",
+        "actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/price-adjustment",
+            "body": {}
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/refund/request",
+            "body": {}
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/refund/complete",
+            "body": {}
+          }
+        ],
+        "predicate": "business_rule_must_hold",
+        "claim_type": "amount_bound",
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "unsupported_reason": null
+      }
+    }
+  ]
+}

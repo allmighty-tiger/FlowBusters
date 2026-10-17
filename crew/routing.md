@@ -27,7 +27,7 @@ Each run writes artifacts into flow-specific subdirectories so multiple flows ca
 | **Trigger** | Captain receives target URL from user |
 | **Invocation** | Captain passes target URL plus optional `--flow-name {flow-name}`. If omitted, use `default`. |
 | **Input** | Target URL, resolved flow name |
-| **Action** | Open headed browser via Playwright MCP, wait for user to complete full workflow demo (login + business flow) |
+| **Action** | Open headed browser via Playwright MCP, capture compact changed UI states while the user completes the workflow, then capture network traffic |
 | **Output** | `flows/{flow-name}/demo.json` + `flows/{flow-name}/recording.har` |
 | **Gate** | Recorder MUST confirm both files exist and contain valid data at the flow-specific paths. Captain verifies file existence before proceeding. |
 | **Blocks** | Phase 2 cannot start until gate passes |
@@ -42,7 +42,7 @@ Each run writes artifacts into flow-specific subdirectories so multiple flows ca
 | **Trigger** | Phase 1 gate passed |
 | **Invocation** | Captain passes the resolved flow name and Phase 1 artifact paths for that flow. |
 | **Input** | `flows/{flow-name}/demo.json`, `flows/{flow-name}/recording.har` |
-| **Action** | Parse HAR, filter static assets, identify state-changing endpoints, extract auth tokens and role contexts |
+| **Action** | Parse HAR and UI timeline, exclude configured setup paths, identify state transitions, UI rules, and co-visible conflicting actions |
 | **Output** | `flows/{flow-name}/state_map.json` |
 | **Gate** | Analyst MUST confirm `flows/{flow-name}/state_map.json` contains at least 1 transition and roles extracted. Captain validates schema. |
 | **Blocks** | Phase 3 cannot start until gate passes |
@@ -57,8 +57,8 @@ Each run writes artifacts into flow-specific subdirectories so multiple flows ca
 | **Trigger** | Phase 2 gate passed |
 | **Invocation** | Captain passes the resolved flow name and `flows/{flow-name}/state_map.json`. |
 | **Input** | `flows/{flow-name}/state_map.json` |
-| **Action** | Generate 3-5 adversarial Python scripts targeting business logic flaws |
-| **Output** | `mutations/{flow-name}/*.py` (3-5 scripts) |
+| **Action** | Generate 5-8 adversarial Python scripts, including mandatory state-interleaving checks for co-visible actions |
+| **Output** | `mutations/{flow-name}/*.py` (5-8 scripts) |
 | **Gate** | Saboteur MUST confirm all scripts are written under `mutations/{flow-name}/`, syntax-checked via py_compile, and describe each mutation type. Captain verifies file count. |
 | **Blocks** | Phase 4 cannot start until gate passes |
 
@@ -95,7 +95,7 @@ Each run writes artifacts into flow-specific subdirectories so multiple flows ca
 
 All inter-phase communication is via JSON files. No prose between agents. Strict schemas:
 
-- `flows/{flow-name}/demo.json` — Array of DOM interaction events with timestamps
+- `flows/{flow-name}/demo.json` — Compact chronological Playwright UI states and a value-free network sequence; states are observations, not fabricated click events
 - `flows/{flow-name}/recording.har` — Standard HAR 1.2 format
 - `flows/{flow-name}/state_map.json` — `{ "target_url": "...", "transitions": [...], "roles": [...], "critical_endpoints": [...] }`
 - `mutations/{flow-name}/*.py` — Self-contained Python scripts, each prints one JSON line to stdout

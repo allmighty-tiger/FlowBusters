@@ -1,0 +1,147 @@
+{
+  "run_timestamp": "2026-09-22T23:55:00Z",
+  "target_url": "http://localhost:3000/",
+  "flow_name": "cancel-demo",
+  "total_scripts": 5,
+  "auth_check": {
+    "performed": false,
+    "reason": "No login/authentication endpoint was recorded or exists in endpoint_catalog.json for this flow (only GET /api/order, POST /api/order/cancel, and the configured setup POST /api/demo/reset are authorized). The app appears to operate with a single unauthenticated session context, which scope.json does not flag as requiring authentication, so this is not reported as a vulnerability."
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Order cancellation may be replayed to issue more than one $100.00 reimbursement (double payout)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "01_double_cancel_amount_bound.py",
+      "mutation_type": "DOUBLE_SPEND",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": "Plan mutations/cancel-demo/01_double_cancel_amount_bound.plan.json: reset -> GET /api/order (originalAmount=100, totalReturned=0) -> POST /api/order/cancel x2 -> GET /api/order. Invariant: order.totalReturned <= order.originalAmount. DRAFT \u2014 awaiting backend execution and signed transport capture before this can be marked CONFIRMED or NOT_REPRODUCED.",
+      "status": "NEEDS_REVIEW",
+      "finding_id": "F-001"
+    },
+    {
+      "id": "F-002",
+      "title": "A third sequential cancel call may further compound the double-payout amount beyond a single replay",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "02_triple_cancel_compounding_amount_bound.py",
+      "mutation_type": "DOUBLE_SPEND",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": "Plan mutations/cancel-demo/02_triple_cancel_compounding_amount_bound.plan.json: reset -> GET /api/order -> POST /api/order/cancel x3 -> GET /api/order. Invariant: order.totalReturned <= order.originalAmount. DRAFT \u2014 awaiting backend execution and signed transport capture.",
+      "status": "NEEDS_REVIEW",
+      "finding_id": "F-002"
+    },
+    {
+      "id": "F-003",
+      "title": "Cancel endpoint may not guard against being called again once the order already reached the terminal 'canceled' state",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "03_cancel_after_cancel_status_guard.py",
+      "mutation_type": "SKIP_STEP",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": "Plan mutations/cancel-demo/03_cancel_after_cancel_status_guard.plan.json proposes an unsupported_business_rule claim (workflow-state/status-equality guard is not expressible via sum_lte). DRAFT \u2014 reviewable coverage; the financial consequence of this same gap, if any, is captured by F-001/F-002.",
+      "status": "NEEDS_REVIEW",
+      "finding_id": "F-003"
+    },
+    {
+      "id": "F-004",
+      "title": "Repeated cancellation may append duplicate 'order_canceled' entries to the order's audit/history ledger",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "04_duplicate_history_entry_integrity.py",
+      "mutation_type": "DATA_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": "Plan mutations/cancel-demo/04_duplicate_history_entry_integrity.plan.json proposes an unsupported_business_rule claim (array-length/uniqueness of order.history is not expressible via sum_lte). DRAFT \u2014 reviewable coverage.",
+      "status": "NEEDS_REVIEW",
+      "finding_id": "F-004"
+    },
+    {
+      "id": "F-005",
+      "title": "Server may not enforce its own advertised availableActions.cancelOrder=false flag, allowing forced-browsing replay of cancel",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-862"
+      ],
+      "script": "05_repeated_cancel_authorization_enforcement.py",
+      "mutation_type": "FORCED_BROWSING",
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "evidence": "Plan mutations/cancel-demo/05_repeated_cancel_authorization_enforcement.plan.json proposes an unsupported_business_rule claim (server-side enforcement of a client-advertised capability flag is not expressible via sum_lte). DRAFT \u2014 reviewable coverage; financial consequence, if any, is captured by F-001/F-002.",
+      "status": "NEEDS_REVIEW",
+      "finding_id": "F-005"
+    }
+  ],
+  "results": [
+    {
+      "script": "01_double_cancel_amount_bound.py",
+      "mutation_type": "DOUBLE_SPEND",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": "Awaiting backend compilation of mutations/cancel-demo/01_double_cancel_amount_bound.plan.json and execution after this session exits.",
+      "finding_id": "F-001"
+    },
+    {
+      "script": "02_triple_cancel_compounding_amount_bound.py",
+      "mutation_type": "DOUBLE_SPEND",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": "Awaiting backend compilation of mutations/cancel-demo/02_triple_cancel_compounding_amount_bound.plan.json and execution after this session exits.",
+      "finding_id": "F-002"
+    },
+    {
+      "script": "03_cancel_after_cancel_status_guard.py",
+      "mutation_type": "SKIP_STEP",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": "unsupported_business_rule plan \u2014 retained as reviewable coverage pending backend execution.",
+      "finding_id": "F-003"
+    },
+    {
+      "script": "04_duplicate_history_entry_integrity.py",
+      "mutation_type": "DATA_TAMPER",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": "unsupported_business_rule plan \u2014 retained as reviewable coverage pending backend execution.",
+      "finding_id": "F-004"
+    },
+    {
+      "script": "05_repeated_cancel_authorization_enforcement.py",
+      "mutation_type": "FORCED_BROWSING",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/cancel",
+      "response_snippet": null,
+      "error_message": "unsupported_business_rule plan \u2014 retained as reviewable coverage pending backend execution.",
+      "finding_id": "F-005"
+    }
+  ],
+  "summary": {
+    "bugs_found": 0,
+    "critical_findings": 0,
+    "rejected": 0,
+    "errors": 0,
+    "needs_review": 5,
+    "not_executed": 5
+  }
+}

@@ -1,17 +1,34 @@
+import '../components/report.css';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiGet } from '../services/api';
+import { ReportLoadError } from '../components/ReportView';
 
 interface ReportSummary {
+  load_error?: string;
   flow_name: string;
   target_url: string;
   run_timestamp: string;
   modified: string;
   bugs_found: number;
+  finding_count?: number;
+  confirmed?: number;
+  unique_vulnerabilities?: number;
+  coverage_gaps?: number;
+  needs_review?: number;
+  not_executed?: number;
   critical_findings?: number;
   rejected: number;
   errors: number;
   total_scripts: number;
+  execution_attempts?: number;
+  completed_executions?: number;
+  pending_execution?: number;
+  process_errors?: number;
+  evidence_contract_errors?: number;
+  execution_errors?: number;
+  trace_mismatches?: number;
+  deduplicated_execution_results?: number;
 }
 
 export default function ReportsIndexPage() {
@@ -30,7 +47,7 @@ export default function ReportsIndexPage() {
   if (loading) return <div style={{ color: '#888', padding: '2rem' }}>Loading reports…</div>;
 
   return (
-    <div>
+    <div className="fb-report-page">
       <div style={{ marginBottom: '1.5rem' }}>
         <button onClick={() => navigate('/')} style={{
           background: 'transparent', color: '#e6c15a', border: '1px solid #333',
@@ -40,7 +57,7 @@ export default function ReportsIndexPage() {
         </button>
         <h1 style={{ fontSize: '1.5rem', margin: 0, color: '#e6c15a' }}>📜 All Reports</h1>
         <p style={{ color: '#888', marginTop: '0.25rem' }}>
-          Every completed assessment on disk. Click View for the full report.
+          Review findings, evidence and execution coverage for each recorded assessment.
         </p>
       </div>
 
@@ -56,60 +73,19 @@ export default function ReportsIndexPage() {
         </div>
       )}
 
-      {!error && reports && reports.length > 0 && (
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
-          <thead>
-            <tr style={{ color: '#888', fontSize: '0.8rem', textAlign: 'left', borderBottom: '1px solid #222' }}>
-              <th style={{ padding: '0.5rem 0.75rem' }}>Flow</th>
-              <th style={{ padding: '0.5rem 0.75rem' }}>Vulns</th>
-              <th style={{ padding: '0.5rem 0.75rem' }}>Rejected</th>
-              <th style={{ padding: '0.5rem 0.75rem' }}>Errors</th>
-              <th style={{ padding: '0.5rem 0.75rem' }}>Scripts</th>
-              <th style={{ padding: '0.5rem 0.75rem' }}>Finished</th>
-              <th style={{ padding: '0.5rem 0.75rem', textAlign: 'right' }}>View</th>
-            </tr>
-          </thead>
-          <tbody>
-            {reports.map((r) => (
-              <tr
-                key={r.flow_name}
-                style={{ borderBottom: '1px solid #1e1e2e' }}
-              >
-                <td style={{ padding: '0.6rem 0.75rem' }}>
-                  <div style={{ color: '#e6c15a', fontWeight: 600 }}>{r.flow_name}</div>
-                  <div style={{ color: '#475569', fontSize: '0.78rem' }}>{r.target_url}</div>
-                </td>
-                <td style={{ padding: '0.6rem 0.75rem' }}>
-                  <span style={{ color: r.bugs_found > 0 ? '#e6c15a' : '#86efac', fontWeight: 600 }}>
-                    {r.bugs_found}
-                  </span>
-                  {(r.critical_findings ?? 0) > 0 && (
-                    <span style={{ color: '#fca5a5', fontWeight: 700, marginLeft: '0.5rem' }}>
-                      🚨 {r.critical_findings} critical
-                    </span>
-                  )}
-                </td>
-                <td style={{ padding: '0.6rem 0.75rem', color: '#86efac' }}>{r.rejected}</td>
-                <td style={{ padding: '0.6rem 0.75rem', color: r.errors > 0 ? '#fcd34d' : '#86efac' }}>{r.errors}</td>
-                <td style={{ padding: '0.6rem 0.75rem', color: '#86efac' }}>{r.total_scripts}</td>
-                <td style={{ padding: '0.6rem 0.75rem', color: '#86efac', fontSize: '0.82rem' }}>{r.modified}</td>
-                <td style={{ padding: '0.6rem 0.75rem', textAlign: 'right' }}>
-                  <button
-                    onClick={() => navigate(`/${r.flow_name}/report`)}
-                    style={{
-                      background: '#e6c15a', color: '#14101f', border: 'none',
-                      padding: '0.35rem 1rem', borderRadius: 4, cursor: 'pointer',
-                      fontWeight: 700, fontSize: '0.85rem',
-                    }}
-                  >
-                    View →
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+      {!error && reports && reports.length > 0 && <div className="report-index-list">
+        {reports.map(r => <article className="report-index-card" key={r.flow_name}>
+          <div><p className="report-eyebrow">ASSESSMENT LOG</p><h2>{r.flow_name}</h2><p className="report-muted">{r.target_url}</p>
+          <p className="report-muted">{r.run_timestamp ? `Run: ${r.run_timestamp}` : `File updated: ${r.modified}`}</p></div>
+          {r.load_error ? <div className="report-index-result"><ReportLoadError message={r.load_error} />
+            <button className="report-button" onClick={() => navigate(`/${encodeURIComponent(r.flow_name)}/report`)}>Validation details</button>
+          </div> : <div className="report-index-result"><strong>{r.finding_count ?? r.bugs_found} normalized finding{(r.finding_count ?? r.bugs_found) === 1 ? '' : 's'}</strong>
+          {(r.critical_findings ?? 0) > 0 && <span className="report-severity severity-critical">{r.critical_findings} critical</span>}
+          <p>{r.unique_vulnerabilities ?? r.confirmed ?? 0} unique vulnerabilities · {r.confirmed ?? 0} confirmed findings · {r.needs_review ?? r.bugs_found} findings need review · {r.coverage_gaps ?? 0} scenario coverage gaps{(r.not_executed ?? 0) > 0 ? ` · ${r.not_executed} not executed` : ''}</p><p>{r.execution_attempts ?? 0} execution attempts / {r.total_scripts} planned · {r.completed_executions ?? 0} completed · {r.pending_execution ?? 0} pending{(r.deduplicated_execution_results ?? 0) > 0 ? ` · ${r.deduplicated_execution_results} deduplicated checks` : ''}</p>
+          <p className={(r.execution_errors ?? r.errors) > 0 ? 'report-notice' : 'report-muted'}>{(r.execution_attempts ?? 0) === 0 && (r.completed_executions ?? 0) === 0 ? (r.total_scripts === 0 ? '0 probes generated / no security checks executed' : 'No security checks executed') : (r.execution_errors ?? r.errors) > 0 ? `${r.process_errors ?? 0} process errors · ${r.evidence_contract_errors ?? 0} evidence-contract errors · ${r.trace_mismatches ?? 0} trace mismatches · incomplete coverage` : 'No process, evidence-contract, or trace errors reported'}</p>
+          <button className="report-button" onClick={() => navigate(`/${encodeURIComponent(r.flow_name)}/report`)}>Open report →</button></div>}
+        </article>)}
+      </div>}
     </div>
   );
 }

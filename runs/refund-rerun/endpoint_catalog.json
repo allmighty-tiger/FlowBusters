@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "flow_name": "refund-rerun",
+  "endpoints": [
+    {
+      "method": "GET",
+      "origin": "http://localhost:3000",
+      "path": "/api/order",
+      "authority": "validated_recording"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/demo/reset",
+      "authority": "configured_setup"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/refund/complete",
+      "authority": "validated_recording"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/refund/request",
+      "authority": "validated_recording"
+    }
+  ],
+  "workflows": {},
+  "signature": "8e24a4cd39a9214736ef7fcf256c05093bef48e07e98dee73ecd55435cc9d020"
+}

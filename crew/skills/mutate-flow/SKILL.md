@@ -2,7 +2,47 @@
 
 ## Purpose
 
-Generate adversarial Python scripts that probe business logic flaws by manipulating workflow state, replaying requests, swapping roles, and tampering with data extracted from the state map.
+Read `crew/skills/probe-flow/EXECUTION.md` before authoring any script. Its
+backend evidence contract supersedes the legacy output examples below. Every
+script must establish and capture its own independent before/actions/after
+scenario and print the required structured `verification`; status codes and a
+`violation_observed` flag alone are not acceptable evidence.
+Invariant paths must start at the HTTP response root and include every envelope
+key (for example `["order", "measuredValue"]`). Never use nested-relative paths,
+recursive field lookup, or guessed array indexes.
+Use `response.extensions["flowbusters_sequence"]` as the capture sequence for
+every HTTPX response. Never maintain a parallel counter. Capture setup requests
+and every repeated reset in `verification.setup`; their sequences are part of
+the same signed transport trace even though they are not attack actions. The
+declared setup and scenario captures must account for every HTTP request once.
+`supplementary_scenarios` is a mapping keyed by stable scenario name inside
+`verification`; a top-level result list is invalid and cannot account for
+signed transport events.
+`business_rule_must_hold` requires a supported `sum_lte` invariant. If the rule
+cannot be represented by a supported predicate, emit
+`unsupported_business_rule` with `unsupported_reason` and keep it reviewable.
+For `sum_lte`, resolve the declared response-root paths from the actual AFTER
+response and print `violation.observed` as the resulting JSON boolean. Never
+leave it as `None`/`null` for the backend to fill in; backend recomputation only
+checks the emitted boolean against signed evidence.
+
+Generate schema-v2 JSON plans (`NN_scenario.plan.json`), not Python scripts.
+Only `amount_bound/business_rule_must_hold` (sum_lte) and
+`unsupported/unsupported_business_rule` are allowed claim/predicate enum pairs.
+Attack techniques belong in the title; they are not predicate names. A double
+payout amount-bound claim can compare the final recorded amount against its
+observed limit. A uniqueness or field-trust claim cannot use that as proof.
+The backend validates plans before creating Python. Legacy script examples below
+describe compiled output, not files the agent should author for a new run.
+
+Supporting observations cite only immutable `demo.json` or `recording.har`.
+`state_map.json`, its attack-surface labels and inferred rules are analysis, not
+raw observations. A pointer to `/log/entries/2/response/content/text` denotes the
+ENTIRE raw string, including other fields and timestamps. A JSON subset such as
+`{"order":{"totalReturned":100}}` is not that string. Copy the exact value.
+A source-reference failure does not make `sum_lte` unsupported. Repair a pointer
+only on one unique exact raw match, otherwise regenerate references once or
+reject before Python creation. Never remove the numeric invariant to pass admission.
 
 ## Confidence: medium
 
@@ -14,6 +54,12 @@ Generate adversarial Python scripts that probe business logic flaws by manipulat
 - The run may include an optional `--flow-name`; if omitted, use `default`
 
 ## Inputs
+
+- Backend-owned `endpoint_catalog.json`: use exact method/origin/path entries;
+  never derive a route by shortening a documented path or naming a UI button.
+  An unavailable required endpoint leaves a scenario NOT_EXECUTED, with the
+  missing prerequisite explained. Do not manufacture a route to get coverage.
+  Runtime 404/405 does not establish that a workflow control held.
 
 - Optional `flow-name` parameter
 - `flows/{flow-name}/state_map.json`
@@ -40,6 +86,23 @@ Read `flows/{flow-name}/state_map.json` and extract:
 - All transitions (ordered by dependency)
 - All roles with their full cookie/header credentials
 - All critical endpoints with their attack surfaces
+- All observed UI rules and transition `ui_context` (visible limits, disabled
+  actions, role/ownership text, and terminal states)
+- `setup_paths`, which may establish test state but must never be attacked or
+  reported as a vulnerability
+- `conflicting_action_pairs`, where multiple state-changing controls were
+  visible in the same UI state
+
+For each observed UI rule, ask whether the server rejects the same action when
+the UI is bypassed. If `observed_ui_rules` is non-empty, generate at least one
+mutation that explicitly violates one of those rules.
+Read `crew/skills/analyze-har/OBSERVED_UI_RULES.md`; copy its structured rule
+reference (`source_run`, `artifact`, `rule_id`, and relevant `fact_ids`) into
+verification. Never replace it with a prose path or classify an API-only fact
+or agent inference as observed UI.
+For every conflicting action pair, generate one STATE_INTERLEAVING script that
+tests A→B, B→A, and a safe concurrent A/B race from equivalent clean states,
+then re-reads the complete resource to verify the invariant.
 
 ### 3. Attack Brainstorm (before writing any scripts)
 
@@ -53,6 +116,8 @@ For each critical endpoint, enumerate every state-changing field in its request 
 | Which requests are idempotency-sensitive — create/pay/transfer? Resend the same request twice (same idempotency key/body), and also race N concurrent copies with `asyncio.gather` — no double charge/delivery/duplicate row allowed | DOUBLE_SPEND / REPLAY_ATTACK |
 | Which field accepts values the UI would never produce? (negative/zero/huge quantities, floats, unicode) | DATA_TAMPER |
 | Which role or ownership boundary exists? (other users' resource IDs, sequential ID enumeration, wrong-role cookies) | ROLE_SWAP / FORCED_BROWSING |
+| Which visible UI rule can be violated by calling the API directly? (disabled action, one-use rule, amount limit, locked state) | SKIP_STEP / REPLAY_ATTACK / DATA_TAMPER |
+| Which actions were visible at the same time, and can both effects be applied? | STATE_INTERLEAVING |
 
 ### 4. Select Mutation Targets
 
@@ -61,6 +126,7 @@ Choose 5-8 mutations (one script per mutation). Prioritize:
 2. Endpoints with multiple attack surface types
 3. Diverse mutation types (don't generate 5 scripts of one type when other types are applicable)
 4. Transitions the recorded demo did NOT take (the happy path is already proven safe — attack the rest of the state machine)
+5. High-impact rules observed in the UI but not proven by a negative server response
 
 ### 5. Generate Scripts
 
@@ -77,7 +143,7 @@ import json
 import httpx
 
 TARGET_URL = "{endpoint_url}"
-MUTATION_TYPE = "{SKIP_STEP|ROLE_SWAP|DATA_TAMPER|REPLAY_ATTACK|FORCED_BROWSING|MASS_ASSIGNMENT|PRICING_TAMPER|DOUBLE_SPEND}"
+MUTATION_TYPE = "{SKIP_STEP|ROLE_SWAP|DATA_TAMPER|REPLAY_ATTACK|FORCED_BROWSING|MASS_ASSIGNMENT|PRICING_TAMPER|DOUBLE_SPEND|STATE_INTERLEAVING}"
 
 # Captured credentials from recording
 COOKIES = {cookies_from_state_map}
@@ -141,7 +207,7 @@ json_body = {"order_id": "OTHER_USERS_ORDER_ID", "amount": -1, "status": "approv
 **FORCED_BROWSING** — Access endpoints directly:
 ```python
 # Guess or enumerate endpoint URLs
-# Try: /api/orders/1, /api/orders/2, /api/orders/3
+# Try: /api/recordss/1, /api/recordss/2, /api/recordss/3
 # Try: /admin/users, /internal/config, /api/export
 # Access without going through the normal UI flow
 ```
@@ -233,3 +299,33 @@ Name scripts with zero-padded index and descriptive slug inside `mutations/{flow
 - **Comments are mandatory** — each script must explain what vulnerability it's testing
 - **No production URLs** — only test against QA/staging environments
 - **Flow isolation:** Read from `flows/{flow-name}/` and write only to `mutations/{flow-name}/`.
+
+### Declarative plan setup gate
+
+For PROBE_PLAN, `setup` is a POST reset endpoint, never the GET state-read URL.
+Select it only from endpoint_catalog.json entries with authority `configured_setup`.
+Match every state read and action by exact origin, method and path in that catalog.
+Do not invent routes from button labels. Multiple independent plans need an
+authorized setup to restore starting state; `setup: null` does not provide isolation.
+If no such setup exists, report the missing precondition. The backend blocks the
+whole queue before requests, and can request at most two setup-only corrections
+when authorized alternatives exist. Corrections must preserve actions and predicates.
+
+`duplicate_refund_prevention` and other request-uniqueness claims cannot use a
+numeric upper-bound predicate: an unchanged requested amount does not establish
+idempotency. Use `unsupported_business_rule` and explain the missing executable
+predicate. The bounded correction path may downgrade such an invalid claim to
+reviewable unsupported coverage while preserving its claim and action chain.
+
+### Complete financial scenarios
+
+Include request-body amount overrides for recorded payout actions, and replay
+the actual completion endpoint for multi-step payouts. Preserve prerequisites
+and obtain a final GET after completion. A pending refund is not a completed
+payout. Cross-flow probes compose complete source chains, including terminal
+completion, without resetting between the combined actions. Reset only before
+each independent scenario, then capture its before GET and its own after GET.
+For an approved measuredValue/comparisonValue requirement, test exactly those
+response-root paths. Report an amount-bound check, not an unrelated claim about
+mass-assignment prevention. Compute the boolean from that scenario's AFTER;
+never reuse a prior scenario's variables or compare against a different amount.

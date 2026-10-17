@@ -50,35 +50,28 @@ Tell the user:
 >
 > I'm recording all interactions and network traffic for flow `{flow-name}`."
 
-### 4. Capture DOM Interactions
+### 4. Capture Semantic UI States
 
-While the user works, use Playwright MCP snapshot capabilities to track:
-- **Clicks** — element selectors and text content
-- **Form fills** — field names and input types (NOT values for sensitive fields)
-- **Navigation** — URL changes and page transitions
-- **Submissions** — form submissions and their targets
+While the user works, use Playwright MCP accessibility snapshots to capture
+chronological UI states. Deduplicate unchanged states. Keep URL/title, visible
+text, controls and enabled/disabled state, labels/non-sensitive values, alerts,
+prices, limits, permissions and terminal-state language. Strip MCP element refs,
+redact passwords/tokens, cap the retained context, and never save the full DOM.
 
-Structure each interaction as:
-```json
-{
-  "type": "click|fill|navigate|submit|select",
-  "selector": "CSS or accessibility selector",
-  "value": "input value or null",
-  "timestamp": "ISO-8601",
-  "url": "current page URL"
-}
-```
+Each state must include a compact `changes_from_previous` with appeared and
+disappeared semantic elements. These are observed before/after states, not proof
+of a particular click; never fabricate interaction events.
 
 ### 5. Capture Network Traffic (HAR)
 
-Playwright MCP writes network data **directly to disk** — the model never
-regenerates JSON. Use the `filename=` parameter on every network tool call
-so data flows: MCP → file (milliseconds, not token-by-token).
+Playwright MCP writes network data **directly to disk**. The full-detail call
+contains status and headers, but bodies are separate request parts. Capture
+those parts explicitly; never infer a body from `content-length`.
 
 #### 5a. Get Request List (to file)
 
 ```
-browser_network_requests(static=false, filter="/api/.*|\\.(json)$", filename="flows/{flow-name}/har_data/network_requests.json")
+browser_network_requests(static=false, filter="/api/.*|\\.(json)$", filename="flows/{flow-name}/har_data/network_requests.log")
 ```
 
 The `filter` parameter tells Playwright MCP to only return API/JSON requests.
@@ -87,22 +80,26 @@ The `filename=` parameter writes the result directly to disk.
 **Fallback:** If filtering returns fewer than 2 entries, call again without
 the `filter` parameter (all requests, static=false):
 ```
-browser_network_requests(static=false, filename="flows/{flow-name}/har_data/network_requests.json")
+browser_network_requests(static=false, filename="flows/{flow-name}/har_data/network_requests.log")
 ```
 
 Create the directory first: `mkdir -p flows/{flow-name}/har_data`
 
 #### 5b. Collect Request Details (to files)
 
-Read `network_requests.json` to get the list of indices. For each index N,
-call `browser_network_request` with `filename=`:
+Read `network_requests.log` to get the original 1-based indices. Filtering can
+leave gaps, so preserve the printed number. For each index N, save the full
+details and both body parts. Use a zero-padded filename (`001`, `002`, ...):
 
 ```
-browser_network_request(index=N, filename="flows/{flow-name}/har_data/request_N.json")
+browser_network_request(index=N, filename="flows/{flow-name}/har_data/request_NNN.log")
+browser_network_request(index=N, part="request-body", filename="flows/{flow-name}/har_data/request_NNN_request_body.txt")
+browser_network_request(index=N, part="response-body", filename="flows/{flow-name}/har_data/request_NNN_response_body.txt")
 ```
 
-**CRITICAL:** Use `filename=` on every call. Playwright MCP writes the file
-directly. **Do NOT regenerate the data as text output.**
+Empty request bodies are normal for GET. A successful JSON response normally
+has a body; if its response-body file is absent or empty, the capture gate must
+fail. Use `filename=` on every call. Do not rewrite tool output through the model.
 
 #### 5c. Synthesize HAR 1.2
 
@@ -129,11 +126,20 @@ When the user signals completion:
   "flow_name": "{flow-name}",
   "timestamp_start": "ISO-8601",
   "timestamp_end": "ISO-8601",
-  "interactions": [
-    { "type": "navigate", "selector": null, "value": "https://...", "timestamp": "..." },
-    { "type": "fill", "selector": "#username", "value": "[REDACTED]", "timestamp": "..." },
-    { "type": "click", "selector": "button[type=submit]", "value": null, "timestamp": "..." }
-  ]
+  "workflow_timeline": {
+    "ui_states": [
+      {
+        "step": 1,
+        "url": "https://...",
+        "elements": ["button Apply Coupon enabled", "text: One coupon per order"],
+        "changes_from_previous": {"appeared": [], "disappeared": []}
+      }
+    ],
+    "network_sequence": [
+      {"sequence": 1, "method": "POST", "url": "https://.../coupon", "status": 200,
+       "request_body_keys": ["code"], "response_body_keys": ["discount", "total"]}
+    ]
+  }
 }
 ```
 
@@ -144,7 +150,7 @@ in step 5c. Verify it exists and contains at least 1 entry.
 
 - Confirm `flows/{flow-name}/demo.json` exists and is valid JSON
 - Confirm `flows/{flow-name}/recording.har` exists and is valid HAR
-- Confirm at least 1 interaction was captured
+- Confirm at least 1 UI state was captured
 - Confirm at least 1 network entry was recorded
 
 ### 8. Report Gate Status

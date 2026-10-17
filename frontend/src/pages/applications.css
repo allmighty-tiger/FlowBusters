@@ -1,0 +1,28 @@
+.application-page { color: #e8e8f0; max-width: 1040px; margin: auto; font: 15px/1.65 system-ui, sans-serif; }
+.application-page h1 { font-size: clamp(28px, 4vw, 40px); letter-spacing: -.04em; margin: 4px 0; }
+.application-page h2 { font-size: 19px; margin: 0 0 8px; }
+.application-page p { color: #aaaebe; }
+.application-page a { color: #e6c15a; }
+.application-eyebrow { font-size: 11px; letter-spacing: .16em; color: #e6c15a !important; }
+.application-toolbar { display: flex; align-items: end; gap: 16px; margin: 30px 0; }
+.application-toolbar label { flex: 1; }
+.application-page select { display: block; width: 100%; margin-top: 8px; padding: 12px; background: #171929; color: #eee; border: 1px solid #34374c; border-radius: 8px; }
+.application-page button { padding: 12px 18px; border: 1px solid #43465a; border-radius: 8px; background: #202235; color: #eee; cursor: pointer; font: inherit; }
+.application-page button:disabled { opacity: .45; cursor: not-allowed; }
+.application-page :focus-visible { outline: 2px solid #e6c15a; outline-offset: 4px; }
+.application-intro { margin: 30px 0 18px; }
+.application-flows { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.application-flows article, .application-empty { background: #141626; border: 1px solid #303349; border-radius: 12px; padding: 22px; min-width: 0; }
+.application-flow-heading { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; overflow-wrap: anywhere; }
+.application-flow-heading span { color: #b6b0dc; font-size: 11px; border: 1px solid #48405d; border-radius: 20px; padding: 2px 8px; }
+.application-page input { accent-color: #e6c15a; margin-right: 8px; }
+.application-date { font-size: 12px; }
+.application-page summary { cursor: pointer; padding-top: 14px; border-top: 1px solid #303349; }
+.application-model-field h3 { font-size: 13px; text-transform: capitalize; color: #c7c8d4; }
+.application-model-field pre { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; color: #bfc3d6; }
+.application-launch { display: flex; align-items: center; gap: 28px; padding: 24px; margin-top: 28px; border: 1px solid #655630; border-radius: 12px; background: #1c1b25; }
+.application-launch > div { flex: 1; }
+.application-launch button { flex-shrink: 0; background: #e6c15a; color: #17151b; border: 0; font-weight: 650; }
+.application-launch label, .application-footnote { font-size: 13px; }
+.application-error { color: #ffb0b8 !important; padding: 16px; border: 1px solid #7d4452; border-radius: 8px; }
+@media (max-width: 720px) { .application-flows { grid-template-columns: 1fr; } .application-toolbar, .application-launch { flex-direction: column; align-items: stretch; } }
