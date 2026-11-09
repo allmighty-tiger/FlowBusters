@@ -104,17 +104,19 @@ edited; no commits, pushes, installations, or second new assessment occurred.
 
 ## Verification commands and results
 
-The repository venv launcher is broken in this environment. Tests used the
-installed Python runtime with the already-installed repository site-packages;
-no dependency was installed.
+The repository venv launcher was broken in the observed environment. Tests used
+an installed Python runtime with the already-installed repository site-packages;
+no dependency was installed. The commands below omit machine-specific paths and
+Git ownership overrides. Run them from the repository root with `python` pointing
+to the appropriate interpreter.
 
 ```powershell
 $env:PYTHONPATH="$PWD;$PWD\.venv\Lib\site-packages"
-& 'C:\Users\nasti\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe' -B -m unittest discover -s backend/tests -v
+python -B -m unittest discover -s backend/tests -v
 $testFiles = @(Get-ChildItem frontend/tests -Filter *.test.cjs | ForEach-Object FullName)
 node --test $testFiles
 npm --prefix frontend run build
-git -c safe.directory=C:/Users/nasti/Documents/FlowBustersPortal/FlowBusters diff --check
+git diff --check
 ```
 
 Full backend: 306 passed, no failures/errors/skips. Focused backend: 56 passed.
