@@ -1,0 +1,145 @@
+{
+  "schema_version": 2,
+  "observed_ui_rules_schema_version": 1,
+  "target_url": "http://localhost:3000",
+  "flow_name": "cross-flow-075472db767d",
+  "mode": "cross_flow",
+  "setup_paths": ["/api/demo/reset"],
+  "recorded_at": "2026-09-23T00:10:59.769721Z",
+  "source_runs": ["refund-rerun", "cancel-demo", "return-demo"],
+  "transitions": [
+    {
+      "name": "request_refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/request",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 201,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "source_run": "refund-rerun",
+        "before_step": 1,
+        "after_step": 4,
+        "visible_constraints": ["Refund can be requested only while order has no other active request"],
+        "observed_changes": ["\"Request refund\" button disappeared", "refund.status: none -> pending", "\"Complete refund\" button appeared"]
+      }
+    },
+    {
+      "name": "complete_refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": ["request_refund"],
+      "ui_context": {
+        "source_run": "refund-rerun",
+        "before_step": 4,
+        "after_step": 6,
+        "visible_constraints": ["Complete refund available only while refund pending; terminal, one-time completion"],
+        "observed_changes": ["\"Complete refund\" button disappeared", "refund.status: pending -> completed", "totalReturned: 0 -> 100"]
+      }
+    },
+    {
+      "name": "cancel_order",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/cancel",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "source_run": "cancel-demo",
+        "before_step": 3,
+        "after_step": 4,
+        "visible_constraints": ["Cancel order locks all further order actions"],
+        "observed_changes": ["\"Cancel order\" and \"Request refund\" buttons disappeared", "cancellation.status: none -> completed", "totalReturned: 0 -> 100", "all availableActions became false"]
+      }
+    },
+    {
+      "name": "request_price_adjustment",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "source_run": "return-demo",
+        "before_step": 1,
+        "after_step": 5,
+        "visible_constraints": ["Price adjustment can only be requested once"],
+        "observed_changes": ["\"Request price adjustment\" button disappeared", "\"Cancel order\" button disappeared", "priceProtection.status: eligible -> completed", "totalReturned: 0 -> 30", "\"Request refund\" button REMAINED VISIBLE and availableActions.requestRefund REMAINED true"]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "name": "customer",
+      "cookies": [],
+      "headers": {},
+      "note": "No login/authentication endpoint was recorded in any source run; the app appears to serve a single anonymous order view (order #1042) with no session cookies or bearer tokens observed. Not reported as a missing-auth vulnerability per scope: authentication_required is not set in scope.json."
+    }
+  ],
+  "semantic_ui_capture": {
+    "status": "succeeded",
+    "artifact": "demo.json",
+    "ui_state_count": 15,
+    "mode": "cross_flow"
+  },
+  "observed_ui_rules": [],
+  "conflicting_action_pairs": [
+    {
+      "ui_step": 1,
+      "state": "order delivered, no request active (fresh order, each observed independently across three source runs)",
+      "rule": "At most one order-value-returning action (price adjustment, refund, cancellation) should ever be permitted per order; the UI presents them as mutually exclusive (\"another order request is active\") and cancel/refund correctly disable each other and price adjustment. However, price-adjustment does NOT disable requestRefund server-side or client-side.",
+      "actions": [
+        {"name": "request_price_adjustment", "method": "POST", "url": "http://localhost:3000/api/order/price-adjustment", "inferred": false},
+        {"name": "request_refund", "method": "POST", "url": "http://localhost:3000/api/order/refund/request", "inferred": false}
+      ]
+    },
+    {
+      "ui_step": 1,
+      "state": "order delivered, no request active",
+      "rule": "Cancellation and refund completion must not both reimburse the same order",
+      "actions": [
+        {"name": "cancel_order", "method": "POST", "url": "http://localhost:3000/api/order/cancel", "inferred": false},
+        {"name": "complete_refund", "method": "POST", "url": "http://localhost:3000/api/order/refund/complete", "inferred": false}
+      ]
+    }
+  ],
+  "critical_endpoints": [
+    {
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "method": "POST",
+      "why": "Issues a $30 payout and is the ONLY one of the three order-value-returning actions whose response does not set availableActions.requestRefund to false, unlike refund/request and cancel which both correctly lock out the other two actions. Agent inference (unverified): this asymmetry may allow a customer to collect a price adjustment ($30) AND a full refund ($100) on the same $100 order (totalReturned=130 > originalAmount=100), a direct financial-loss / double-dip vulnerability.",
+      "attack_surface": ["DATA_TAMPER", "STATE_INTERLEAVING"],
+      "inferred": false
+    },
+    {
+      "url": "http://localhost:3000/api/order/refund/request",
+      "method": "POST",
+      "why": "Creates a $100 refund request; correctly disables cancelOrder, requestPriceAdjustment and itself, but was never observed being called AFTER a price adjustment already completed on the same order.",
+      "attack_surface": ["STATE_INTERLEAVING", "REPLAY_ATTACK"],
+      "inferred": false
+    },
+    {
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "method": "POST",
+      "why": "Completes the payout for a pending refund; terminal one-time action per UIR-002 (refund-rerun). Never tested for replay after completion or after order was independently canceled/adjusted.",
+      "attack_surface": ["REPLAY_ATTACK", "SKIP_STEP"],
+      "inferred": false
+    },
+    {
+      "url": "http://localhost:3000/api/order/cancel",
+      "method": "POST",
+      "why": "Issues a $100 reimbursement and correctly disables all other actions (cleanest lock observed across the three flows).",
+      "attack_surface": ["REPLAY_ATTACK"],
+      "inferred": false
+    }
+  ]
+}

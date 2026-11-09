@@ -1,0 +1,250 @@
+{
+  "schema_version": 2,
+  "observed_ui_rules_schema_version": 1,
+  "target_url": "http://localhost:3000/",
+  "flow_name": "return-demo",
+  "setup_paths": ["/api/demo/reset"],
+  "recorded_at": "2026-09-23T00:10:45.571707Z",
+  "transitions": [
+    {
+      "name": "request_price_adjustment",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "inferred": false,
+      "ui_context": {
+        "before_step": 1,
+        "after_step": 5,
+        "visible_constraints": [
+          "'Request price adjustment' button only shown while Price protection status is 'Eligible'",
+          "Dialog states $30.00 will be returned to the original payment method"
+        ],
+        "observed_changes": [
+          "Price adjustment definition changed from $0.00 to $30.00",
+          "'Request price adjustment' button disappeared",
+          "'Cancel order' button disappeared",
+          "Price protection status changed from 'Eligible' to 'Adjustment issued'",
+          "Order activity gained a 'Price adjustment issued' entry for $30.00"
+        ]
+      }
+    },
+    {
+      "name": "cancel_order",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/cancel",
+      "headers": {},
+      "body_keys": [],
+      "response_status": null,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "inferred": true,
+      "ui_context": {
+        "before_step": 1,
+        "after_step": 1,
+        "visible_constraints": [
+          "'Cancel order' button is co-visible with 'Request refund' and 'Request price adjustment' before any action is taken"
+        ],
+        "observed_changes": []
+      }
+    },
+    {
+      "name": "request_refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/request",
+      "headers": {},
+      "body_keys": [],
+      "response_status": null,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "inferred": true,
+      "ui_context": {
+        "before_step": 1,
+        "after_step": 1,
+        "visible_constraints": [
+          "'Request refund' button is co-visible with 'Cancel order' and 'Request price adjustment' before any action is taken"
+        ],
+        "observed_changes": []
+      }
+    },
+    {
+      "name": "complete_refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "headers": {},
+      "body_keys": [],
+      "response_status": null,
+      "criticality": "HIGH",
+      "depends_on": ["request_refund"],
+      "inferred": true,
+      "ui_context": {
+        "before_step": 1,
+        "after_step": 1,
+        "visible_constraints": [
+          "order.availableActions.completeRefund field is present (false) in the GET /api/order response captured at step 1, implying a separate finalize-refund action not yet exercised by the recorded happy path"
+        ],
+        "observed_changes": []
+      }
+    }
+  ],
+  "roles": [
+    {
+      "name": "anonymous_customer",
+      "cookies": [],
+      "headers": {}
+    }
+  ],
+  "semantic_ui_capture": {
+    "status": "succeeded",
+    "artifact": "demo.json",
+    "ui_state_count": 5
+  },
+  "observed_ui_rules": [
+    {
+      "schema_version": 1,
+      "id": "UIR-001",
+      "statement": "Price adjustment can only be requested once — the control becomes unavailable immediately after it is issued",
+      "facts": [
+        {
+          "id": "UIR-001-F1",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "return-demo",
+          "artifact": "demo.json",
+          "before_step": 1,
+          "after_step": 5,
+          "element": {"role": "button", "name": "Request price adjustment"},
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/0/elements/59",
+            "after": "/workflow_timeline/ui_states/4/changes_from_previous/disappeared/3"
+          }
+        },
+        {
+          "id": "UIR-001-F2",
+          "type": "api_field_transition",
+          "provenance_type": "api_state_fact",
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "field_path": ["order", "priceProtection", "status"],
+          "before": "eligible",
+          "after": "completed",
+          "entry_indexes": [0, 1],
+          "json_pointers": {
+            "before": "/log/entries/0/response/content/text",
+            "after": "/log/entries/1/response/content/text"
+          }
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The UI treats price adjustment as single-use once issued; the server should independently reject a second price-adjustment request for the same order rather than relying on the client to hide the button.",
+        "derived_from": ["UIR-001-F1", "UIR-001-F2"]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "UIR-002",
+      "statement": "Cancelling the order becomes unavailable once a price adjustment has been issued",
+      "facts": [
+        {
+          "id": "UIR-002-F1",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "return-demo",
+          "artifact": "demo.json",
+          "before_step": 1,
+          "after_step": 5,
+          "element": {"role": "button", "name": "Cancel order"},
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/0/elements/64",
+            "after": "/workflow_timeline/ui_states/4/changes_from_previous/disappeared/4"
+          }
+        },
+        {
+          "id": "UIR-002-F2",
+          "type": "api_field_transition",
+          "provenance_type": "api_state_fact",
+          "source_run": "return-demo",
+          "artifact": "recording.har",
+          "field_path": ["order", "availableActions", "cancelOrder"],
+          "before": true,
+          "after": false,
+          "entry_indexes": [0, 1],
+          "json_pointers": {
+            "before": "/log/entries/0/response/content/text",
+            "after": "/log/entries/1/response/content/text"
+          }
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The client disables cancellation client-side after a price adjustment is issued; the server should also reject a cancel-order call in this state rather than trusting the UI gate.",
+        "derived_from": ["UIR-002-F1", "UIR-002-F2"]
+      }
+    }
+  ],
+  "conflicting_action_pairs": [
+    {
+      "ui_step": 1,
+      "state": "Order delivered, price-protection eligible, no cancellation/refund/adjustment yet applied",
+      "rule": "Price adjustment and order cancellation must not both reimburse the same order",
+      "actions": [
+        {"name": "request_price_adjustment", "method": "POST", "url": "http://localhost:3000/api/order/price-adjustment", "inferred": false},
+        {"name": "cancel_order", "method": "POST", "url": "http://localhost:3000/api/order/cancel", "inferred": true}
+      ]
+    },
+    {
+      "ui_step": 1,
+      "state": "Order delivered, price-protection eligible, no cancellation/refund/adjustment yet applied",
+      "rule": "Order cancellation and a refund request/completion must not both reimburse the same order",
+      "actions": [
+        {"name": "cancel_order", "method": "POST", "url": "http://localhost:3000/api/order/cancel", "inferred": true},
+        {"name": "request_refund", "method": "POST", "url": "http://localhost:3000/api/order/refund/request", "inferred": true}
+      ]
+    },
+    {
+      "ui_step": 1,
+      "state": "Order delivered, price-protection eligible, no cancellation/refund/adjustment yet applied",
+      "rule": "Price adjustment and a refund request must not combine to return more than the original order amount",
+      "actions": [
+        {"name": "request_price_adjustment", "method": "POST", "url": "http://localhost:3000/api/order/price-adjustment", "inferred": false},
+        {"name": "request_refund", "method": "POST", "url": "http://localhost:3000/api/order/refund/request", "inferred": true}
+      ]
+    }
+  ],
+  "critical_endpoints": [
+    {
+      "url": "http://localhost:3000/api/order/price-adjustment",
+      "method": "POST",
+      "why": "Issues a real monetary adjustment ($30.00) back to the original payment method; the only mutating endpoint actually observed in the recording. It changes priceProtection.status, adjustmentAmount, totalReturned, netCustomerBenefit and multiple availableActions flags server-side.",
+      "attack_surface": ["REPLAY_ATTACK", "DATA_TAMPER", "PRICING_TAMPER"],
+      "inferred": false
+    },
+    {
+      "url": "http://localhost:3000/api/order/cancel",
+      "method": "POST",
+      "why": "The 'Cancel order' button and order.availableActions.cancelOrder field imply a cancellation endpoint with its own cancellation.reimbursementAmount field. Agent inference (unverified): this is a second, independent money-moving path from the same order object; if not mutually exclusive with price adjustment / refund server-side, it enables double reimbursement.",
+      "attack_surface": ["SKIP_STEP", "REPLAY_ATTACK", "DATA_TAMPER"],
+      "inferred": true
+    },
+    {
+      "url": "http://localhost:3000/api/order/refund/request",
+      "method": "POST",
+      "why": "The 'Request refund' button and order.availableActions.requestRefund / refund.status / refund.requestedAmount fields imply a refund-request endpoint. Agent inference (unverified): if requestedAmount is client-supplied or the request is repeatable, it is a pricing-tamper and replay target that can combine with price adjustment for over-reimbursement.",
+      "attack_surface": ["PRICING_TAMPER", "REPLAY_ATTACK", "DATA_TAMPER"],
+      "inferred": true
+    },
+    {
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "method": "POST",
+      "why": "order.availableActions.completeRefund and refund.completedAmount/completedAt fields imply a second-step (likely staff/role-gated) endpoint to finalize a refund. Agent inference (unverified): combined with cancel_order, this is the classic double-reimbursement race the resource shape (separate cancellation/refund/priceProtection amount fields all feeding totalReturned) hints at.",
+      "attack_surface": ["ROLE_SWAP", "REPLAY_ATTACK", "DATA_TAMPER"],
+      "inferred": true
+    }
+  ]
+}

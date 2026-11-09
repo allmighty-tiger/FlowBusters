@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "title": "SKIP_STEP / terminal-state bypass: refund/request accepted again after the order already shows 'no further actions available'",
+  "origin": "http://localhost:3000",
+  "setup": "/api/demo/reset",
+  "state_read": "/api/order",
+  "claim_type": "unsupported",
+  "actions": [
+    {"method": "POST", "path": "/api/order/refund/request", "body": null},
+    {"method": "POST", "path": "/api/order/refund/complete", "body": null},
+    {"method": "POST", "path": "/api/order/refund/request", "body": null}
+  ],
+  "predicate": "unsupported_business_rule",
+  "invariant": null,
+  "unsupported_reason": "This isolates whether the terminal state itself (UIR-002: no actions available after completion) can be reopened by a bare refund/request call, without chaining a second completion (that fuller double-payout chain is covered by plan 04). A lone re-request does not change order.totalReturned, so sum_lte cannot express whether reopening a terminal order was wrongly accepted; it requires reviewing refund.status/requestedAt and order.history for a new 'refund_requested' event after a 'refund_completed' event."
+}

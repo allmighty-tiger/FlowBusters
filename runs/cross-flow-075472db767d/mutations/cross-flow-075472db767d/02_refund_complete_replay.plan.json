@@ -1,0 +1,52 @@
+{
+  "schema_version": 2,
+  "title": "REPLAY_ATTACK: repeating /api/order/refund/complete after it already completed may double the payout",
+  "origin": "http://localhost:3000",
+  "setup": "/api/demo/reset",
+  "state_read": "/api/order",
+  "claim_type": "amount_bound",
+  "actions": [
+    {"method": "POST", "path": "/api/order/refund/request", "body": {}},
+    {"method": "POST", "path": "/api/order/refund/complete", "body": {}},
+    {"method": "POST", "path": "/api/order/refund/complete", "body": {}}
+  ],
+  "predicate": "business_rule_must_hold",
+  "invariant": {
+    "operator": "sum_lte",
+    "terms": [["order", "totalReturned"]],
+    "limit": ["order", "originalAmount"]
+  },
+  "unsupported_reason": null,
+  "rule_origin": "AI_INFERRED",
+  "rule": {
+    "source": "agent_inference",
+    "provenance": {
+      "schema_version": 1,
+      "source_run": "refund-rerun",
+      "artifact": "state_map.json",
+      "rule_id": "UIR-002",
+      "fact_ids": ["UIR-002-F2", "UIR-002-F3"]
+    }
+  },
+  "inferred_invariant": {
+    "statement": "Refund completion is a terminal, one-time action per UIR-002 (the 'Complete refund' button permanently disappears and completeRefund becomes false after completion); replaying the completion call should be rejected and must not increase totalReturned beyond the original refund amount.",
+    "predicate": {"operator": "sum_lte", "terms": [["order", "totalReturned"]], "limit": ["order", "originalAmount"]},
+    "required_actions": [
+      {"method": "POST", "path": "/api/order/refund/request"},
+      {"method": "POST", "path": "/api/order/refund/complete"},
+      {"method": "POST", "path": "/api/order/refund/complete"}
+    ],
+    "terminal_state": [
+      {"path": ["order", "refund", "status"], "equals": "completed"}
+    ]
+  },
+  "supporting_observations": [
+    {
+      "source_run": "refund-rerun",
+      "artifact": "recording.har",
+      "json_pointer": "/log/entries/2/response/content/text",
+      "value": "{\"message\":\"Refund completed.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate · 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"completed\",\"requestedAmount\":100,\"completedAmount\":100,\"requestedAt\":\"2026-09-22T23:27:12.771Z\",\"completedAt\":\"2026-09-22T23:27:14.846Z\"},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed · $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"refund_requested\",\"title\":\"Refund requested\",\"detail\":\"Refund is being reviewed\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:27:12.771Z\"},{\"id\":\"evt-4\",\"type\":\"refund_completed\",\"title\":\"Refund completed\",\"detail\":\"Sent to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:27:14.846Z\"}]}}"
+    }
+  ],
+  "notes": "availableActions.completeRefund is already false after the first completion in the recorded response, suggesting the server likely rejects a second call via a state guard rather than a missing check. This probe verifies that guard actually holds when the endpoint is called directly, since completeRefund=false is only observed in the response that follows the FIRST completion, not proof that a replayed request itself is rejected."
+}

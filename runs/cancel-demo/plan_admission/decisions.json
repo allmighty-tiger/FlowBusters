@@ -1,0 +1,341 @@
+{
+  "feedback": null,
+  "proposal": {},
+  "decisions": [
+    {
+      "plan": "01_double_cancel_amount_bound.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    },
+    {
+      "plan": "02_triple_cancel_compounding_amount_bound.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "amount_bound",
+      "predicate": "business_rule_must_hold"
+    },
+    {
+      "plan": "03_cancel_after_cancel_status_guard.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "unsupported",
+      "predicate": "unsupported_business_rule"
+    },
+    {
+      "plan": "04_duplicate_history_entry_integrity.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "unsupported",
+      "predicate": "unsupported_business_rule"
+    },
+    {
+      "plan": "05_repeated_cancel_authorization_enforcement.plan.json",
+      "regenerated": false,
+      "original_error": null,
+      "review_only_reason": null,
+      "status": "ADMITTED",
+      "rejection_error": null,
+      "pointer_repairs": [],
+      "claim_type": "unsupported",
+      "predicate": "unsupported_business_rule"
+    }
+  ],
+  "admitted_plans": {
+    "01_double_cancel_amount_bound.plan.json": {
+      "schema_version": 2,
+      "title": "Repeated cancellation may issue a duplicate $100.00 reimbursement (double payout)",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "The total amount returned to the customer for this order must never exceed the order's original payment amount, even if POST /api/order/cancel is called more than once (DOUBLE_SPEND / REPLAY_ATTACK).",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/cancel"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/cancel"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "cancellation",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/0/response/content/text",
+          "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+        },
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Order canceled and reimbursement issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"canceled\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"completed\",\"reimbursementAmount\":100,\"completedAt\":\"2026-09-22T23:51:02.570Z\"},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"order_canceled\",\"title\":\"Order canceled\",\"detail\":\"Reimbursement issued to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:51:02.570Z\"}]}}"
+        }
+      ]
+    },
+    "02_triple_cancel_compounding_amount_bound.plan.json": {
+      "schema_version": 2,
+      "title": "Third sequential cancel request compounds the double-payout exposure beyond a single replay",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "amount_bound",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        }
+      ],
+      "predicate": "business_rule_must_hold",
+      "invariant": {
+        "operator": "sum_lte",
+        "terms": [
+          [
+            "order",
+            "totalReturned"
+          ]
+        ],
+        "limit": [
+          "order",
+          "originalAmount"
+        ]
+      },
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": {
+        "statement": "The total amount returned to the customer for this order must never exceed the order's original payment amount, regardless of how many times POST /api/order/cancel is replayed (DOUBLE_SPEND).",
+        "predicate": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "required_actions": [
+          {
+            "method": "POST",
+            "path": "/api/order/cancel"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/cancel"
+          },
+          {
+            "method": "POST",
+            "path": "/api/order/cancel"
+          }
+        ],
+        "terminal_state": [
+          {
+            "path": [
+              "order",
+              "cancellation",
+              "status"
+            ],
+            "equals": "completed"
+          }
+        ]
+      },
+      "supporting_observations": [
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/0/response/content/text",
+          "value": "{\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"delivered\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"none\",\"reimbursementAmount\":0,\"completedAt\":null},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":0,\"netCustomerBenefit\":-100,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":true,\"cancelOrder\":true,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"}]}}"
+        },
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Order canceled and reimbursement issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"canceled\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"completed\",\"reimbursementAmount\":100,\"completedAt\":\"2026-09-22T23:51:02.570Z\"},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"order_canceled\",\"title\":\"Order canceled\",\"detail\":\"Reimbursement issued to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:51:02.570Z\"}]}}"
+        }
+      ]
+    },
+    "03_cancel_after_cancel_status_guard.plan.json": {
+      "schema_version": 2,
+      "title": "SKIP_STEP / workflow guard: cancel endpoint may accept a second request after the order already reached the terminal 'canceled' state",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "unsupported",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        }
+      ],
+      "predicate": "unsupported_business_rule",
+      "invariant": null,
+      "unsupported_reason": "The hypothesis is that the server should reject (e.g. 4xx, or a no-op response with orderStatus unchanged) a second POST /api/order/cancel once order.orderStatus is already 'canceled' and order.availableActions.cancelOrder is already false \u2014 a workflow-state/status-equality guard, not a numeric amount comparison. sum_lte cannot express 'the second call must be rejected' or 'orderStatus must remain exactly canceled without re-processing'. The resulting financial impact of this same missing guard, if any, is separately covered by the amount_bound double-cancel scenario (01_double_cancel_amount_bound.plan.json).",
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": null,
+      "supporting_observations": [
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Order canceled and reimbursement issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"canceled\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"completed\",\"reimbursementAmount\":100,\"completedAt\":\"2026-09-22T23:51:02.570Z\"},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"order_canceled\",\"title\":\"Order canceled\",\"detail\":\"Reimbursement issued to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:51:02.570Z\"}]}}"
+        }
+      ]
+    },
+    "04_duplicate_history_entry_integrity.plan.json": {
+      "schema_version": 2,
+      "title": "DATA_TAMPER / integrity: repeated cancel calls may append duplicate 'order_canceled' ledger entries to order history",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "unsupported",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        }
+      ],
+      "predicate": "unsupported_business_rule",
+      "invariant": null,
+      "unsupported_reason": "The hypothesis is that order.history should contain exactly one 'order_canceled' entry regardless of how many times cancel is called (an array-length/uniqueness check on the event ledger), not a numeric sum comparison. sum_lte only expresses 'sum of numeric fields <= a numeric limit' and cannot count array entries or check for duplicate event types. This requires a count/uniqueness predicate not currently supported by the plan schema.",
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": null,
+      "supporting_observations": [
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Order canceled and reimbursement issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"canceled\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"completed\",\"reimbursementAmount\":100,\"completedAt\":\"2026-09-22T23:51:02.570Z\"},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"order_canceled\",\"title\":\"Order canceled\",\"detail\":\"Reimbursement issued to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:51:02.570Z\"}]}}"
+        }
+      ]
+    },
+    "05_repeated_cancel_authorization_enforcement.plan.json": {
+      "schema_version": 2,
+      "title": "FORCED_BROWSING / authorization enforcement: server may not enforce its own advertised availableActions.cancelOrder=false flag",
+      "origin": "http://localhost:3000",
+      "setup": "/api/demo/reset",
+      "state_read": "/api/order",
+      "claim_type": "unsupported",
+      "actions": [
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        },
+        {
+          "method": "POST",
+          "path": "/api/order/cancel",
+          "body": null
+        }
+      ],
+      "predicate": "unsupported_business_rule",
+      "invariant": null,
+      "unsupported_reason": "The hypothesis is that once GET /api/order reports availableActions.cancelOrder=false, the server must itself enforce that flag and refuse a direct POST /api/order/cancel call reaching it via forced browsing (i.e. bypassing the client-side disabled/hidden button) \u2014 an authorization/enforcement claim about whether the client-only flag is also checked server-side, not a numeric sum comparison. sum_lte cannot express 'the server must reject a call that its own response marked as unavailable.' The financial consequence of this same gap, if the call is accepted, is covered separately by the amount_bound double-cancel scenario (01_double_cancel_amount_bound.plan.json).",
+      "rule_origin": "AI_INFERRED",
+      "inferred_invariant": null,
+      "supporting_observations": [
+        {
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "json_pointer": "/log/entries/1/response/content/text",
+          "value": "{\"message\":\"Order canceled and reimbursement issued.\",\"order\":{\"id\":\"1042\",\"orderNumber\":\"#1042\",\"product\":{\"name\":\"Northstar Weekender Pack\",\"variant\":\"Slate \u00b7 28 L\",\"quantity\":1,\"imageUrl\":\"/assets/weekender-pack.svg\"},\"purchaseDate\":\"2026-08-24T14:18:00.000Z\",\"deliveryDate\":\"2026-08-29T16:42:00.000Z\",\"originalAmount\":100,\"paymentStatus\":\"paid\",\"orderStatus\":\"canceled\",\"fulfillmentStatus\":\"delivered\",\"cancellation\":{\"status\":\"completed\",\"reimbursementAmount\":100,\"completedAt\":\"2026-09-22T23:51:02.570Z\"},\"priceProtection\":{\"status\":\"eligible\",\"currentPrice\":70,\"adjustmentAmount\":0,\"completedAt\":null},\"refund\":{\"status\":\"none\",\"requestedAmount\":0,\"completedAmount\":0,\"requestedAt\":null,\"completedAt\":null},\"totalReturned\":100,\"netCustomerBenefit\":0,\"availableActions\":{\"requestRefund\":false,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false},\"history\":[{\"id\":\"evt-1\",\"type\":\"order_placed\",\"title\":\"Order placed\",\"detail\":\"Payment confirmed \u00b7 $100.00\",\"amount\":0,\"occurredAt\":\"2026-08-24T14:18:00.000Z\"},{\"id\":\"evt-2\",\"type\":\"order_delivered\",\"title\":\"Delivered\",\"detail\":\"Left at front door\",\"amount\":0,\"occurredAt\":\"2026-08-29T16:42:00.000Z\"},{\"id\":\"evt-3\",\"type\":\"order_canceled\",\"title\":\"Order canceled\",\"detail\":\"Reimbursement issued to original payment method\",\"amount\":100,\"occurredAt\":\"2026-09-22T23:51:02.570Z\"}]}}"
+        }
+      ]
+    }
+  }
+}

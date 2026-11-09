@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "target_url": "http://localhost:3000",
+  "flow_name": "cross-flow-075472db767d",
+  "entities": [
+    {
+      "name": "order",
+      "id": "1042",
+      "description": "Single delivered order (Northstar Weekender Pack, originalAmount=100), observed independently and identically at reset-state across all three source runs (refund-rerun, cancel-demo, return-demo). Same order id, product and originalAmount in every source's initial GET /api/order response.",
+      "key_fields": [
+        "orderStatus", "cancellation.status", "cancellation.reimbursementAmount",
+        "priceProtection.status", "priceProtection.adjustmentAmount",
+        "refund.status", "refund.requestedAmount", "refund.completedAmount",
+        "totalReturned", "netCustomerBenefit", "availableActions"
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "name": "request_refund",
+      "method": "POST",
+      "path": "/api/order/refund/request",
+      "source_run": "refund-rerun",
+      "source_facts": [{"artifact": "recording.har", "json_pointer": "/log/entries/1", "status": 201}]
+    },
+    {
+      "name": "complete_refund",
+      "method": "POST",
+      "path": "/api/order/refund/complete",
+      "source_run": "refund-rerun",
+      "source_facts": [{"artifact": "recording.har", "json_pointer": "/log/entries/2", "status": 200}]
+    },
+    {
+      "name": "cancel_order",
+      "method": "POST",
+      "path": "/api/order/cancel",
+      "source_run": "cancel-demo",
+      "source_facts": [{"artifact": "recording.har", "json_pointer": "/log/entries/1", "status": 200}]
+    },
+    {
+      "name": "request_price_adjustment",
+      "method": "POST",
+      "path": "/api/order/price-adjustment",
+      "source_run": "return-demo",
+      "source_facts": [{"artifact": "recording.har", "json_pointer": "/log/entries/1", "status": 200}]
+    }
+  ],
+  "observed_transitions": [
+    {
+      "action": "request_refund",
+      "before": {"refund.status": "none", "availableActions": {"requestRefund": true, "requestPriceAdjustment": true, "cancelOrder": true, "completeRefund": false}},
+      "after": {"refund.status": "pending", "availableActions": {"requestRefund": false, "requestPriceAdjustment": false, "cancelOrder": false, "completeRefund": true}},
+      "source_run": "refund-rerun"
+    },
+    {
+      "action": "complete_refund",
+      "before": {"refund.status": "pending", "totalReturned": 0},
+      "after": {"refund.status": "completed", "totalReturned": 100, "netCustomerBenefit": 0, "availableActions": {"requestRefund": false, "requestPriceAdjustment": false, "cancelOrder": false, "completeRefund": false}},
+      "source_run": "refund-rerun"
+    },
+    {
+      "action": "cancel_order",
+      "before": {"orderStatus": "delivered", "cancellation.status": "none"},
+      "after": {"orderStatus": "canceled", "cancellation.status": "completed", "cancellation.reimbursementAmount": 100, "totalReturned": 100, "availableActions": {"requestRefund": false, "requestPriceAdjustment": false, "cancelOrder": false, "completeRefund": false}},
+      "source_run": "cancel-demo"
+    },
+    {
+      "action": "request_price_adjustment",
+      "before": {"priceProtection.status": "eligible", "totalReturned": 0},
+      "after": {"priceProtection.status": "completed", "priceProtection.adjustmentAmount": 30, "totalReturned": 30, "netCustomerBenefit": -70, "availableActions": {"requestRefund": true, "requestPriceAdjustment": false, "cancelOrder": false, "completeRefund": false}},
+      "source_run": "return-demo",
+      "note": "The ONLY action of the four whose availableActions leaves requestRefund=true after completion. cancel_order and request_refund both correctly set requestRefund/cancelOrder/requestPriceAdjustment all to false after their own completion; request_price_adjustment does not reciprocally disable requestRefund."
+    }
+  ],
+  "inferred_relationships": [
+    {
+      "statement": "cancel_order and request_refund are mutually exclusive with each other and with request_price_adjustment (each disables the other two upon completion).",
+      "confidence": "high",
+      "derived_from": ["refund-rerun observed_transitions", "cancel-demo observed_transitions"]
+    },
+    {
+      "statement": "request_price_adjustment is NOT mutually exclusive with request_refund server-side, despite the UI's shared messaging (\"Price protection is not available while another order request is active\") implying all three actions are members of one mutually-exclusive group.",
+      "confidence": "high",
+      "derived_from": ["return-demo observed_transitions (availableActions.requestRefund remains true after price-adjustment; UI button \"Request refund\" is still rendered and clickable in return-demo final_snapshot)"]
+    }
+  ],
+  "contradictions": [
+    {
+      "description": "The UI's price-protection unavailability message (\"Price protection is not available while another order request is active\", shown identically in refund-rerun step 4 and cancel-demo step 4) implies a single shared 'one active order request' invariant across cancellation, refund and price adjustment. But the return-demo recording shows the reverse direction is NOT enforced: after price-adjustment completes, refund remains fully available (both in the API's availableActions and in the rendered UI button). This is an asymmetric/incomplete implementation of the intended mutual-exclusion invariant.",
+      "source_references": [
+        {"source_run": "refund-rerun", "artifact": "state_map.json", "rule_id": "UIR-003"},
+        {"source_run": "cancel-demo", "artifact": "state_map.json", "rule_id": "UIR-002"},
+        {"source_run": "return-demo", "artifact": "recording.har", "json_pointer": "/log/entries/1/response/content/text"},
+        {"source_run": "return-demo", "artifact": "demo.json", "json_pointer": "/final_snapshot/elements/67"}
+      ]
+    }
+  ],
+  "assumptions": [
+    "Each source run started from an identical reset order state (id 1042, originalAmount 100, all statuses at baseline) based on matching initial GET /api/order responses across all three sources; recordings are NOT one continuous session and object bindings/timestamps differ per source.",
+    "No authentication/session mechanism was observed in any source; the app is treated as single-principal for this analysis."
+  ]
+}

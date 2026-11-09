@@ -1,0 +1,254 @@
+{
+  "run_timestamp": "2026-09-22T23:27:18.215219Z",
+  "target_url": "http://localhost:3000/",
+  "flow_name": "refund-rerun",
+  "total_scripts": 5,
+  "auth_check": {
+    "performed": false,
+    "reason": "No login/credential endpoint was recorded (recording.har contains no Cookie/Authorization/CSRF headers) and none is documented in endpoint_catalog.json for this flow. This is treated as authentication being out of scope for this recording, not a vulnerability (scope.json does not set authentication_required: true)."
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Refund completion may not be idempotent \u2014 calling POST /api/order/refund/complete twice could pay out the $100.00 refund twice",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Critical",
+      "cwe": [
+        "CWE-841",
+        "CWE-694"
+      ],
+      "script": "02_double_complete_sequential_replay.plan.json",
+      "mutation_type": "DOUBLE_SPEND",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "evidence": "Pending backend execution receipt. Plan: reset -> GET /api/order -> POST refund/request -> POST refund/complete -> POST refund/complete -> GET /api/order, verifying order.totalReturned <= order.originalAmount (100) from the final state read. UI evidence (UIR-002): the 'Complete refund' button and availableActions.completeRefund both disappear client-side after the first completion (demo.json ui_states[3].elements[66] -> ui_states[5].changes_from_previous.disappeared[3]), which is only a client-side control unless the server independently rejects the second call.",
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "refund-rerun",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F2",
+              "UIR-002-F3"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "status": "AWAITING_BACKEND_EXECUTION"
+      }
+    },
+    {
+      "id": "F-002",
+      "title": "A completed order may be reopened by calling refund/request again, allowing a second refund/complete to pay out a second time",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Critical",
+      "cwe": [
+        "CWE-841",
+        "CWE-694"
+      ],
+      "script": "04_reopen_completed_order_via_request_then_complete.plan.json",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "evidence": "Pending backend execution receipt. Plan: reset -> GET /api/order -> request -> complete -> request -> complete -> GET /api/order, verifying order.totalReturned <= order.originalAmount (100) from the final state read. UI evidence: step 6 ('This order has no actions requiring your attention.' / 'No further actions are available for this order.', demo.json ui_states[5].changes_from_previous.appeared[4] and [5]) shows the workflow intends this to be a terminal state; the server must reject reopening it via a new refund/request.",
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "refund-rerun",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F1",
+              "UIR-002-F2"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "status": "AWAITING_BACKEND_EXECUTION"
+      }
+    },
+    {
+      "id": "F-003",
+      "title": "POST /api/order/refund/complete may be reachable without ever creating a refund request (workflow step skipped)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "01_skip_step_complete_without_request.plan.json",
+      "mutation_type": "SKIP_STEP",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "evidence": "Suspected but not fully demonstrable with a supported numeric invariant: originalAmount == totalReturned (100) after a legitimate single request+complete flow, so an improperly-accepted skip-step produces the identical totalReturned value as the correct flow. UIR-002 (button 'Complete refund' only appears after a request exists \u2014 demo.json ui_states[2].elements -> ui_states[3].changes_from_previous.appeared[9]) is the basis for the hypothesis. Verify manually by inspecting order.refund.status/history after running the plan: if refund.status reads 'completed' with no preceding 'refund_requested' history event, the workflow-order control is not enforced server-side.",
+      "verification": {
+        "predicate": "unsupported_business_rule",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "refund-rerun",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F1"
+            ]
+          }
+        },
+        "status": "NOT_EXECUTABLE_WITH_SUPPORTED_PREDICATE",
+        "note": "unsupported_business_rule \u2014 reviewable, not a numeric bound. Manual reproduction: run the plan's action chain and inspect order.refund.status and order.history in the final GET."
+      }
+    },
+    {
+      "id": "F-004",
+      "title": "POST /api/order/refund/request may be accepted a second time while a refund is already pending",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "03_duplicate_refund_request_while_pending.plan.json",
+      "mutation_type": "REPLAY_ATTACK",
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "evidence": "Suspected but not fully demonstrable with a supported numeric invariant: requestedAmount is fixed at originalAmount (100) regardless of how many times /refund/request is called, so no sum_lte comparison can prove a duplicate request was wrongly accepted. UIR-001 (button 'Request refund' disappears and availableActions.requestRefund flips true->false after the first request \u2014 demo.json ui_states[0].elements[63] -> ui_states[3].changes_from_previous.disappeared[6]; recording.har entries[0]->[1] availableActions.requestRefund) is the basis for the hypothesis. Verify manually by inspecting order.history for a duplicate 'refund_requested' entry or a changed requestedAt timestamp after the second call.",
+      "verification": {
+        "predicate": "unsupported_business_rule",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "refund-rerun",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        "status": "NOT_EXECUTABLE_WITH_SUPPORTED_PREDICATE",
+        "note": "unsupported_business_rule \u2014 reviewable, not a numeric bound. Manual reproduction: run the plan's action chain and inspect order.history for duplicate refund_requested events."
+      }
+    },
+    {
+      "id": "F-005",
+      "title": "A terminal (completed) order may accept a new refund/request, reopening a state the UI presents as final",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "05_request_after_completion_terminal_state.plan.json",
+      "mutation_type": "SKIP_STEP",
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "evidence": "Suspected but not fully demonstrable with a supported numeric invariant: a lone re-request does not by itself change order.totalReturned, so sum_lte cannot express whether reopening a terminal order was wrongly accepted. UIR-002 (order reaches a terminal 'no further actions' state after completion \u2014 demo.json ui_states[5].changes_from_previous.appeared[4],[5]) is the basis for the hypothesis. Verify manually by inspecting refund.status/requestedAt in the final GET for evidence the terminal order was reopened by the third action.",
+      "verification": {
+        "predicate": "unsupported_business_rule",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "refund-rerun",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F1",
+              "UIR-002-F2"
+            ]
+          }
+        },
+        "status": "NOT_EXECUTABLE_WITH_SUPPORTED_PREDICATE",
+        "note": "unsupported_business_rule \u2014 reviewable, not a numeric bound. Manual reproduction: run the plan's action chain and inspect refund.status/requestedAt after the trailing refund/request call."
+      }
+    }
+  ],
+  "results": [
+    {
+      "script": "01_skip_step_complete_without_request.plan.json",
+      "mutation_type": "SKIP_STEP",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": "Awaiting backend execution of the declarative plan (agent session does not execute HTTP).",
+      "finding_id": "F-003"
+    },
+    {
+      "script": "02_double_complete_sequential_replay.plan.json",
+      "mutation_type": "DOUBLE_SPEND",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": "Awaiting backend execution of the declarative plan (agent session does not execute HTTP).",
+      "finding_id": "F-001"
+    },
+    {
+      "script": "03_duplicate_refund_request_while_pending.plan.json",
+      "mutation_type": "REPLAY_ATTACK",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "response_snippet": null,
+      "error_message": "Awaiting backend execution of the declarative plan (agent session does not execute HTTP).",
+      "finding_id": "F-004"
+    },
+    {
+      "script": "04_reopen_completed_order_via_request_then_complete.plan.json",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": "Awaiting backend execution of the declarative plan (agent session does not execute HTTP).",
+      "finding_id": "F-002"
+    },
+    {
+      "script": "05_request_after_completion_terminal_state.plan.json",
+      "mutation_type": "SKIP_STEP",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/request",
+      "response_snippet": null,
+      "error_message": "Awaiting backend execution of the declarative plan (agent session does not execute HTTP).",
+      "finding_id": "F-005"
+    }
+  ],
+  "summary": {
+    "bugs_found": 0,
+    "critical_findings": 0,
+    "rejected": 0,
+    "errors": 0,
+    "planned": 5,
+    "executed": 0,
+    "pending_backend_execution": 5,
+    "note": "All verdicts are drafts pending backend execution and signed-evidence recomputation. summary.bugs_found/critical_findings will be recalculated from CONFIRMED verification once the backend runs these plans and populates before/actions/after captures."
+  }
+}

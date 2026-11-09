@@ -1,0 +1,260 @@
+{
+  "run_timestamp": "2026-09-23T00:20:00Z",
+  "target_url": "http://localhost:3000/",
+  "flow_name": "return-demo",
+  "total_scripts": 6,
+  "auth_check": {
+    "performed": false,
+    "reason": "No login/authentication endpoint was recorded for this flow. The Order page at http://localhost:3000/ is reached directly with no credential prompt, no Authorization header, and no session cookie observed in recording.har. Per scope, authentication_required is not set, so this is treated as unknown/out-of-scope rather than a finding."
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Order approval workflow: repeated Request-price-adjustment calls may pay out the $30 adjustment more than once",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "01_replay_price_adjustment_twice.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": "Draft plan mutations/return-demo/01_replay_price_adjustment_twice.plan.json: resets the demo order, then calls POST /api/order/price-adjustment twice in a row. The UI hides the 'Request price adjustment' button and the recorded response moves priceProtection.status from 'eligible' to 'completed' after one call (recording.har entries 0-1), but this only proves the CLIENT stops offering the action \u2014 it does not prove the SERVER rejects a second call. Awaiting backend execution to confirm whether order.totalReturned exceeds order.originalAmount ($100) after the second call.",
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "return-demo",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        "status": "PENDING_EXECUTION"
+      }
+    },
+    {
+      "id": "F-002",
+      "title": "Order approval workflow: three rapid repeats of Request-price-adjustment stress single-use enforcement beyond a simple replay",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "02_repeat_price_adjustment_three_times.py",
+      "mutation_type": "DOUBLE_SPEND",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": "Draft plan mutations/return-demo/02_repeat_price_adjustment_three_times.plan.json calls the same endpoint three times sequentially after a fresh reset, checking whether any per-request (rather than per-order) idempotency guard lets totalReturned exceed originalAmount. Awaiting backend execution.",
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "return-demo",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        "status": "PENDING_EXECUTION"
+      }
+    },
+    {
+      "id": "F-003",
+      "title": "Price-adjustment endpoint may trust client-supplied amount fields instead of recomputing them server-side",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-20"
+      ],
+      "script": "03_pricing_tamper_client_supplied_override.py",
+      "mutation_type": "PRICING_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": "The recorded happy-path call sent an empty body (bodySize 0; recording.har entry 1) and the server still computed adjustmentAmount=30 itself, which is a good sign. Draft plan 03 resends the call with adjustmentAmount/totalReturned/netCustomerBenefit set to 9999 to check whether an alternate code path reads these from the body. Awaiting backend execution.",
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "return-demo",
+            "artifact": "state_map.json",
+            "note": "critical_endpoints[].why unverified hypothesis"
+          }
+        },
+        "status": "PENDING_EXECUTION"
+      }
+    },
+    {
+      "id": "F-004",
+      "title": "Price-adjustment endpoint accepts a body containing unrelated privilege/status fields (status, isAdmin, verified, role) not sent by the UI",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-915"
+      ],
+      "script": "04_mass_assignment_privilege_fields.py",
+      "mutation_type": "MASS_ASSIGNMENT",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": "Draft plan 04 posts status/isAdmin/verified/role/priceProtection.status overrides. This is a field-acceptance claim (not an amount bound), so it is declared unsupported_business_rule for the automated invariant check; the raw before/after order object still needs manual comparison once executed to confirm none of these keys were persisted.",
+      "verification": {
+        "predicate": "unsupported_business_rule",
+        "unsupported_reason": "Field-acceptance/mass-assignment cannot be expressed as sum_lte; requires manual diff of before/after order object per injected key.",
+        "status": "PENDING_EXECUTION"
+      }
+    },
+    {
+      "id": "F-005",
+      "title": "Price-adjustment endpoint may mishandle malformed/extreme numeric or type-confused input (negative amount, float quantity, string amount)",
+      "source": "MUTATION_SCRIPT",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-20"
+      ],
+      "script": "05_data_tamper_invalid_numeric_types.py",
+      "mutation_type": "DATA_TAMPER",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": "Draft plan 05 sends adjustmentAmount=-5000, quantity=0.5, totalReturned='unlimited' in the body. Awaiting backend execution to confirm totalReturned still respects originalAmount despite the malformed input.",
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "return-demo",
+            "artifact": "state_map.json",
+            "note": "critical_endpoints[].why unverified hypothesis"
+          }
+        },
+        "status": "PENDING_EXECUTION"
+      }
+    },
+    {
+      "id": "F-006",
+      "title": "Second price-adjustment call attempts to forge priceProtection.status back to 'eligible' to re-arm the payout",
+      "source": "MUTATION_SCRIPT",
+      "severity": "High",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "06_replay_with_forged_status_reset.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "evidence": "Draft plan 06 calls the endpoint once normally, then again with a body claiming priceProtection.status='eligible', adjustmentAmount=0 to see if the server trusts the client's claimed prior state rather than its own stored order state. Awaiting backend execution.",
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "return-demo",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        "status": "PENDING_EXECUTION"
+      }
+    },
+    {
+      "id": "F-007",
+      "title": "Potential double-reimbursement across price adjustment, order cancellation, and refund actions could not be tested \u2014 the cancel/refund endpoints were never recorded",
+      "source": "ANALYSIS",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": null,
+      "mutation_type": null,
+      "url_tested": null,
+      "evidence": "The Order page shows 'Request refund' and 'Cancel order' buttons co-visible with 'Request price adjustment' in the very first UI state (demo.json workflow_timeline.ui_states[0]), and the GET /api/order response contains cancellation.reimbursementAmount, refund.status/requestedAmount/completedAmount, and availableActions.cancelOrder/requestRefund/completeRefund fields (recording.har entry 0) that are never exercised by this recording. Their backing endpoints (e.g. POST /api/order/cancel, /api/order/refund/request, /api/order/refund/complete) are absent from endpoint_catalog.json, so the backend will not authorize probing them from this run.",
+      "verification": {
+        "execution": {
+          "status": "NOT_EXECUTED",
+          "missing_precondition": "Cancel order, Request refund, and Complete refund endpoints were never invoked during recording and have no configured_setup/validated_recording entry in endpoint_catalog.json.",
+          "next_step": "Record a second pass of this flow that clicks 'Cancel order' and 'Request refund' (and, if a staff view exists, 'Complete refund'), then re-run Analyst/Saboteur so these become validated endpoints. Specifically verify server-side that cancellation.reimbursementAmount + priceProtection.adjustmentAmount + refund.completedAmount can never sum above order.originalAmount, and that cancelOrder/requestRefund are rejected once priceProtection.status is 'completed' (matching the client-side gating already observed)."
+        }
+      }
+    }
+  ],
+  "results": [
+    {
+      "script": "01_replay_price_adjustment_twice.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": "Draft plan awaiting backend compilation/execution (this session authors plans only).",
+      "finding_id": "F-001"
+    },
+    {
+      "script": "02_repeat_price_adjustment_three_times.py",
+      "mutation_type": "DOUBLE_SPEND",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": "Draft plan awaiting backend compilation/execution.",
+      "finding_id": "F-002"
+    },
+    {
+      "script": "03_pricing_tamper_client_supplied_override.py",
+      "mutation_type": "PRICING_TAMPER",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": "Draft plan awaiting backend compilation/execution.",
+      "finding_id": "F-003"
+    },
+    {
+      "script": "04_mass_assignment_privilege_fields.py",
+      "mutation_type": "MASS_ASSIGNMENT",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": "Draft plan awaiting backend compilation/execution.",
+      "finding_id": "F-004"
+    },
+    {
+      "script": "05_data_tamper_invalid_numeric_types.py",
+      "mutation_type": "DATA_TAMPER",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": "Draft plan awaiting backend compilation/execution.",
+      "finding_id": "F-005"
+    },
+    {
+      "script": "06_replay_with_forged_status_reset.py",
+      "mutation_type": "REPLAY_ATTACK",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/price-adjustment",
+      "response_snippet": null,
+      "error_message": "Draft plan awaiting backend compilation/execution.",
+      "finding_id": "F-006"
+    }
+  ],
+  "summary": {
+    "bugs_found": 0,
+    "critical_findings": 0,
+    "rejected": 0,
+    "errors": 0
+  }
+}

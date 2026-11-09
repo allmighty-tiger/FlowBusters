@@ -1,0 +1,205 @@
+{
+  "schema_version": 2,
+  "observed_ui_rules_schema_version": 1,
+  "target_url": "http://localhost:3000/",
+  "flow_name": "cancel-demo",
+  "setup_paths": [
+    "/api/demo/reset"
+  ],
+  "recorded_at": "2026-09-22T23:50:56.456934Z",
+  "transitions": [
+    {
+      "name": "cancel_order",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/cancel",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "before_step": 3,
+        "after_step": 4,
+        "visible_constraints": [
+          "Confirmation dialog states: 'A $100.00 reimbursement will be sent to the original payment method.'",
+          "Cancel order, Request refund, and Request price adjustment controls were all co-visible before cancellation and all disappear together once the order is canceled"
+        ],
+        "observed_changes": [
+          "Status banner appeared: 'Order canceled and reimbursement issued.'",
+          "Order activity gained entry 'Order canceled' with 'Reimbursement issued to original payment method' and amount $100.00",
+          "'Cancel order' and 'Request refund' buttons disappeared",
+          "'Request price adjustment' button disappeared and Price protection region text changed from 'Eligible' to 'Unavailable'",
+          "Order actions region text changed to 'This order has no actions requiring your attention.' / 'No further actions are available for this order.'"
+        ]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "name": "anonymous",
+      "cookies": [],
+      "headers": {},
+      "note": "No authentication cookies, bearer tokens, or CSRF headers were present on any request in the recording (GET /api/order or POST /api/order/cancel). Only a single unauthenticated session context was observed; this is not reported as a vulnerability per scope.json (authentication_required is not set to true)."
+    }
+  ],
+  "semantic_ui_capture": {
+    "status": "succeeded",
+    "artifact": "demo.json",
+    "ui_state_count": 4
+  },
+  "observed_ui_rules": [
+    {
+      "schema_version": 1,
+      "id": "UIR-001",
+      "statement": "Once an order is canceled, the Cancel order and Request refund controls disappear and are no longer available.",
+      "facts": [
+        {
+          "id": "UIR-001-F1",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "cancel-demo",
+          "artifact": "demo.json",
+          "before_step": 3,
+          "after_step": 4,
+          "element": {
+            "role": "button",
+            "name": "Cancel order"
+          },
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/2/elements/64",
+            "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/7"
+          }
+        },
+        {
+          "id": "UIR-001-F2",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "cancel-demo",
+          "artifact": "demo.json",
+          "before_step": 3,
+          "after_step": 4,
+          "element": {
+            "role": "button",
+            "name": "Request refund"
+          },
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/2/elements/63",
+            "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/6"
+          }
+        },
+        {
+          "id": "UIR-001-F3",
+          "type": "api_field_transition",
+          "provenance_type": "api_state_fact",
+          "source_run": "cancel-demo",
+          "artifact": "recording.har",
+          "field_path": [
+            "order",
+            "availableActions",
+            "cancelOrder"
+          ],
+          "before": true,
+          "after": false,
+          "entry_indexes": [
+            0,
+            1
+          ],
+          "json_pointers": {
+            "before": "/log/entries/0/response/content/text",
+            "after": "/log/entries/1/response/content/text"
+          }
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The order-cancellation workflow intends the cancel and refund-request actions to become permanently unavailable once cancellation completes.",
+        "derived_from": [
+          "UIR-001-F1",
+          "UIR-001-F2",
+          "UIR-001-F3"
+        ]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "UIR-002",
+      "statement": "Price protection becomes unavailable to the customer while another order request (cancellation) is active.",
+      "facts": [
+        {
+          "id": "UIR-002-F1",
+          "type": "explicit_ui_text",
+          "provenance_type": "explicit_visible_ui_text",
+          "source_run": "cancel-demo",
+          "artifact": "demo.json",
+          "step": 1,
+          "text": "paragraph : The price of this item has dropped since your purchase.",
+          "json_pointer": "/workflow_timeline/ui_states/0/elements/55"
+        },
+        {
+          "id": "UIR-002-F2",
+          "type": "explicit_ui_text",
+          "provenance_type": "explicit_visible_ui_text",
+          "source_run": "cancel-demo",
+          "artifact": "demo.json",
+          "step": 4,
+          "text": "paragraph : Price protection is not available while another order request is active.",
+          "json_pointer": "/workflow_timeline/ui_states/3/elements/59"
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The client displays price protection as 'Unavailable' once cancellation is active, even though the server-side priceProtection.status field is not observed to change (remains 'eligible' in both GET /api/order and POST /api/order/cancel responses). This is an unverified hypothesis worth testing server-side: the API may still accept a price-adjustment request after cancellation despite the UI hiding the control.",
+        "derived_from": [
+          "UIR-002-F1",
+          "UIR-002-F2"
+        ]
+      }
+    }
+  ],
+  "conflicting_action_pairs": [
+    {
+      "ui_step": 3,
+      "state": "delivered, pre-cancellation, price-protection eligible",
+      "rule": "Cancel order, Request refund, and Request price adjustment were all simultaneously visible/enabled; the resource can only end up in one terminal disposition (canceled, refunded, or price-adjusted), so concurrently invoking more than one should not both take effect.",
+      "actions": [
+        {
+          "name": "cancel_order",
+          "method": "POST",
+          "url": "http://localhost:3000/api/order/cancel",
+          "inferred": false
+        },
+        {
+          "name": "request_refund",
+          "method": null,
+          "url": null,
+          "inferred": true,
+          "endpoint_unresolved": true,
+          "note": "UI exposes a 'Request refund' button and order.refund{status,requestedAmount,completedAmount} fields, but no matching request was recorded and no such path exists in endpoint_catalog.json. Endpoint deliberately left unresolved rather than guessed from the button label."
+        },
+        {
+          "name": "request_price_adjustment",
+          "method": null,
+          "url": null,
+          "inferred": true,
+          "endpoint_unresolved": true,
+          "note": "UI exposes a 'Request price adjustment' button and order.priceProtection.adjustmentAmount, but no matching request was recorded and no such path exists in endpoint_catalog.json. Endpoint deliberately left unresolved rather than guessed from the button label."
+        }
+      ]
+    }
+  ],
+  "critical_endpoints": [
+    {
+      "url": "http://localhost:3000/api/order/cancel",
+      "method": "POST",
+      "why": "Cancels the order and unconditionally issues a $100.00 reimbursement to the original payment method with no request body (no order/state validation inputs from the client), an irreversible financial state transition. Agent inference (unverified): because the request body is empty, the endpoint likely derives all state from server-side session/order context; it is worth testing whether it can be replayed, invoked without the confirmation dialog ever being shown (FORCED_BROWSING), or invoked again after the order is already canceled (REPLAY_ATTACK) to see if a duplicate $100.00 reimbursement can be triggered. The co-visible 'Request refund' and 'Request price adjustment' UI affordances (see conflicting_action_pairs) have no resolvable endpoint in endpoint_catalog.json and are not targeted here.",
+      "attack_surface": [
+        "REPLAY_ATTACK",
+        "FORCED_BROWSING",
+        "DATA_TAMPER"
+      ],
+      "inferred": false
+    }
+  ]
+}

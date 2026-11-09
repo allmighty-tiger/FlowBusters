@@ -1,0 +1,484 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const Module = require('node:module');
+const ts = require('typescript');
+const React = require('react');
+const { renderToStaticMarkup } = require('react-dom/server');
+const portalSource = fs.readFileSync(path.resolve(__dirname, '../src/pages/portal.tsx'), 'utf8');
+const filename = path.resolve(__dirname, '../src/components/ReportView.tsx');
+const loaded = new Module(filename, module);
+loaded.paths = module.paths;
+loaded._compile(ts.transpileModule(fs.readFileSync(filename, 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX, target: ts.ScriptTarget.ES2021 },
+}).outputText, filename);
+const { default: ReportView, ReportRunMeta, evidenceCaptures, invariantFor, remediationFor, manualReproductionFor, requestExamplesFor, cweViews } = loaded.exports;
+
+test('lifecycle report renders five outcomes, one observed issue and collapsed technical details', () => {
+  const statuses = ['CONFIRMED', 'NEEDS_REVIEW', 'CONFIRMED', 'NEEDS_REVIEW', 'NOT_REPRODUCED'];
+  const probes = statuses.map((verdict, i) => ({label: `Probe 0${i + 1}`, id: String(i), execution_id: String(i),
+    script: `0${i + 1}_probe.py`, title: 'Test', verdict, verification_status: verdict, source: 'MUTATION_SCRIPT',
+    cwe: [], verification_reason: 'Exact test limitation.', display_reason: 'Exact test limitation.',
+    verification: {actions: [{request: {method: 'POST', url: 'http://example.test/api/order/refund/complete'}, status_code: 200}]},
+    associated_agent_drafts: [{script: `0${i + 1}_probe.plan.json`}]}));
+  const report = {results: [], summary: {execution_attempts: 5, pending_execution: 0, process_errors: 0},
+    assessment_status: {status: 'COMPLETED'}, report_presentation: {version: 1, probes,
+      counts: {CONFIRMED: 2, NEEDS_REVIEW: 2, NOT_REPRODUCED: 1}, coverage_notes: [],
+      issues: [{id: 'I', title: 'Repeated refund completion causes a double payout',
+        impact: 'The refund completion endpoint accepted a second completion request and added the refund amount again.',
+        original: 100, returned: 200, overpayment: 100, term: ['order', 'totalReturned'], limit: ['order', 'originalAmount'],
+        endpoint: 'POST /api/order/refund/complete', probes: ['Probe 01', 'Probe 03'], execution_ids: ['0', '2'],
+        remediation: ['Make refund completion idempotent.']}]}};
+  const html = renderToStaticMarkup(React.createElement(ReportView, {report, remediation: null}));
+  for (const section of ['Assessment summary', 'Confirmed security issue', 'Other probe outcomes', 'Technical evidence']) assert.ok(html.includes(section));
+  assert.match(html, /Probes executed<\/dt><dd>5/);
+  assert.match(html, /Confirmed reproductions<\/dt><dd>2/);
+  assert.match(html, /Needs review<\/dt><dd>2/);
+  assert.match(html, /Not reproduced<\/dt><dd>1/);
+  assert.match(html, /Probe 01 and Probe 03/);
+  assert.match(html, /Unauthorized overpayment/);
+  assert.equal((html.match(/class="probe-technical"/g) || []).length, 5);
+  assert.equal((html.match(/<tbody>[\s\S]*?<\/tbody>/g)[0].match(/<tr>/g) || []).length, 3);
+  assert.doesNotMatch(html, /<details[^>]*open|unique vulnerabilities|unexecuted hypotheses|Generation origin not recorded|CWE not recorded|Not assessed|normalized findings after deduplication/i);
+  assert.match(html, /Executed script: <code>01_probe.py/);
+  assert.match(html, /Original generation artifacts/);
+  assert.match(html, /cURL commands/);
+  assert.match(html, /Burp requests/);
+});
+
+test('queue status and unexecuted hypotheses are separate from findings', () => {
+  const report = {findings: [], results: [], summary: {preflight_rejected: 1},
+    assessment_status: {status: 'COMPLETED_WITH_ERRORS', planned: 6, executed: 5, skipped: 1, failed: 1, pending: 0},
+    unexecuted_hypotheses: [{id: 'F-007', title: 'Uncaptured action', verification: {execution: {missing_precondition: 'Terminal endpoint was not recorded'}}}]};
+  const html = renderToStaticMarkup(React.createElement(ReportView, {report}));
+  assert.match(html, /COMPLETED_WITH_ERRORS/);
+  assert.match(html, /Rejected before execution/);
+  assert.match(html, /Unexecuted hypotheses/);
+  assert.match(html, /Terminal endpoint was not recorded/);
+  assert.match(html, /coverage notes, not additional findings/);
+});
+
+test('review items explain the limitation without presenting draft remediation as a fix', () => {
+  const report = { findings: [{ id: 'F-review', title: 'Field assignment hypothesis',
+    source: 'MUTATION_SCRIPT', severity: 'High', verification_status: 'NEEDS_REVIEW',
+    verification_reason: 'The amount comparison does not check which submitted fields changed.' }],
+    results: [], summary: { needs_review: 1 } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report }));
+  assert.match(html, /Why this needs review/);
+  assert.match(html, /does not check which submitted fields changed/);
+  assert.match(html, /Original draft recommendation — unverified/);
+  assert.doesNotMatch(html, /<h4>Recommended remediation<\/h4>/);
+});
+
+test('untrusted report is explicit, never rendered as zero findings or successful checks', () => {
+  const html = renderToStaticMarkup(React.createElement(loaded.exports.ReportLoadError,
+    { message: 'Candidate gate signature invalid' }));
+  assert.match(html, /Report unavailable: evidence validation failed/);
+  assert.match(html, /Candidate gate signature invalid/);
+  assert.match(html, /No security verdict or counts/);
+  assert.doesNotMatch(html, /0 confirmed|0 probes|No process.*errors/);
+  const index = fs.readFileSync(path.resolve(__dirname, '../src/pages/reports.tsx'), 'utf8');
+  assert.match(index, /r\.load_error \? /);
+});
+
+test('invalid AI candidates are explicit unverified coverage, separate from backend probes', () => {
+  const report = { findings: [], results: [], summary: {}, validated_ai_candidates: 1,
+    unverified_candidates: [{ candidate_id: 'C2', message: 'Only one authenticated source' }] };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  assert.match(html, /AI candidate coverage/);
+  assert.match(html, /Unverified coverage/);
+  assert.match(html, /Tests are proposed from the selected recordings/);
+  assert.match(html, /Only one authenticated source/);
+});
+
+test('recorded-flow portal does not request or persist an identity credential', () => {
+  assert.doesNotMatch(portalSource, /application_binding_token/);
+  assert.doesNotMatch(portalSource, /Application Binding Token/);
+  assert.doesNotMatch(portalSource, /applicationId/);
+});
+
+test('empty refund report explicitly says no probes or security checks, not a clear assessment', () => {
+  const report = { findings: [], results: [], summary: {
+    errors: 0, planned_executions: 0, execution_attempts: 0, completed_executions: 0,
+  } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  assert.ok(html.includes('0 probes generated / no security checks executed'));
+  assert.ok(html.includes('Not assessed'));
+  assert.ok(html.includes('no conclusion about vulnerabilities or held controls'));
+  assert.ok(!html.includes('No confirmed issues'));
+  assert.ok(!html.includes('No vulnerability was confirmed by the executed checks'));
+  assert.ok(!html.includes('has-clear'));
+});
+
+test('recording metadata supplies flow/date and missing date never renders Invalid Date', () => {
+  const report = { flow_name: 'agent draft', run_timestamp: 'invalid', recording_metadata: {
+    flow_name: 'refund', target_url: 'http://localhost:3000/',
+    run_timestamp: '2026-09-17T04:01:45Z', source: 'validated_recording',
+  } };
+  const html = renderToStaticMarkup(React.createElement(ReportRunMeta, { report }));
+  assert.ok(html.includes('Flow: refund'));
+  assert.ok(html.includes('Recording completed:'));
+  assert.ok(html.includes('2026'));
+  assert.ok(!html.includes('Invalid Date'));
+  const missing = renderToStaticMarkup(React.createElement(ReportRunMeta, { report: { normalized_run_id: 'refund' } }));
+  assert.ok(missing.includes('Flow: refund'));
+  assert.ok(missing.includes('Date unavailable'));
+  assert.ok(!missing.includes('Invalid Date'));
+});
+
+const capture = (method, endpoint) => ({ request: { method, url: `http://localhost:3000${endpoint}`, body: null }, response: { ok: true }, status_code: 200 });
+const withBody = (value, body = {}) => ({ ...value, request: { ...value.request, body } });
+const finding = { id: 'F-1', title: 'Reimbursement overlap', source: 'MUTATION_SCRIPT', script: 'probe.py', cwe: [], evidence: {}, verification_status: 'NEEDS_REVIEW',
+  verification: { before: capture('GET', '/api/order'), actions: [capture('POST', '/api/order/price-adjustment'), capture('POST', '/api/order/refund/request'), capture('POST', '/api/order/refund/complete')], after: capture('GET', '/api/order') } };
+
+test('report renders all three POST actions and both state reads', () => {
+  assert.equal(evidenceCaptures(finding).length, 5);
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [finding], results: [], summary: { errors: 0 } }, remediation: null }));
+  for (const endpoint of ['price-adjustment', 'refund/request', 'refund/complete']) assert.ok(html.includes(`POST /api/order/${endpoint}`));
+  assert.equal((html.match(/class="report-probe/g) || []).length, 5);
+});
+
+test('authenticated trace replaces unexecuted agent claims, including empty trace', () => {
+  assert.deepEqual(evidenceCaptures({ ...finding, execution_trace: [] }), []);
+  const trace = [capture('GET', '/api/order')];
+  assert.deepEqual(evidenceCaptures({ ...finding, execution_trace: trace }), trace);
+});
+
+const northstarFinding = {
+  ...finding,
+  id: 'F-001',
+  title: 'Price adjustment plus completed refund may exceed the order amount',
+  severity: 'Critical',
+  cwe: ['CWE-841'],
+  normalized_issue: 'The completed sequence returned 130 against a comparison value of 100.',
+  rule_origin: 'AI_INFERRED', inferred_invariant: {statement: 'Combined returned value should not exceed the original amount'},
+  verification_status: 'CONFIRMED',
+  execution_id: 'verified-execution-1',
+  verification: { resolved_invariant: { operator: 'sum_lte', terms: [['order', 'priceProtection', 'adjustmentAmount'], ['order', 'refund', 'completedAmount']], limit: ['order', 'originalAmount'] } },
+  execution_trace: (() => {
+    const state = (totalReturned, refundStatus, completedAmount, adjustmentAmount) => ({ order: { originalAmount: 100, totalReturned, priceProtection: { adjustmentAmount }, refund: { status: refundStatus, completedAmount } } });
+    return [
+      { ...capture('POST', '/api/demo/reset'), response: state(0, 'none', 0, 0) },
+      { ...capture('GET', '/api/order'), response: state(0, 'none', 0, 0) },
+      { ...withBody(capture('POST', '/api/order/price-adjustment')), response: state(30, 'none', 0, 30) },
+      { ...withBody(capture('POST', '/api/order/refund/request')), response: state(30, 'pending', 0, 30) },
+      { ...withBody(capture('POST', '/api/order/refund/complete')), response: state(130, 'completed', 100, 30) },
+      { ...capture('GET', '/api/order'), response: state(130, 'completed', 100, 30) },
+    ];
+  })(),
+};
+
+test('two amount reproductions show one unique vulnerability and retain both results and origins', () => {
+  const a = { ...northstarFinding, id: 'A', execution_id: 'exec-a', probe_origin: 'AI_PROBE' };
+  const b = { ...northstarFinding, id: 'B', execution_id: 'exec-b', probe_origin: 'BACKEND_COVERAGE' };
+  const report = { findings: [a, b], results: [a, b].map(f => ({ script: f.id + '.py', execution_id: f.execution_id, outcome: 'CONFIRMED', probe_origin: f.probe_origin })),
+    vulnerabilities: [{ id: 'V-1', finding_ids: ['A', 'B'], execution_ids: ['exec-a', 'exec-b'], grouping_basis: 'Equivalent issue, distinct amounts' }],
+    summary: { errors: 0, unique_vulnerabilities: 1, finding_count: 2, completed_executions: 2, probe_origin_counts: { AI_PROBE: 1, BACKEND_COVERAGE: 1 } } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  assert.ok(html.includes('1 recorded result requires user review.'));
+  assert.equal((html.match(/aria-label="Unique vulnerability"/g) || []).length, 1);
+  assert.ok(html.includes('Additional reproductions of this vulnerability (1)'));
+  assert.ok(html.includes('exec-a') && html.includes('exec-b'));
+  assert.ok(html.includes('AI-generated probe') && html.includes('Backend coverage plan'));
+  assert.equal((html.match(/class="report-result"/g) || []).length, 2);
+});
+
+test('404 incomplete scenario is review coverage, never an observed held control or active fix', () => {
+  const f = { ...finding, verification_status: 'INSUFFICIENT_EVIDENCE', coverage_status: 'INCOMPLETE_ACTION_CHAIN',
+    verification_reason: 'POST /api/order/refund (HTTP 404): required endpoint unavailable', probe_origin: 'AI_PROBE' };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [f], results: [],
+    summary: { errors: 0, coverage_gaps: 1, unique_vulnerabilities: 0 } }, remediation: 'Fix everything' }));
+  assert.ok(html.includes('Scenario not established'));
+  assert.ok(html.includes('HTTP 404'));
+  assert.ok(html.includes('<strong>1</strong> findings with incomplete scenario coverage'));
+  assert.ok(!html.includes('<h4>Control observed</h4>'));
+  assert.ok(!html.includes('<h4>Recommended remediation</h4>'));
+});
+
+test('legacy run-scoped authority is ignored and normalized issue replaces hypothetical remediation', () => {
+  const scoped = { ...northstarFinding, backend_requirement: {
+    id: 'NSM-ADJUSTMENT-REFUND-CAP-2026-09-16', product: 'Northstar Market',
+    statement: 'Price adjustment plus completed refund must not exceed originalAmount.',
+    asserted_on: '2026-09-16', allowed_run_ids: ['cross-flow-a0debc2fe38c'],
+    application_mode: 'retrospective_evidence_evaluation', assertion_context: 'Newly asserted after execution.',
+  } };
+  const markdown = '## F-001\n- **Issue:** If both counters independently add, the customer could be reimbursed.\n';
+  const view = remediationFor(scoped, markdown, invariantFor(scoped), 'cross-flow-a0debc2fe38c');
+  assert.ok(!view.issue.includes('If both'));
+  assert.ok(view.issue.includes('returned 130'));
+  assert.ok(view.evidence.includes('130'));
+  const html = renderToStaticMarkup(React.createElement(ReportView, {
+    report: { findings: [scoped], results: [], summary: { errors: 0 } }, remediation: markdown,
+  }));
+  assert.match(html, /AI-inferred invariant/);
+  assert.doesNotMatch(html, /NSM-ADJUSTMENT|Legacy run scope|Approved by the Northstar/);
+  assert.ok(!html.includes('If both'));
+});
+
+test('confirmed invariant is primary and renders operands, result, limit, and complete trace', () => {
+  const invariant = invariantFor(northstarFinding);
+  assert.equal(invariant.total, 130);
+  assert.equal(invariant.maximum, 100);
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [northstarFinding], results: [], summary: { errors: 0 } }, remediation: null }));
+  for (const text of ['30', 'adjustment amount', '100', 'completed amount', '130', 'Comparison value:']) assert.ok(html.includes(text), text);
+  assert.ok(html.includes('Application request/action trace'));
+  assert.equal((html.match(/class="report-probe/g) || []).length, 5);
+  assert.ok(!html.includes('Not recorded separately'));
+  assert.ok(html.includes('1 recorded result requires user review.'));
+  assert.ok(html.includes('returned 130 against a comparison value of 100'));
+  assert.ok(!html.includes('may exceed</h3>'));
+  for (const label of ['Before state', 'Action 1', 'Action 2', 'Action 3', 'After state']) assert.ok(html.includes(label), label);
+  assert.ok(!html.includes('Test setup'));
+  assert.ok(!html.includes('/api/demo/reset'));
+  assert.equal((html.match(/View full response/g) || []).length, 5);
+  assert.ok(html.includes('order.totalReturned</code><strong>0 → 30 → 130'));
+  assert.ok(html.includes('order.refund.status</code><strong>none → pending → completed'));
+});
+
+test('confirmed finding explains CWE and renders an evidence-derived manual reproduction', () => {
+  const invariant = invariantFor(northstarFinding);
+  const reproduction = manualReproductionFor(northstarFinding, invariant);
+  assert.equal(reproduction.steps.length, 5);
+  assert.deepEqual(reproduction.steps.map(step => `${step.method} ${step.path}`), [
+    'GET /api/order', 'POST /api/order/price-adjustment',
+    'POST /api/order/refund/request', 'POST /api/order/refund/complete', 'GET /api/order',
+  ]);
+  assert.match(reproduction.secure, /review the expected business behavior/);
+  assert.match(reproduction.observed, /130.*comparison value: 100/);
+  assert.equal(cweViews(northstarFinding)[0].name, 'Improper Enforcement of Behavioral Workflow');
+  const examples = requestExamplesFor(northstarFinding);
+  assert.equal(examples.length, 5);
+  assert.match(examples[1].curl, /curl\.exe -i -X POST "http:\/\/localhost:3000\/api\/order\/price-adjustment"/);
+  assert.match(examples[1].curl, /--data-raw '\{\}'/);
+  assert.match(examples[1].rawHttp, /^POST \/api\/order\/price-adjustment HTTP\/1\.1\r\nHost: localhost:3000/);
+  assert.match(examples[1].rawHttp, /Content-Length: 2\r\n\r\n\{\}$/);
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: {
+    findings: [northstarFinding], results: [], summary: { errors: 0 },
+  }, remediation: null }));
+  for (const text of ['Manual reproduction', 'Repeat the proven request sequence',
+    'CWE-841: Improper Enforcement of Behavioral Workflow', 'Copy-ready cURL for PowerShell',
+    'Raw HTTP for Burp Repeater', 'curl.exe -i', 'Content-Length: 2',
+    'Why are the POST bodies empty?', 'No body fields were supplied.']) assert.ok(html.includes(text), text);
+  assert.doesNotMatch(html, /Ordinary operations are safe alone|owner-approved requirement exists/);
+  assert.ok(!html.includes('/api/demo/reset'));
+  assert.ok(html.includes('https://cwe.mitre.org/data/definitions/841.html'));
+  assert.equal((html.match(/Manual reproduction/g) || []).length, 1);
+});
+
+test('legacy backend requirement cannot display approval or retrospective authority', () => {
+  const withRequirement = { ...northstarFinding, backend_requirement: {
+    id: 'NSM-RETURN-CAP-2026-09-16', product: 'Northstar Market',
+    asserted_on: '2026-09-16', effective_from: '2026-09-16',
+    statement: 'Combined compensation must not exceed originalAmount.',
+    allowed_run_ids: ['northstar-refund-v4-reanalysis'],
+    application_mode: 'retrospective_evidence_evaluation',
+    assertion_context: 'Asserted after this execution; it did not exist as a recorded requirement before the run.',
+  } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: {
+    findings: [withRequirement], results: [], summary: { errors: 0 },
+  }, remediation: null }));
+  assert.match(html, /AI-inferred invariant/);
+  assert.doesNotMatch(html, /NSM-RETURN-CAP|Approved by the Northstar|Legacy run scope/);
+});
+
+test('removed product requirement and identity are not displayed as authority', () => {
+  const finding = { ...northstarFinding, backend_requirement: {
+    id: 'NSM-TOTAL-RETURN-CAP-2026-09-17', product: 'Northstar Market',
+    asserted_on: '2026-09-17', effective_from: '2026-09-17',
+    statement: 'order.totalReturned must not exceed order.originalAmount.',
+    requirements_version: '2026-09-17', application_mode: 'prospective_evaluation',
+    assertion_context: 'Owner asserted product rule independently of probe output.',
+    application_identity: { application_id: 'northstar-market', identity_version: '1' },
+  } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: {
+    findings: [finding], results: [], summary: { errors: 0 },
+  }, remediation: null }));
+  assert.match(html, /AI-inferred invariant/);
+  assert.doesNotMatch(html, /NSM-TOTAL-RETURN-CAP|Application scope|Requirements version/);
+  assert.ok(!html.includes('Legacy run scope'));
+});
+
+test('refund reanalysis uses accurate execution, pre-action, severity, and remediation labels', () => {
+  const state = (cancelled, refunded) => ({ order: { originalAmount: 100,
+    cancellation: { reimbursementAmount: cancelled }, refund: { completedAmount: refunded } } });
+  const refundFinding = { ...northstarFinding, severity: 'High',
+    title: 'Cancel then complete may reimburse twice',
+    backend_requirement: { id: 'NSM-RETURN-CAP-2026-09-16', product: 'Northstar Market',
+      asserted_on: '2026-09-16', effective_from: '2026-09-16',
+      statement: 'Combined compensation must not exceed originalAmount.',
+      allowed_run_ids: ['northstar-refund-v4-reanalysis'],
+      application_mode: 'retrospective_evidence_evaluation', assertion_context: 'Asserted after this run.' },
+    verification: { resolved_invariant: { operator: 'sum_lte',
+      terms: [['order', 'cancellation', 'reimbursementAmount'], ['order', 'refund', 'completedAmount']],
+      limit: ['order', 'originalAmount'] } },
+    execution_trace: [
+      { ...capture('POST', '/api/demo/reset'), response: state(0, 0) },
+      { ...capture('POST', '/api/order/refund/request'), response: state(0, 0) },
+      { ...capture('GET', '/api/order'), response: state(0, 0) },
+      { ...capture('POST', '/api/order/cancel'), response: state(100, 0) },
+      { ...capture('POST', '/api/order/refund/complete'), response: state(100, 100) },
+      { ...capture('GET', '/api/order'), response: state(100, 100) },
+    ] };
+  const markdown = '## Finding F-001\n\n- **Severity:** High (suspected)\n- **Issue:** Draft issue.\n- **Fix:** Draft fix.\n';
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: {
+    normalized_run_id: 'northstar-refund-v4-reanalysis', findings: [refundFinding], results: [],
+    summary: { errors: 0 },
+  }, remediation: markdown }));
+  for (const text of ['Read the relevant fields before the actions.', 'Proven facts',
+    'Recommendation (not evidence)', 'No specific recommendation recorded.']) assert.ok(html.includes(text), text);
+  assert.ok(!/\bsigned\b/i.test(html));
+  assert.ok(!html.includes('baseline order state'));
+  assert.ok(!html.includes('High (suspected)'));
+});
+
+test('price invariant labels current price as a price operand, not returned money', () => {
+  const state = { order: { originalAmount: 100, totalReturned: 30,
+    priceProtection: { adjustmentAmount: 30, currentPrice: 70 } } };
+  const priceFinding = {
+    ...finding,
+    id: 'F-007',
+    title: 'Price adjustment endpoint may trust a client-supplied adjustment amount',
+    verification_status: 'NEEDS_REVIEW',
+    verification_reason: 'The backend-captured request supplied adjustmentAmount=999999, but sum_lte does not express client-input trust.',
+    verification: { resolved_invariant: { operator: 'sum_lte',
+      terms: [['order', 'priceProtection', 'adjustmentAmount'], ['order', 'priceProtection', 'currentPrice']],
+      limit: ['order', 'originalAmount'] } },
+    execution_trace: [
+      { ...capture('POST', '/api/demo/reset'), response: state },
+      { ...capture('GET', '/api/order'), response: state },
+      { ...capture('POST', '/api/order/price-adjustment'), response: state },
+      { ...capture('GET', '/api/order'), response: state },
+    ],
+  };
+  const invariant = invariantFor(priceFinding);
+  assert.equal(invariant.total, 100);
+  assert.equal(invariant.totalLabel, 'measured total');
+  assert.equal(invariant.statement, '30 adjustment amount + 70 current price = 100; comparison value: 100 original amount.');
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: {
+    findings: [priceFinding], results: [], summary: { errors: 0, finding_count: 1 },
+  }, remediation: null }));
+  for (const text of ['70', 'current price', 'measured total', 'Claim under review',
+    'Price adjustment endpoint may trust a client-supplied adjustment amount',
+    'Inspect application request/action trace (3)']) assert.ok(html.includes(text), text);
+  assert.ok(!html.includes('$100</strong><small>returned'));
+});
+
+test('deduplicated receipt stays visible as evidence for its canonical finding', () => {
+  const result = { script: '03_interleave_concurrent_race.py', execution_id: 'receipt-3',
+    mutation_type: 'STATE_INTERLEAVING', outcome: 'CONFIRMED', status_code: 200,
+    url_tested: '/api/order/refund/complete', response_snippet: null, error_message: null,
+    presentation_status: 'DEDUPLICATED_PRIMARY_CHAIN', deduplicated_into: 'F-001',
+    presentation_reason: 'Deduplicated into F-001: same state-changing action chain and invariant.',
+    verification_reason: 'The receipt proves the same invariant violation; it does not independently establish concurrent execution.' };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: {
+    findings: [northstarFinding], results: [result], summary: { errors: 0, finding_count: 1,
+      execution_attempts: 1, completed_executions: 1, execution_result_counts: { confirmed: 1 } },
+  }, remediation: null }));
+  assert.ok(html.includes('Deduplicated evidence for F-001'));
+  assert.ok(html.includes('does not independently establish concurrent execution'));
+});
+
+test('summary keeps not-reproduced findings separate from execution attempts', () => {
+  const held = { ...finding, id: 'F-002', verification_status: 'NOT_REPRODUCED', deduplicated_from: ['F-003'] };
+  const heldCancel = { ...finding, id: 'F-004', title: 'Cancel then refund — comparison not violated.', verification_status: 'NOT_REPRODUCED', verification_reason: 'The refund request was rejected and total returned stayed within the allowed maximum.', execution_trace: [capture('POST', '/api/demo/reset'), capture('GET', '/api/order'), capture('POST', '/api/order/cancel'), { ...capture('POST', '/api/order/refund/request'), status_code: 409 }, capture('GET', '/api/order')] };
+  const held2 = { ...finding, id: 'F-005', verification_status: 'NOT_REPRODUCED' };
+  const results = ['one', 'two', 'three', 'four'].map(script => ({ script, mutation_type: 'STATE_INTERLEAVING', outcome: 'NOT_REPRODUCED', status_code: 409, url_tested: '/api/order', response_snippet: null, error_message: null }));
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [northstarFinding, held, heldCancel, held2], results, summary: { errors: 0 } }, remediation: null }));
+  assert.ok(html.includes('3</strong><span>Not-reproduced findings'));
+  assert.ok(html.includes('Deduplicated primary chains: <strong>1'));
+  assert.ok(html.includes('0</strong><span>Findings needing review'));
+  assert.ok(html.includes('Not reproduced'));
+  assert.ok(html.includes('F-003'));
+  assert.ok(html.includes('Cancel then refund — comparison not violated.'));
+  assert.ok(!html.includes('may double-pay</h3>'));
+});
+
+test('backend-derived summary separates findings, attempts, and deduplicated results', () => {
+  const held = { ...finding, id: 'F-001', verification_status: 'NOT_REPRODUCED', deduplicated_from: ['F-002', 'F-003'] };
+  const reviews = [4, 5, 6, 7].map(id => ({ ...finding, id: `F-00${id}`, verification_status: 'NEEDS_REVIEW' }));
+  const results = [
+    ...['one', 'two', 'three'].map(script => ({ script, mutation_type: 'STATE_INTERLEAVING', outcome: 'NOT_REPRODUCED', status_code: 409, url_tested: '/api/order', response_snippet: null, error_message: null })),
+    ...['four', 'five', 'six', 'seven'].map(script => ({ script, mutation_type: 'STATE_INTERLEAVING', outcome: 'NEEDS_REVIEW', status_code: 200, url_tested: '/api/order', response_snippet: null, error_message: null })),
+  ];
+  const summary = { errors: 0, finding_count: 5, controls_held: 3,
+    deduplicated_execution_results: 2, planned_executions: 7,
+    execution_attempts: 7, completed_executions: 7, pending_execution: 0,
+    execution_errors: 0, trace_mismatches: 0 };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [held, ...reviews], results, summary }, remediation: null }));
+  assert.ok(html.includes('Finding verdicts: <strong>5</strong> normalized findings'));
+  assert.ok(html.includes('1</strong><span>Not-reproduced findings'));
+  assert.ok(html.includes('Deduplicated primary chains: <strong>2'));
+  for (const pair of ['Planned</dt><dd>7', 'Attempts</dt><dd>7', 'Backend-verified executions</dt><dd>7', 'Pending</dt><dd>0', 'Process errors</dt><dd>0', 'Evidence-contract errors</dt><dd>0', 'Trace mismatches</dt><dd>0']) assert.ok(html.includes(pair), pair);
+  assert.ok(html.includes('Probe execution log <span>7 attempts'));
+  assert.ok(!html.includes('Pending</dt><dd>7'));
+});
+
+test('atomic model renders findings, partial coverage, setup exclusion, and all receipts separately', () => {
+  const held = [2, 4, 5, 6].map(id => ({ ...finding, id: `F-00${id}`, verification_status: 'NOT_REPRODUCED' }));
+  const reviewFinding = { ...finding, id: 'F-001', verification_status: 'NEEDS_REVIEW' };
+  const results = [
+    { script: '01.py', execution_id: 'e1', mutation_type: 'STATE_INTERLEAVING', outcome: 'NEEDS_REVIEW', status_code: 200, url_tested: '/api/order', response_snippet: null, error_message: null },
+    { script: '02.py', execution_id: 'e2', mutation_type: 'STATE_INTERLEAVING', outcome: 'NOT_REPRODUCED', status_code: 409, url_tested: '/api/order', response_snippet: null, error_message: null },
+    { script: '03.py', execution_id: 'e3', mutation_type: 'REPLAY_ATTACK', outcome: 'NEEDS_REVIEW', presentation_status: 'EXCLUDED_SETUP_PATH', presentation_reason: 'Excluded setup-path scenario: fixture setup.', status_code: 200, url_tested: '/api/demo/reset', response_snippet: null, error_message: null },
+    ...[4, 5, 6].map(id => ({ script: `0${id}.py`, execution_id: `e${id}`, mutation_type: 'DATA_TAMPER', outcome: 'NOT_REPRODUCED', status_code: 200, url_tested: '/api/order', response_snippet: null, error_message: null })),
+  ];
+  const report = {
+    findings: [reviewFinding, ...held], results,
+    partial_coverage: [
+      { id: 'F-002:cancel', title: 'Cancel after price adjustment', status: 'PARTIAL_COVERAGE', reason: 'Missing independent invariant.', source_finding_id: 'F-002', candidate_id: 'XF-002', execution_id: 'e2' },
+      { id: 'F-004:refund', title: 'Refund amount override', status: 'PARTIAL_COVERAGE', reason: 'Missing independent invariant.', source_finding_id: 'F-004', candidate_id: 'XF-004', execution_id: 'e4' },
+    ],
+    excluded_setup_executions: [{ id: 'F-003', script: '03.py', execution_id: 'e3', status: 'EXCLUDED_SETUP_PATH', reason: '/api/demo/reset is authorized fixture setup.' }],
+    summary: { errors: 0, finding_count: 5, planned_executions: 6, execution_attempts: 6, completed_executions: 6, pending_execution: 0, execution_errors: 0, trace_mismatches: 0, deduplicated_primary_chains: 0, execution_result_counts: { needs_review: 2, not_reproduced: 4, confirmed: 0, check_error: 0 } },
+  };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  assert.ok(html.includes('Finding verdicts: <strong>5</strong> normalized findings'));
+  assert.ok(html.includes('Partial coverage'));
+  assert.ok(html.includes('2 supplementary scenarios'));
+  assert.ok(html.includes('Excluded setup-path scenarios'));
+  assert.ok(html.includes('Primary execution results: <strong>2</strong> need review, <strong>4</strong> not reproduced'));
+  assert.ok(html.includes('Probe execution log <span>6 attempts'));
+  assert.equal((html.match(/Excluded setup-path scenario/g) || []).length >= 2, true);
+  assert.ok(!html.includes('/api/demo/reset'));
+});
+
+test('execution summary separates process, evidence-contract, and trace failures', () => {
+  const result = { script: 'invalid.py', execution_id: 'bad-1', mutation_type: 'STATE_INTERLEAVING',
+    outcome: 'NEEDS_REVIEW', status_code: 200, url_tested: '/api/order', response_snippet: null,
+    error_message: null, evidence_validation_status: 'invalid', evidence_error_category: 'evidence_contract_error',
+    verification_reason: 'Probe output contract error: invariant missing' };
+  const report = { findings: [], results: [result], summary: { errors: 0, finding_count: 0,
+    planned_executions: 2, execution_attempts: 1, completed_executions: 1, pending_execution: 1,
+    process_errors: 0, evidence_contract_errors: 1, trace_mismatches: 0, execution_errors: 1 } };
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report, remediation: null }));
+  for (const text of ['Backend-verified executions', 'Process errors', 'Evidence-contract errors',
+    'Trace mismatches', 'A terminal receipt with invalid evidence is not a successful check',
+    'A zero process exit does not make evidence valid', 'Evidence invalid:']) assert.ok(html.includes(text), text);
+});
+
+test('held control hides absent roles and speculative active remediation', () => {
+  const held = { ...finding, id: 'F-004', title: 'Cancel then refund — comparison not violated.', verification_status: 'NOT_REPRODUCED', verification_reason: 'The refund request returned HTTP 409 and the invariant remained within bounds.', execution_trace: [capture('GET', '/api/order'), capture('POST', '/api/order/cancel'), { ...capture('POST', '/api/order/refund/request'), status_code: 409 }, capture('GET', '/api/order')] };
+  const markdown = '## Finding F-004\n\n- **Issue:** A draft speculative issue.\n- **Fix:**\n  - Change the refund workflow.\n';
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [held], results: [{ outcome: 'NOT_REPRODUCED' }], summary: { errors: 0 } }, remediation: markdown }));
+  assert.ok(html.includes('Test condition not observed'));
+  assert.ok(html.includes('Original hypothesis'));
+  assert.ok(html.includes('Cancel then refund — comparison not violated.'));
+  assert.ok(!html.includes('Role:'));
+  assert.ok(!html.includes('Recommended remediation'));
+  assert.ok(!html.includes('Change the refund workflow.'));
+});
+
+test('markdown remediation is rendered as structured fields without stale speculation', () => {
+  const markdown = '## Finding F-001\n\n- **CWE:** CWE-841: Workflow\n- **Severity:** Critical\n- **Endpoints:** `POST /api/a`, `POST /api/b`\n- **Issue:** No single recording ever tested this speculative sequence.\n- **Evidence:** Draft evidence.\n- **Fix:**\n  - Enforce one remedy atomically.\n  - Cap returned value.\n';
+  const view = remediationFor(northstarFinding, markdown, invariantFor(northstarFinding));
+  assert.deepEqual(view.endpoints, ['POST /api/order/price-adjustment', 'POST /api/order/refund/request', 'POST /api/order/refund/complete']);
+  assert.deepEqual(view.fixes, ['Enforce one remedy atomically.', 'Cap returned value.']);
+  assert.ok(!view.issue.includes('No single recording'));
+  assert.ok(view.evidence.includes('130'));
+  const html = renderToStaticMarkup(React.createElement(ReportView, { report: { findings: [northstarFinding], results: [], summary: { errors: 0 } }, remediation: markdown }));
+  for (const label of ['CWE', 'Severity', 'Affected endpoints', 'Issue', 'Proven facts', 'Recommendation (not evidence)']) assert.ok(html.includes(label));
+  assert.ok(!html.includes('Analyst remediation draft'));
+  assert.ok(!html.includes('**CWE:**'));
+  assert.equal((html.match(/class="endpoint-chips"/g) || []).length, 1);
+});

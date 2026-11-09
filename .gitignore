@@ -7,14 +7,24 @@ node_modules/
 __pycache__/
 *.pyc
 
+# generated frontend build output
+/frontend/dist/
+
 # per-run artifacts (the current layout)
 runs/
 
 # browser tooling logs
 .playwright-mcp/
+flowbusters-backend.log
+
+# local signing material for backend-owned execution receipts
+execution_keys/
 
 # recorded captures
 *.har
+
+# local root-level FlowBusters result bundles
+/FlowBusters-*.zip
 
 # machine-specific MCP config (see mcp.json.example)
 mcp.json

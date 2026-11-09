@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "flow_name": "cross-flow-075472db767d",
+  "endpoints": [
+    {
+      "method": "GET",
+      "origin": "http://localhost:3000",
+      "path": "/api/order",
+      "authority": "validated_recording"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/demo/reset",
+      "authority": "configured_setup"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/cancel",
+      "authority": "validated_recording"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/price-adjustment",
+      "authority": "validated_recording"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/refund/complete",
+      "authority": "validated_recording"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/refund/request",
+      "authority": "validated_recording"
+    }
+  ],
+  "workflows": {},
+  "signature": "8da5b358138c23ded387dbc9dc24b55dfbdd1a4e5cd9088dc26ad88491e1b8ba"
+}

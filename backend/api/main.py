@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -23,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 
+from backend.runtime.verification import normalize_report, load_report
 from backend.runtime.orchestrator import ProgressEvent, Phase, run_flowbusters
 
 # Load .env so ANTHROPIC_API_KEY, etc. are available immediately
@@ -61,9 +63,36 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 app = FastAPI(title="FlowBusters Portal", version="0.1.0", lifespan=lifespan)
 
+_DEFAULT_CORS_ORIGINS = (
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+)
+
+
+def _configured_cors_origins() -> list[str]:
+    """Return configured origins with equivalent local-loopback aliases."""
+    configured = [
+        origin.strip()
+        for origin in os.environ.get(
+            "CORS_ORIGINS", ",".join(_DEFAULT_CORS_ORIGINS)
+        ).split(",")
+        if origin.strip()
+    ]
+    origins = list(configured)
+    for origin in configured:
+        if "://localhost:" in origin:
+            origins.append(origin.replace("://localhost:", "://127.0.0.1:", 1))
+        elif "://127.0.0.1:" in origin:
+            origins.append(origin.replace("://127.0.0.1:", "://localhost:", 1))
+    return list(dict.fromkeys(origins))
+
+
+_cors_origins = _configured_cors_origins()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("CORS_ORIGINS", "http://localhost:3000").split(","),
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -75,6 +104,46 @@ class AssessmentRequest(BaseModel):
     app_name: str
     target_url: str
     flow_name: str = "default"
+
+
+class CrossFlowRequest(BaseModel):
+    target_url: str
+    run_ids: list[str]
+    same_environment_confirmed: bool = False
+
+
+@app.get('/api/applications')
+async def applications():
+    from backend.runtime.application_model import catalog
+    return {'applications': await asyncio.to_thread(catalog, os.environ.get('ARTIFACTS_DIR', '.'))}
+
+
+@app.post('/api/applications/cross-flow')
+async def start_cross_flow(body: CrossFlowRequest):
+    from backend.runtime.application_model import collect
+    global _active_run, _last_findings, _last_remediation, _last_flow_name
+    if _active_run and not _active_run.done():
+        return JSONResponse(status_code=409, content={'detail': 'An assessment is already running'})
+    if not body.same_environment_confirmed:
+        return JSONResponse(status_code=400, content={'detail': 'Confirm the selected recordings belong to the same application environment and compatible version'})
+    root = os.environ.get('ARTIFACTS_DIR', '.')
+    try:
+        inputs = collect(root, body.run_ids, body.target_url)
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        return JSONResponse(status_code=400, content={'detail': f'Cannot load selected recordings: {exc}'})
+    flow = 'cross-flow-' + uuid.uuid4().hex[:12]
+    _last_findings = None
+    _last_remediation = None
+    _last_flow_name = flow
+    _recent_events.clear()
+    _active_run = asyncio.ensure_future(run_flowbusters(
+        target_url=inputs['target_url'], flow_name=flow, run_dir=root,
+        anthropic_api_key=os.environ.get('ANTHROPIC_API_KEY', ''),
+        anthropic_model=os.environ.get('ANTHROPIC_MODEL', 'claude-sonnet-5'),
+        progress_cb=_make_progress_cb(), cross_flow_inputs=inputs,
+        application_identity=inputs.get('application_identity')))
+    asyncio.ensure_future(_progress_writer())
+    return {'status': 'started', 'flow_name': flow}
 
 
 def _broadcast(event: ProgressEvent | None):
@@ -115,10 +184,12 @@ def _make_progress_cb():
 
 @app.post("/api/assessments")
 async def start_assessment(body: AssessmentRequest):
+    logging.getLogger("flowbusters.runtime").info("Assessment start request received")
     global _active_run, _progress_queue, _last_findings, _last_remediation, _last_flow_name
 
     if _active_run and not _active_run.done():
         return JSONResponse(status_code=409, content={"detail": "An assessment is already running"})
+
 
     _last_findings = None
     _last_remediation = None
@@ -176,6 +247,8 @@ async def stream_progress():
                     "message": event.message,
                     "done": event.done,
                     "error": event.error,
+                    "run_mode": event.run_mode.value,
+                    "technical_detail": event.technical_detail,
                 })
                 yield f"event: progress\ndata: {data}\n\n"
 
@@ -223,8 +296,12 @@ async def get_report(flow_name: str = Query(default="")):
     if not findings_path.exists():
         return JSONResponse(status_code=404, content={"detail": "No report found"})
 
-    findings = json.loads(findings_path.read_text())
-    remediation = remediation_path.read_text() if remediation_path.exists() else None
+    try:
+        findings = load_report(findings_path)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        return JSONResponse(status_code=422, content={
+            'detail': f'Report evidence could not be authenticated or loaded: {exc}'})
+    remediation = remediation_path.read_text(encoding="utf-8") if remediation_path.exists() else None
 
     state_map = (run_dir / "flows" / flow_name / "state_map.json")
     if not state_map.exists():
@@ -263,24 +340,28 @@ async def list_reports():
             continue
 
         try:
-            data = json.loads(findings_path.read_text())
-        except (json.JSONDecodeError, OSError):
+            data = load_report(findings_path)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            # One imported/tampered report must not take down the entire index.
+            # Keep it visible without inventing a zero-findings/clean summary.
+            items.append({'flow_name': flow_name, 'modified': '',
+                          'load_error': str(exc), 'report_status': 'UNAVAILABLE'})
             continue
 
         summary = data.get("summary", {}) or {}
         results = data.get("results", []) or []
-        # New schema: findings[] is the vulnerability list (may include
-        # non-script findings like the auth check). Old schema: count results.
+        # Keep finding and execution cardinalities separate. load_report has
+        # already replaced agent summary values with backend-derived counts.
         findings = data.get("findings")
         if isinstance(findings, list):
-            bugs_found = len(findings)
+            finding_count = summary.get("finding_count", len(findings))
             critical = len([f for f in findings if isinstance(f, dict) and f.get("severity") == "Critical"])
         else:
             # Legacy schema: script results + free-form additional_observations
             # (the detail page counts both, so keep the index consistent).
-            bugs_found = summary.get("bugs_found", 0)
+            finding_count = summary.get("finding_count", summary.get("reported_findings", 0))
             obs = data.get("additional_observations") or []
-            bugs_found += len(obs)
+            finding_count += len(obs)
             critical = len([o for o in obs if isinstance(o, dict) and o.get("severity") == "Critical"])
         # mtime as a stable, sortable "when" that needs no extra metadata
         try:
@@ -295,11 +376,25 @@ async def list_reports():
             "target_url": data.get("target_url", ""),
             "run_timestamp": data.get("run_timestamp", ""),
             "modified": modified,
-            "bugs_found": bugs_found,
+            "bugs_found": finding_count,  # legacy API alias
+            "finding_count": finding_count,
+            "confirmed": summary.get("confirmed", 0),
+            "unique_vulnerabilities": summary.get("unique_vulnerabilities", 0),
+            "coverage_gaps": summary.get("coverage_gaps", 0),
+            "needs_review": summary.get("needs_review", 0),
+            "not_executed": summary.get("not_executed", 0),
             "critical_findings": critical,
             "rejected": summary.get("rejected", 0),
             "errors": summary.get("errors", 0),
-            "total_scripts": data.get("total_scripts", len(results)),
+            "total_scripts": summary.get("planned_executions", data.get("total_scripts", len(results))),
+            "execution_attempts": summary.get("execution_attempts", len(results)),
+            "completed_executions": summary.get("completed_executions", 0),
+            "pending_execution": summary.get("pending_execution", 0),
+            "process_errors": summary.get("process_errors", 0),
+            "evidence_contract_errors": summary.get("evidence_contract_errors", 0),
+            "execution_errors": summary.get("execution_errors", 0),
+            "trace_mismatches": summary.get("trace_mismatches", 0),
+            "deduplicated_execution_results": summary.get("deduplicated_execution_results", 0),
         })
 
     # Most recently modified first
@@ -319,7 +414,7 @@ async def finish_recording(flow_name: str = Query(default="default")):
     run_dir = os.environ.get("ARTIFACTS_DIR", ".")
     marker_path = Path(run_dir) / "runs" / flow_name / "recording_done.marker"
     marker_path.parent.mkdir(parents=True, exist_ok=True)
-    marker_path.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    marker_path.write_text(time.strftime("%Y-%m-%dT%H:%M:%SZ"), encoding="utf-8")
     logger.info("Recording marker written: %s", marker_path)
     return {"status": "recording_finishing", "flow_name": flow_name}
 

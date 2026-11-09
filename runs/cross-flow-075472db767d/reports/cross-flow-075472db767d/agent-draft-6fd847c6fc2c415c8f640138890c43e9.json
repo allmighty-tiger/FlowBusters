@@ -1,0 +1,184 @@
+{
+  "run_timestamp": "2026-09-22T23:27:00Z",
+  "target_url": "http://localhost:3000",
+  "flow_name": "cross-flow-075472db767d",
+  "mode": "cross_flow",
+  "queue_status": "PENDING_BACKEND_EXECUTION",
+  "total_scripts": 2,
+  "auth_check": {
+    "performed": false,
+    "reason": "No login/credential/session endpoint was observed in any of the three source recordings (refund-rerun, cancel-demo, return-demo); the app serves a single anonymous order view with no cookies or bearer tokens. scope.json does not set authentication_required: true."
+  },
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Order #1042 (Northstar Weekender Pack, $100.00 paid) can be paid out twice: a $30 price-adjustment refund and a full $100 refund can both be collected on the same order",
+      "source": "ANALYSIS",
+      "severity": "Critical",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "01_price_adjustment_then_refund_double_dip.plan.json",
+      "mutation_type": "STATE_INTERLEAVING",
+      "url_tested": "http://localhost:3000/api/order/price-adjustment, http://localhost:3000/api/order/refund/request, http://localhost:3000/api/order/refund/complete",
+      "evidence": {
+        "summary": "The order detail page treats cancellation, refund, and price adjustment as one mutually-exclusive group ('Price protection is not available while another order request is active'). The server correctly implements this in two of the three directions: completing a refund or a cancellation both disable price adjustment AND each other. But completing a price adjustment ($30 returned) leaves 'Request refund' fully clickable and availableActions.requestRefund = true. Chaining POST /api/order/price-adjustment -> POST /api/order/refund/request -> POST /api/order/refund/complete on the same order is expected to leave totalReturned = 30 + 100 = 130, exceeding the $100 the customer actually paid \u2014 a $30 overpayment to the customer (or, viewed the other way, a business logic hole that lets any customer claim 130% of their order value).",
+        "requests": [
+          {
+            "label": "price_adjustment",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/price-adjustment",
+            "body": {}
+          },
+          {
+            "label": "refund_request",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/request",
+            "body": {}
+          },
+          {
+            "label": "refund_complete",
+            "method": "POST",
+            "url": "http://localhost:3000/api/order/refund/complete",
+            "body": {}
+          }
+        ],
+        "responses": [
+          {
+            "label": "price_adjustment",
+            "status_code": 200,
+            "response_body": "{\"order\":{\"priceProtection\":{\"status\":\"completed\",\"adjustmentAmount\":30},\"totalReturned\":30,\"availableActions\":{\"requestRefund\":true,\"requestPriceAdjustment\":false,\"cancelOrder\":false,\"completeRefund\":false}}} (source: return-demo, recording.har entry 1)"
+          },
+          {
+            "label": "refund_request",
+            "status_code": 201,
+            "response_body": "{\"order\":{\"refund\":{\"status\":\"pending\",\"requestedAmount\":100}}} (source: refund-rerun, recording.har entry 1, applied to a FRESH order in that source \u2014 not yet chained after price-adjustment)"
+          },
+          {
+            "label": "refund_complete",
+            "status_code": 200,
+            "response_body": "{\"order\":{\"refund\":{\"status\":\"completed\",\"completedAmount\":100},\"totalReturned\":100}} (source: refund-rerun, recording.har entry 2, same caveat)"
+          }
+        ]
+      },
+      "execution": {
+        "status": "NOT_EXECUTED",
+        "missing_precondition": "This agent session is read-only for HTTP execution; the chained sequence across price-adjustment and refund actions was never run back-to-back on the same order in any recording, and no source recording combines both action families. The backend must execute mutations/cross-flow-075472db767d/01_price_adjustment_then_refund_double_dip.plan.json against a freshly reset order to confirm.",
+        "next_step": "Run the plan: POST /api/demo/reset, GET /api/order, POST /api/order/price-adjustment, POST /api/order/refund/request, POST /api/order/refund/complete, GET /api/order, and verify order.totalReturned <= order.originalAmount."
+      },
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "agent_inference",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "return-demo",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-001",
+            "fact_ids": [
+              "UIR-001-F1",
+              "UIR-001-F2"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "violation": {
+          "observed": null,
+          "description": "Not yet computed \u2014 awaiting backend execution of the plan and its final GET /api/order capture."
+        }
+      }
+    },
+    {
+      "id": "F-002",
+      "title": "Untested replay of /api/order/refund/complete after it has already paid out \u2014 potential duplicate payout",
+      "source": "ANALYSIS",
+      "severity": "Medium",
+      "cwe": [
+        "CWE-841"
+      ],
+      "script": "02_refund_complete_replay.plan.json",
+      "mutation_type": "REPLAY_ATTACK",
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "evidence": "The recorded response after the FIRST completion shows availableActions.completeRefund = false, suggesting client-side and possibly server-side state guarding, but no recording ever attempted a second call to /api/order/refund/complete to confirm the server itself rejects the replay rather than just hiding the button.",
+      "execution": {
+        "status": "NOT_EXECUTED",
+        "missing_precondition": "No source recording replayed the completion call.",
+        "next_step": "Run mutations/cross-flow-075472db767d/02_refund_complete_replay.plan.json: request refund, complete it, then call complete again, and verify totalReturned did not double."
+      },
+      "verification": {
+        "predicate": "business_rule_must_hold",
+        "rule": {
+          "source": "observed_ui",
+          "provenance": {
+            "schema_version": 1,
+            "source_run": "refund-rerun",
+            "artifact": "state_map.json",
+            "rule_id": "UIR-002",
+            "fact_ids": [
+              "UIR-002-F2"
+            ]
+          }
+        },
+        "invariant": {
+          "operator": "sum_lte",
+          "terms": [
+            [
+              "order",
+              "totalReturned"
+            ]
+          ],
+          "limit": [
+            "order",
+            "originalAmount"
+          ]
+        },
+        "violation": {
+          "observed": null,
+          "description": "Not yet computed \u2014 awaiting backend execution."
+        }
+      }
+    }
+  ],
+  "results": [
+    {
+      "script": "01_price_adjustment_then_refund_double_dip.plan.json",
+      "mutation_type": "STATE_INTERLEAVING",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-001"
+    },
+    {
+      "script": "02_refund_complete_replay.plan.json",
+      "mutation_type": "REPLAY_ATTACK",
+      "outcome": "NOT_EXECUTED",
+      "status_code": null,
+      "url_tested": "http://localhost:3000/api/order/refund/complete",
+      "response_snippet": null,
+      "error_message": null,
+      "finding_id": "F-002"
+    }
+  ],
+  "summary": {
+    "bugs_found": 0,
+    "critical_findings": 0,
+    "rejected": 0,
+    "errors": 0,
+    "not_executed": 2,
+    "note": "Draft produced by the agent session; queue_status PENDING_BACKEND_EXECUTION. summary.bugs_found/critical_findings count only CONFIRMED outcomes, which cannot be set until the backend executes the two plans above and recomputes the sum_lte invariant from real captured responses."
+  }
+}

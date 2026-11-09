@@ -1,0 +1,230 @@
+{
+  "schema_version": 2,
+  "observed_ui_rules_schema_version": 1,
+  "target_url": "http://localhost:3000/",
+  "flow_name": "refund-rerun",
+  "setup_paths": ["/api/demo/reset"],
+  "recorded_at": "2026-09-22T23:27:18.215219Z",
+  "transitions": [
+    {
+      "name": "request_refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/request",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 201,
+      "criticality": "HIGH",
+      "depends_on": [],
+      "ui_context": {
+        "before_step": 1,
+        "after_step": 4,
+        "visible_constraints": [
+          "\"Request refund\" button disappears once a refund has been requested (one-time action)",
+          "Price protection becomes unavailable while a refund request is active"
+        ],
+        "observed_changes": [
+          "button \"Request refund\" disappeared",
+          "button \"Complete refund\" appeared",
+          "refund.status changed from none to pending",
+          "refund.requestedAmount changed from 0 to 100",
+          "availableActions.requestRefund changed from true to false",
+          "availableActions.completeRefund changed from false to true",
+          "priceProtection availability text changed to \"Unavailable\""
+        ]
+      }
+    },
+    {
+      "name": "complete_refund",
+      "method": "POST",
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "headers": {},
+      "body_keys": [],
+      "response_status": 200,
+      "criticality": "HIGH",
+      "depends_on": ["request_refund"],
+      "ui_context": {
+        "before_step": 4,
+        "after_step": 6,
+        "visible_constraints": [
+          "\"Complete refund\" button is only available while refund.status is pending",
+          "No further order actions remain once the refund is completed (terminal state)"
+        ],
+        "observed_changes": [
+          "button \"Complete refund\" disappeared",
+          "\"This order has no actions requiring your attention.\" appeared",
+          "refund.status changed from pending to completed",
+          "refund.completedAmount changed from 0 to 100",
+          "totalReturned changed from 0 to 100",
+          "netCustomerBenefit changed from -100 to 0",
+          "availableActions.completeRefund changed from true to false"
+        ]
+      }
+    }
+  ],
+  "roles": [
+    {
+      "name": "anonymous",
+      "cookies": [],
+      "headers": {},
+      "note": "No authentication artifacts (cookies, Authorization headers, CSRF tokens) were observed anywhere in the recording. The application appears to serve a single unauthenticated order-detail session for this flow; this is NOT reported as a vulnerability per scope (authentication_required is not set)."
+    }
+  ],
+  "semantic_ui_capture": {
+    "status": "succeeded",
+    "artifact": "demo.json",
+    "ui_state_count": 6
+  },
+  "observed_ui_rules": [
+    {
+      "schema_version": 1,
+      "id": "UIR-001",
+      "statement": "A refund can only be requested once per order; after a refund request is created, the \"Request refund\" action becomes unavailable and refund.status moves from none to pending.",
+      "facts": [
+        {
+          "id": "UIR-001-F1",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "refund-rerun",
+          "artifact": "demo.json",
+          "before_step": 1,
+          "after_step": 4,
+          "element": {"role": "button", "name": "Request refund"},
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/0/elements/63",
+            "after": "/workflow_timeline/ui_states/3/changes_from_previous/disappeared/6"
+          }
+        },
+        {
+          "id": "UIR-001-F2",
+          "type": "api_field_transition",
+          "provenance_type": "api_state_fact",
+          "source_run": "refund-rerun",
+          "artifact": "recording.har",
+          "field_path": ["order", "availableActions", "requestRefund"],
+          "before": true,
+          "after": false,
+          "entry_indexes": [0, 1],
+          "json_pointers": {
+            "before": "/log/entries/0/response/content/text",
+            "after": "/log/entries/1/response/content/text"
+          }
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The workflow intends a refund to be requestable only once per order; the server should reject a second /api/order/refund/request call while a refund is already pending or completed.",
+        "derived_from": ["UIR-001-F1", "UIR-001-F2"]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "UIR-002",
+      "statement": "The \"Complete refund\" action is available only while a refund is pending, and disappears permanently once the refund is completed (terminal, one-time completion).",
+      "facts": [
+        {
+          "id": "UIR-002-F1",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "refund-rerun",
+          "artifact": "demo.json",
+          "before_step": 3,
+          "after_step": 4,
+          "element": {"role": "button", "name": "Complete refund"},
+          "transition": "appeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/2/elements",
+            "after": "/workflow_timeline/ui_states/3/changes_from_previous/appeared/9"
+          }
+        },
+        {
+          "id": "UIR-002-F2",
+          "type": "ui_element_transition",
+          "provenance_type": "observed_ui_affordance",
+          "source_run": "refund-rerun",
+          "artifact": "demo.json",
+          "before_step": 4,
+          "after_step": 6,
+          "element": {"role": "button", "name": "Complete refund"},
+          "transition": "disappeared",
+          "json_pointers": {
+            "before": "/workflow_timeline/ui_states/3/elements/66",
+            "after": "/workflow_timeline/ui_states/5/changes_from_previous/disappeared/3"
+          }
+        },
+        {
+          "id": "UIR-002-F3",
+          "type": "api_field_transition",
+          "provenance_type": "api_state_fact",
+          "source_run": "refund-rerun",
+          "artifact": "recording.har",
+          "field_path": ["order", "availableActions", "completeRefund"],
+          "before": true,
+          "after": false,
+          "entry_indexes": [1, 2],
+          "json_pointers": {
+            "before": "/log/entries/1/response/content/text",
+            "after": "/log/entries/2/response/content/text"
+          }
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The workflow intends refund completion to occur exactly once; the server should reject a repeat /api/order/refund/complete call, and should reject the call entirely if no refund was ever requested (skip-step).",
+        "derived_from": ["UIR-002-F1", "UIR-002-F2", "UIR-002-F3"]
+      }
+    },
+    {
+      "schema_version": 1,
+      "id": "UIR-003",
+      "statement": "Price protection adjustment is presented as unavailable while another order request (a refund) is active.",
+      "facts": [
+        {
+          "id": "UIR-003-F1",
+          "type": "explicit_ui_text",
+          "provenance_type": "explicit_visible_ui_text",
+          "source_run": "refund-rerun",
+          "artifact": "demo.json",
+          "step": 4,
+          "text": "paragraph : Price protection is not available while another order request is active.",
+          "json_pointer": "/workflow_timeline/ui_states/3/elements/59"
+        }
+      ],
+      "inference": {
+        "provenance_type": "agent_inference",
+        "text": "The workflow intends price-protection adjustments and refund requests to be mutually exclusive per order; no price-adjustment endpoint was recorded in this session to test server-side enforcement directly.",
+        "derived_from": ["UIR-003-F1"]
+      }
+    }
+  ],
+  "conflicting_action_pairs": [],
+  "conflicting_action_pairs_note": "At step 1, \"Request refund\", \"Cancel order\", and \"Request price adjustment\" are co-visible state-changing controls. Only \"Request refund\" maps to a documented endpoint (POST /api/order/refund/request); \"Cancel order\" and \"Request price adjustment\" have no recorded HTTP request and no matching entry in endpoint_catalog.json. Per the endpoint-evidence contract, no URL may be fabricated for them, so no actionable conflicting_action_pairs entry can be formed. See unresolved_ui_affordances below.",
+  "unresolved_ui_affordances": [
+    {
+      "element": {"role": "button", "name": "Cancel order"},
+      "observed_at_step": 1,
+      "note": "Visible and co-located with \"Request refund\" at step 1, but no matching HTTP request was recorded and no cancel-order route is documented in endpoint_catalog.json. No URL is assumed for this control; treat as an unresolved coverage gap, not an attackable endpoint."
+    },
+    {
+      "element": {"role": "button", "name": "Request price adjustment"},
+      "observed_at_step": 1,
+      "note": "Visible at step 1 and referenced by UIR-003, but no price-adjustment HTTP endpoint was recorded or documented in endpoint_catalog.json. No URL is assumed for this control."
+    }
+  ],
+  "critical_endpoints": [
+    {
+      "url": "http://localhost:3000/api/order/refund/request",
+      "method": "POST",
+      "why": "Creates a pending refund of the full order amount ($100). Financial state transition; drives refund.status none->pending and gates the subsequent completion step. Agent inference (unverified): the endpoint takes no request body and may not validate order state server-side before creating a duplicate/second refund request while one is already pending or after completion.",
+      "attack_surface": ["REPLAY_ATTACK", "SKIP_STEP", "MASS_ASSIGNMENT", "DOUBLE_SPEND"],
+      "inferred": false
+    },
+    {
+      "url": "http://localhost:3000/api/order/refund/complete",
+      "method": "POST",
+      "why": "Marks the refund completed and sets totalReturned=100 / netCustomerBenefit=0 — this is the actual money-movement step. Agent inference (unverified): calling this endpoint directly without a prior refund/request (skip-step), or calling it twice in a row / concurrently (replay / double-spend), may allow totalReturned to exceed originalAmount (100), which would be a direct financial-loss bug.",
+      "attack_surface": ["SKIP_STEP", "REPLAY_ATTACK", "DOUBLE_SPEND"],
+      "inferred": false
+    }
+  ]
+}

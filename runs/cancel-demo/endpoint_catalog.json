@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "flow_name": "cancel-demo",
+  "endpoints": [
+    {
+      "method": "GET",
+      "origin": "http://localhost:3000",
+      "path": "/api/order",
+      "authority": "validated_recording"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/demo/reset",
+      "authority": "configured_setup"
+    },
+    {
+      "method": "POST",
+      "origin": "http://localhost:3000",
+      "path": "/api/order/cancel",
+      "authority": "validated_recording"
+    }
+  ],
+  "workflows": {},
+  "signature": "ff32bfb689f0b083f9f3ea9b770a47083c93c4dde108bc55fbf5f48030c691b8"
+}

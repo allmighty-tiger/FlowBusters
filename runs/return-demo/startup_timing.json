@@ -1,0 +1,10 @@
+{
+  "clock": "seconds since run_crew entry (not button click)",
+  "milestones": {
+    "run_directory_ready": 0.047,
+    "prompt_ready": 0.235,
+    "recording_validated": 21.047,
+    "agent_process_started": 21.125,
+    "first_agent_output": 22.735
+  }
+}

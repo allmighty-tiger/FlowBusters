@@ -33,7 +33,9 @@ Write all Phase 1 artifacts to `flows/{flow-name}/`.
 2. Navigate to target URL using Playwright MCP (`browser_navigate`)
 3. Inform user: "Browser is open. Please complete your full workflow (login + business flow). I'm recording."
 4. Monitor and capture:
-   - All DOM interactions (clicks, form fills, navigation events)
+   - Compact Playwright accessibility snapshots throughout the recording
+   - Only changed UI states, including controls, visible rules, values and status
+     messages; remove element refs, redact secrets and never save the full DOM
    - Network traffic (HAR format) via Playwright's network recording
 5. When user signals completion (or flow naturally ends):
    - Save structured DOM interaction trace to `flows/{flow-name}/demo.json`
@@ -43,23 +45,28 @@ Write all Phase 1 artifacts to `flows/{flow-name}/`.
 
 ## Output
 
-- `flows/{flow-name}/demo.json` — Structured array of DOM interaction events:
+- `flows/{flow-name}/demo.json` — Structured workflow context:
   ```json
   {
     "target_url": "...",
     "flow_name": "...",
     "timestamp_start": "...",
     "timestamp_end": "...",
-    "interactions": [
-      { "type": "click|fill|navigate|submit", "selector": "...", "value": "...", "timestamp": "..." }
-    ]
+    "workflow_timeline": {
+      "ui_states": [
+        { "step": 1, "url": "...", "elements": ["..."], "changes_from_previous": {"appeared": [], "disappeared": []} }
+      ],
+      "network_sequence": [
+        { "sequence": 1, "method": "POST", "url": "...", "status": 200, "request_body_keys": ["..."] }
+      ]
+    }
   }
   ```
 - `flows/{flow-name}/recording.har` — Standard HAR 1.2 network traffic capture
 
 ## Verification Gate
 
-- `flows/{flow-name}/demo.json` exists and is valid JSON with at least 1 interaction
+- `flows/{flow-name}/demo.json` exists and is valid JSON with at least 1 UI state
 - `flows/{flow-name}/recording.har` exists and is valid HAR format with at least 1 entry
 - Report: "✅ Phase 1 RECORD complete. Flow {flow-name}. {N} interactions captured, {M} network requests recorded."
 

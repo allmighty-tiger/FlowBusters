@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional
@@ -30,12 +30,19 @@ class Phase(str, Enum):
     FAILED = "failed"
 
 
+class RunMode(str, Enum):
+    RECORDED_FLOW = "RECORDED_FLOW"
+    CROSS_FLOW = "CROSS_FLOW"
+
+
 @dataclass
 class ProgressEvent:
     phase: Phase
     message: str
     done: bool = False
     error: Optional[str] = None
+    run_mode: RunMode = RunMode.RECORDED_FLOW
+    technical_detail: Optional[str] = None
 
 
 # ── Thin Wrapper ───────────────────────────────────────────────────────────────
@@ -49,17 +56,24 @@ async def run_flowbusters(
     progress_cb: Optional[Callable[[ProgressEvent], None]] = None,
     headless: bool = True,
     auto_complete: bool = False,
+    cross_flow_inputs: dict | None = None,
+    reanalysis_inputs: dict | None = None,
+    application_identity: dict | None = None,
 ) -> dict:
     """
     Execute the full FlowBusters pipeline via Claude Code crew subprocess.
 
     All arguments from the V1 interface are accepted for compatibility.
-    `headless` and `auto_complete` are acknowledged but the RECORD phase
-    is always user-driven (headed browser + marker file handshake).
+    `headless` and `auto_complete` are acknowledged for new recordings.
+    Reanalysis supplies already validated recording evidence and skips RECORD.
     """
     from backend.runtime.crew_runner import CrewConfig, run_crew
 
     cb = progress_cb or _noop_progress
+    run_mode = RunMode.CROSS_FLOW if cross_flow_inputs is not None else RunMode.RECORDED_FLOW
+
+    def mode_cb(event: ProgressEvent):
+        cb(replace(event, run_mode=run_mode))
 
     base = Path(__file__).parent.parent.parent.resolve()
     mcp_env = os.environ.get("MCP_CONFIG_PATH", "./mcp.json")
@@ -85,22 +99,30 @@ async def run_flowbusters(
         phase_timeout=phase_timeout,
         overall_timeout=overall_timeout,
         auto_complete=auto_complete,
+        cross_flow_inputs=cross_flow_inputs,
+        reanalysis_inputs=reanalysis_inputs,
+        application_identity=application_identity,
     )
 
-    result = await run_crew(config, cb)
+    result = await run_crew(config, mode_cb)
 
     # Build findings for V1-compatible return
     findings_path = Path(run_dir) / "runs" / flow_name / "reports" / "findings.json"
     remediation_path = Path(run_dir) / "runs" / flow_name / "reports" / "remediation.md"
+    scoped = Path(run_dir) / 'runs' / flow_name / 'reports' / flow_name
+    if (scoped / 'findings.json').exists():
+        findings_path = scoped / 'findings.json'
+        remediation_path = scoped / 'remediation.md'
 
     if findings_path.exists():
         import json
-        result["findings"] = json.loads(findings_path.read_text())
+        from backend.runtime.verification import load_report
+        result["findings"] = load_report(findings_path)
     else:
         result["findings"] = {"summary": {"bugs_found": 0, "rejected": 0, "errors": 0}}
 
     if remediation_path.exists():
-        result["remediation"] = remediation_path.read_text()
+        result["remediation"] = remediation_path.read_text(encoding="utf-8")
     else:
         result["remediation"] = None
 
