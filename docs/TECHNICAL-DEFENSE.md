@@ -1,8 +1,7 @@
 # FlowBusters technical overview and Q&A
 
 Code review date: September 19, 2026, branch `fixes`, including the reviewed
-work in progress. This is the short guide for answering technical questions. The
-longer [Lunch & Learn Q&A](LUNCH-AND-LEARN-QA.md) has more practice answers.
+work in progress. This is the short guide for answering technical questions.
 
 This guide is for a technical review, not the live demo. Start with the short
 answer in each section. Use the longer answer only when someone asks for more
