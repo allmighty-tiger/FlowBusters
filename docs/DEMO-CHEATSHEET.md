@@ -170,7 +170,3 @@ assessment. Northstar runs separately; existing compatible sources are reused.
   [ARCHITECTURE.md](ARCHITECTURE.md).
 - Lead-engineer review questions, trust claims and candid limitations:
   [TECHNICAL-DEFENSE.md](TECHNICAL-DEFENSE.md).
-- Full 25–30 minute talk, visuals and timed fallback:
-  [LUNCH-AND-LEARN.md](LUNCH-AND-LEARN.md).
-- Expanded rehearsal Q&A:
-  [LUNCH-AND-LEARN-QA.md](LUNCH-AND-LEARN-QA.md).
